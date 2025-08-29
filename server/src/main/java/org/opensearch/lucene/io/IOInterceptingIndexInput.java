@@ -330,7 +330,8 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
         return page;
     }
 
-    //static ConcurrentHashMap<Integer, Map<String, Set<String>>> thread
+
+    static ConcurrentHashMap<Integer, Set<ReadEvent>> events = new ConcurrentHashMap<>();
 
     //First time a new buffer is coming to life -> this is where we will be doing IO of 4kb.
     private Page createNewPage(int pageIndex) {
@@ -348,14 +349,11 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
             if (shardId == -1 || shardId == 1) {
                 String phaseName = ongoingPhasePerShard.get(shardId);
                 String segmentGeneration = parseSegmentGeneration(basePathStr);
-                logger.info("Query ID: {} IO is scheduled for shardId {} segment gen {}  " +
-                        "file {} pageId {} from Thread {} for phase {}  ", QUERY_ID,
-                    shardId,
-                    segmentGeneration,
-                    basePathStr, pageIndex,
-                    Thread.currentThread().getName(),
-                    phaseName);
+                ReadEvent readEvent = new ReadEvent(shardId, Thread.currentThread().getName(),
+                    System.currentTimeMillis(), name, segmentGeneration, phaseName, QUERY_ID);
+                ReadEventLogger.instance.accept(readEvent);
             }
+
         }
         return new Page(bytesToRead);
 
