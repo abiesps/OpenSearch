@@ -89,7 +89,7 @@ import java.util.stream.Collectors;
  *
  * @opensearch.internal
  */
-abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> extends SearchPhase implements SearchPhaseContext {
+public abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> extends SearchPhase implements SearchPhaseContext {
     private static final float DEFAULT_INDEX_BOOST = 1.0f;
     private final Logger logger;
     private final SearchTransportService searchTransportService;
@@ -206,7 +206,11 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     /**
      * This is the main entry point for a search. This method starts the search execution of the initial phase.
      */
+    public static volatile boolean QUERY_EXECUTION_STARTED = false;
+    //public static Map<>
+
     public final void start() {
+        QUERY_EXECUTION_STARTED = true;
         if (getNumShards() == 0) {
             // no search shards to search on, bail with empty response
             // (it happens with search across _all with no indices around and consistent with broadcast operations)
@@ -278,6 +282,8 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         successfulShardExecution(iterator);
     }
 
+    public static ConcurrentHashMap<Integer, String> ongoingPhasePerShard = new ConcurrentHashMap<>();
+
     private void performPhaseOnShard(final int shardIndex, final SearchShardIterator shardIt, final SearchShardTarget shard) {
         /*
          * We capture the thread that this phase is starting on. When we are called back after executing the phase, we are either on the
@@ -286,11 +292,12 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
          * could stack overflow. To prevent this, we fork if we are called back on the same thread that execution started on and otherwise
          * we can continue (cf. InitialSearchPhase#maybeFork).
          */
+        ongoingPhasePerShard.put(shardIndex, this.getName());
         if (shard == null) {
             fork(() -> onShardFailure(shardIndex, null, shardIt, new NoShardAvailableActionException(shardIt.shardId())));
         } else {
             final PendingExecutions pendingExecutions = throttleConcurrentRequests
-                ? pendingExecutionsPerNode.computeIfAbsent(shard.getNodeId(), n -> new PendingExecutions(maxConcurrentRequestsPerNode))
+                ? pendingExecutionsPerNode.computeIfAbsent(shard.getNodeId(), n -> new PendingExecutions(maxConcurrentRequestsPerNode, logger))
                 : null;
             Runnable r = () -> {
                 final Thread thread = Thread.currentThread();
@@ -927,12 +934,20 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
      */
     static final class PendingExecutions {
         private final int permits;
+        private final Logger logger;
         private int permitsTaken = 0;
         private ArrayDeque<Runnable> queue = new ArrayDeque<>();
+
+        PendingExecutions(int permits, Logger logger) {
+            assert permits > 0 : "not enough permits: " + permits;
+            this.permits = permits;
+            this.logger = logger;
+        }
 
         PendingExecutions(int permits) {
             assert permits > 0 : "not enough permits: " + permits;
             this.permits = permits;
+            this.logger = null;
         }
 
         void finishAndRunNext() {
@@ -963,6 +978,10 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                 }
             } else if (runnable != null) {
                 queue.add(runnable);
+                if (logger != null) {
+                    logger.info("Total phases queues because of synchronization between phases and weird limit on " +
+                        "concurrent request per node {} ", queue.size());
+                }
             }
             return toExecute;
         }
