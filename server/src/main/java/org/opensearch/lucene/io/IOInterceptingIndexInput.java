@@ -333,20 +333,24 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
         final long offsetInFile = (long) pageIndex << pageSizePower;
         int bytesToRead = (int) Math.min(pageSize, fileLength - offsetInFile);
         if (QUERY_EXECUTION_STARTED) {
+
             String shardID = parseShardId(basePathStr);
             int shardId = -1;
             if (shardID != null) {
                 shardId = Integer.parseInt(shardID);
             }
-            String phaseName = ongoingPhasePerShard.get(shardId);
-            String segmentGeneration = parseSegmentGeneration(basePathStr);
-            logger.info("Query ID: {} IO is scheduled for shardId {} segment gen {}  " +
-                    "file {} pageId {} from Thread {} for phase {}  ", QUERY_ID,
-                shardId,
-                segmentGeneration,
-                basePathStr, pageIndex,
-                Thread.currentThread().getName(),
-                phaseName);
+            //reduce logging to avoid OOM
+            if (shardId == -1 || shardId == 1) {
+                String phaseName = ongoingPhasePerShard.get(shardId);
+                String segmentGeneration = parseSegmentGeneration(basePathStr);
+                logger.info("Query ID: {} IO is scheduled for shardId {} segment gen {}  " +
+                        "file {} pageId {} from Thread {} for phase {}  ", QUERY_ID,
+                    shardId,
+                    segmentGeneration,
+                    basePathStr, pageIndex,
+                    Thread.currentThread().getName(),
+                    phaseName);
+            }
         }
         return new Page(bytesToRead);
 
