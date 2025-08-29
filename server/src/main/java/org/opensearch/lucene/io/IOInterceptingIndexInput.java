@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 import static org.opensearch.action.search.AbstractSearchAsyncAction.QUERY_EXECUTION_STARTED;
+import static org.opensearch.action.search.AbstractSearchAsyncAction.QUERY_ID;
 import static org.opensearch.action.search.AbstractSearchAsyncAction.ongoingPhasePerShard;
 
 public class IOInterceptingIndexInput extends IndexInput implements RandomAccessInput {
@@ -339,8 +340,9 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
             }
             String phaseName = ongoingPhasePerShard.get(shardId);
             String segmentGeneration = parseSegmentGeneration(basePathStr);
-            logger.info("IO is scheduled for shardId {} segment gen {}  " +
-                    "file {} pageId {} from Thread {} for phase {}  ", shardId,
+            logger.info("Query ID: {} IO is scheduled for shardId {} segment gen {}  " +
+                    "file {} pageId {} from Thread {} for phase {}  ", QUERY_ID,
+                shardId,
                 segmentGeneration,
                 basePathStr, pageIndex,
                 Thread.currentThread().getName(),

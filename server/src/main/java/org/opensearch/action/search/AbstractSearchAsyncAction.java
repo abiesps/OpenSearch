@@ -71,6 +71,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -207,10 +208,12 @@ public abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult
      * This is the main entry point for a search. This method starts the search execution of the initial phase.
      */
     public static volatile boolean QUERY_EXECUTION_STARTED = false;
+    public static volatile String QUERY_ID = null;
     //public static Map<>
 
     public final void start() {
         QUERY_EXECUTION_STARTED = true;
+        QUERY_ID = UUID.randomUUID().toString();
         if (getNumShards() == 0) {
             // no search shards to search on, bail with empty response
             // (it happens with search across _all with no indices around and consistent with broadcast operations)
