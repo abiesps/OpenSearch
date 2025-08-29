@@ -375,11 +375,18 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
 
     public static String parseSegmentGeneration(String path) {
         String fileName = path.substring(path.lastIndexOf('/') + 1);
-        int firstUnderscore = fileName.indexOf('_');
-        int secondUnderscore = fileName.indexOf('_', firstUnderscore + 1);
 
-        if (firstUnderscore != -1 && secondUnderscore != -1) {
-            return fileName.substring(firstUnderscore, secondUnderscore);
+        if (fileName.endsWith(".cfs")) {
+            // For .cfs files, the entire name before .cfs is the segment generation
+            return fileName.substring(0, fileName.lastIndexOf('.'));
+        } else {
+            // For other files, extract between first and second underscore
+            int firstUnderscore = fileName.indexOf('_');
+            int secondUnderscore = fileName.indexOf('_', firstUnderscore + 1);
+
+            if (firstUnderscore != -1 && secondUnderscore != -1) {
+                return fileName.substring(firstUnderscore, secondUnderscore);
+            }
         }
         return null;
     }
