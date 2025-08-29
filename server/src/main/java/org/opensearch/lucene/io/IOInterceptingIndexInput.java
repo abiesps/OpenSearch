@@ -18,6 +18,9 @@ import org.apache.lucene.store.ReadAdvice;
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.opensearch.action.search.AbstractSearchAsyncAction.QUERY_EXECUTION_STARTED;
 import static org.opensearch.action.search.AbstractSearchAsyncAction.QUERY_ID;
@@ -327,26 +330,32 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
         return page;
     }
 
+    //static ConcurrentHashMap<Integer, Map<String, Set<String>>> thread
+
     //First time a new buffer is coming to life -> this is where we will be doing IO of 4kb.
     private Page createNewPage(int pageIndex) {
         final int pageSize = 1 << pageSizePower;//4096
         final long offsetInFile = (long) pageIndex << pageSizePower;
         int bytesToRead = (int) Math.min(pageSize, fileLength - offsetInFile);
         if (QUERY_EXECUTION_STARTED) {
+
             String shardID = parseShardId(basePathStr);
             int shardId = -1;
             if (shardID != null) {
                 shardId = Integer.parseInt(shardID);
             }
-            String phaseName = ongoingPhasePerShard.get(shardId);
-            String segmentGeneration = parseSegmentGeneration(basePathStr);
-            logger.info("Query ID: {} IO is scheduled for shardId {} segment gen {}  " +
-                    "file {} pageId {} from Thread {} for phase {}  ", QUERY_ID,
-                shardId,
-                segmentGeneration,
-                basePathStr, pageIndex,
-                Thread.currentThread().getName(),
-                phaseName);
+            //reduce logging to avoid OOM
+            if (shardId == -1 || shardId == 1) {
+                String phaseName = ongoingPhasePerShard.get(shardId);
+                String segmentGeneration = parseSegmentGeneration(basePathStr);
+                logger.info("Query ID: {} IO is scheduled for shardId {} segment gen {}  " +
+                        "file {} pageId {} from Thread {} for phase {}  ", QUERY_ID,
+                    shardId,
+                    segmentGeneration,
+                    basePathStr, pageIndex,
+                    Thread.currentThread().getName(),
+                    phaseName);
+            }
         }
         return new Page(bytesToRead);
 
@@ -356,15 +365,17 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
         String fileName = path.substring(path.lastIndexOf('/') + 1);
 
         if (fileName.endsWith(".cfs")) {
-            // For .cfs files, the entire name before .cfs is the segment generation
             return fileName.substring(0, fileName.lastIndexOf('.'));
         } else {
-            // For other files, extract between first and second underscore
             int firstUnderscore = fileName.indexOf('_');
             int secondUnderscore = fileName.indexOf('_', firstUnderscore + 1);
 
             if (firstUnderscore != -1 && secondUnderscore != -1) {
                 return fileName.substring(firstUnderscore, secondUnderscore);
+            } else if (firstUnderscore != -1) {
+                // Handle case with only one underscore
+                int dotIndex = fileName.lastIndexOf('.');
+                return dotIndex != -1 ? fileName.substring(firstUnderscore, dotIndex) : fileName.substring(firstUnderscore);
             }
         }
         return null;

@@ -295,7 +295,7 @@ public abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult
          * could stack overflow. To prevent this, we fork if we are called back on the same thread that execution started on and otherwise
          * we can continue (cf. InitialSearchPhase#maybeFork).
          */
-        ongoingPhasePerShard.put(shardIndex, this.getName());
+        ongoingPhasePerShard.put(shardIndex, getName());
         if (shard == null) {
             fork(() -> onShardFailure(shardIndex, null, shardIt, new NoShardAvailableActionException(shardIt.shardId())));
         } else {
