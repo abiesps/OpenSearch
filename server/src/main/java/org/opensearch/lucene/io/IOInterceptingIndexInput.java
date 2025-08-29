@@ -191,6 +191,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
 
     @Override
     public byte readByte() throws IOException {
+        byte b = delegate.readByte();
         ensureCurrentPageLoaded();
         try {
             currentPage.getByte(curOffsetInPage);
@@ -205,7 +206,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
             currentPage.getByte(curOffsetInPage);
             curOffsetInPage++;
         }
-        return delegate.readByte();
+        return b;
     }
 
     @Override
@@ -309,33 +310,8 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
     //sequential read pattern
     @Override
     public void readBytes(byte[] bytes, int off, int len) throws IOException {
-        delegate.readBytes(bytes, off, len);//no validations needed post this
-        int bytesRemaining = len;
-        int destOffset = off;
-
-        while (bytesRemaining > 0) {
-            ensureCurrentPageLoaded();
-            // Calculate how many bytes we can read from current page
-            long availableInPage = currentPage.getSize() - curOffsetInPage;
-            int bytesToRead = (int) Math.min(bytesRemaining, availableInPage);
-            curOffsetInPage += bytesToRead;
-            destOffset += bytesToRead;
-            bytesRemaining -= bytesToRead;
-
-            if (bytesRemaining > 0 && curOffsetInPage >= currentPage.getSize()) {
-                // Check if we're at the end of the file
-                long currentFilePosition = getAbsoluteCurrentPosition();
-                //Only move to next page if there's more data in the file
-                long nextPageStartOffset = ((long) (currentPageIndex + 1)) << pageSizePower;
-                if (nextPageStartOffset < fileLength) {
-                    moveToNextPage();
-                } else {
-                    //Should never land here
-                    // We're at the end of the file, no more pages available
-                    throw new EOFException("No more data available. Requested " + bytesRemaining +
-                        " more bytes but reached end of file at position " + currentFilePosition);
-                }
-            }
+        for (int i = 0; i < len; i++) {
+            bytes[off + i] = readByte();
         }
     }
 
@@ -363,7 +339,8 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
             }
             String phaseName = ongoingPhasePerShard.get(shardId);
             String segmentGeneration = parseSegmentGeneration(basePathStr);
-            logger.info("IO is scheduled for shardId {} segment gen {}  file {} pageId {} from Thread {} for phase {}  ", shardId,
+            logger.info("IO is scheduled for shardId {} segment gen {}  " +
+                    "file {} pageId {} from Thread {} for phase {}  ", shardId,
                 segmentGeneration,
                 basePathStr, pageIndex,
                 Thread.currentThread().getName(),
@@ -423,10 +400,11 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
 
     @Override
     public void close() throws IOException {
+        delegate.close();
         logger.debug("Closing IOInterceptingIndexInput for file: {}", name);
         // Clear held pages - they will be automatically cleaned up by Cleaner
         currentPage = null;
-        delegate.close();
+
     }
 
     @Override
@@ -461,15 +439,11 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
 
     @Override
     public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
-        if ((length | offset) < 0 || length > this.length() - offset) {
-            throw new IllegalArgumentException(
-                "slice() " + sliceDescription + " out of bounds: offset=" + offset +
-                    ",length=" + length + ",fileLength=" + fileLength + ": " + this);
-        }
 
+        IndexInput slice = delegate.slice(sliceDescription, offset, length);
         return new IOInterceptingIndexInput(
             getFullSliceDescription(sliceDescription),
-            delegate.slice(sliceDescription, offset, length),
+            slice,
             off + offset,
             length,
             context,
