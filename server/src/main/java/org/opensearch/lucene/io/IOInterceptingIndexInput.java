@@ -339,7 +339,6 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
         }
     }
 
-
     Page loadPage(int pageIndex) throws IOException {
         validatePageIndex(pageIndex);
         Page page = bufferCache.getPage(cacheKey(name, pageIndex), (k, v) -> {
@@ -363,11 +362,26 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
                 shardId = Integer.parseInt(shardID);
             }
             String phaseName = ongoingPhasePerShard.get(shardId);
-            logger.info("IO is scheduled for shardId {}  file {} pageId {} from Thread {} for phase {}  ", shardId, basePathStr, pageIndex, Thread.currentThread().getName(),
+            String segmentGeneration = parseSegmentGeneration(basePathStr);
+            logger.info("IO is scheduled for shardId {} segment gen {}  file {} pageId {} from Thread {} for phase {}  ", shardId,
+                segmentGeneration,
+                basePathStr, pageIndex,
+                Thread.currentThread().getName(),
                 phaseName);
         }
         return new Page(bytesToRead);
 
+    }
+
+    public static String parseSegmentGeneration(String path) {
+        String fileName = path.substring(path.lastIndexOf('/') + 1);
+        int firstUnderscore = fileName.indexOf('_');
+        int secondUnderscore = fileName.indexOf('_', firstUnderscore + 1);
+
+        if (firstUnderscore != -1 && secondUnderscore != -1) {
+            return fileName.substring(firstUnderscore, secondUnderscore);
+        }
+        return null;
     }
 
     public static String parseShardId(String path) {

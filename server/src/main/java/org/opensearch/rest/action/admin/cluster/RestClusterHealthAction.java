@@ -32,6 +32,8 @@
 
 package org.opensearch.rest.action.admin.cluster;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.opensearch.action.admin.cluster.health.ClusterHealthRequest;
 import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.IndicesOptions;
@@ -39,6 +41,7 @@ import org.opensearch.cluster.health.ClusterHealthStatus;
 import org.opensearch.common.Priority;
 import org.opensearch.common.logging.DeprecationLogger;
 import org.opensearch.core.common.Strings;
+import org.opensearch.lucene.io.BufferCache;
 import org.opensearch.rest.BaseRestHandler;
 import org.opensearch.rest.RestRequest;
 import org.opensearch.rest.action.RestStatusToXContentListener;
@@ -52,17 +55,18 @@ import java.util.Set;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.unmodifiableList;
+import static org.opensearch.index.store.FsDirectoryFactory.bufferCache;
 import static org.opensearch.rest.RestRequest.Method.GET;
 import static org.opensearch.transport.client.Requests.clusterHealthRequest;
 
 /**
  * Transport action to get cluster health
- *
  * @opensearch.api
  */
 public class RestClusterHealthAction extends BaseRestHandler {
 
     private static final DeprecationLogger deprecationLogger = DeprecationLogger.getLogger(RestClusterHealthAction.class);
+    private static final Logger logger = LogManager.getLogger(RestClusterHealthAction.class);
 
     @Override
     public List<Route> routes() {
@@ -86,6 +90,13 @@ public class RestClusterHealthAction extends BaseRestHandler {
     }
 
     public static ClusterHealthRequest fromRequest(final RestRequest request) {
+
+        logger.info("Clearning page cache !!");
+        BufferCache.CacheStats stats = bufferCache.getStats();
+        logger.info("Cache states before clean up {} ", stats);
+        bufferCache.runCleanup();
+        stats = bufferCache.getStats();
+        logger.info("Cache states after clean up {} ", stats);
         final ClusterHealthRequest clusterHealthRequest = clusterHealthRequest(Strings.splitStringByCommaToArray(request.param("index")));
         clusterHealthRequest.indicesOptions(IndicesOptions.fromRequest(request, clusterHealthRequest.indicesOptions()));
         clusterHealthRequest.local(request.paramAsBoolean("local", clusterHealthRequest.local()));

@@ -78,7 +78,7 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
         } // can we set on both - node and index level, some nodes might be running on NFS so they might need simple rather than native
     }, Property.IndexScope, Property.NodeScope);
 
-    static BufferCache bufferCache = new BufferCache();
+    public static BufferCache bufferCache = new BufferCache();
 
     @Override
     public Directory newDirectory(IndexSettings indexSettings, ShardPath path) throws IOException {
