@@ -52,7 +52,7 @@ public class BufferCache {
         this.cacheStatsFuture = this.cacheStatsLogger.scheduleAtFixedRate(() -> {
             CacheStats stats = getStats();
             logger.info("PageCache stats {}", stats);
-        }, 30, 30, TimeUnit.SECONDS);
+        }, 30000, 300000, TimeUnit.MINUTES);
 
 
     }
