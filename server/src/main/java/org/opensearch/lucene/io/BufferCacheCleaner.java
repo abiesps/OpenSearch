@@ -34,7 +34,7 @@ public class BufferCacheCleaner implements Runnable {
         this.cache.entrySet().removeIf(entry -> {
             Page page = entry.getValue();
             if (page.getRefCount() == 1) {
-                logger.info("Page [{}] has been cleared for file {} ", page, entry.getKey());
+                //logger.info("Page [{}] has been cleared for file {} ", page, entry.getKey());
                 return true;
             }
             return false;

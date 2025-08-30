@@ -13,6 +13,7 @@ import org.opensearch.action.search.SearchPhaseResults;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.core.action.ActionListener;
+import org.opensearch.lucene.io.ReadEventLogger;
 import org.opensearch.search.SearchPhaseResult;
 
 import java.util.List;
@@ -36,6 +37,7 @@ public final class PipelinedRequest extends SearchRequest {
         pipeline.transformRequest(this, requestListener, requestContext);
     }
 
+
     public ActionListener<SearchResponse> transformResponseListener(ActionListener<SearchResponse> responseListener) {
         return pipeline.transformResponseListener(this, ActionListener.wrap(response -> {
             // Extract processor execution details
@@ -45,6 +47,7 @@ public final class PipelinedRequest extends SearchRequest {
                 response.getInternalResponse().getProcessorResult().addAll(details);
             }
             responseListener.onResponse(response);
+            ReadEventLogger.instance.flushNow();
         }, responseListener::onFailure), requestContext);
     }
 

@@ -323,6 +323,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 e -> {}
             );
         }
+
         executeRequest(task, searchRequest, this::searchAsyncAction, listener);
     }
 
@@ -424,6 +425,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         SearchAsyncActionProvider searchAsyncActionProvider,
         ActionListener<SearchResponse> originalListener
     ) {
+
         final long relativeStartNanos = System.nanoTime();
         final SearchTimeProvider timeProvider = new SearchTimeProvider(
             originalSearchRequest.getOrCreateAbsoluteStartMillis(),
