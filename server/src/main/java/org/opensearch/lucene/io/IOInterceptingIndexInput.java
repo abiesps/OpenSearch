@@ -264,21 +264,20 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
     @Override
     public short readShort(long pos) throws IOException {
 
-        byte b1 = readByte(pos - off);
-        byte b2 = readByte(pos - off + 1);
+        byte b1 = readByte(pos );
+        byte b2 = readByte(pos + 1);
         return (short)((b2 & 0xFF) << 8 | (b1 & 0xFF));
 
     }
 
     @Override
     public int readInt(long pos) throws IOException {
-        pos = pos + off;
         // Int spans across pages - read byte by byte - it doesnt matter to do even read byte by byte as this
         //is only intended for intercepting page io
-        byte b1 = readByte(pos - off);
-        byte b2 = readByte(pos - off + 1);
-        byte b3 = readByte(pos - off + 2);
-        byte b4 = readByte(pos - off + 3);
+        byte b1 = readByte(pos );
+        byte b2 = readByte(pos + 1);
+        byte b3 = readByte(pos  + 2);
+        byte b4 = readByte(pos  + 3);
         return (b4 & 0xFF) << 24 | (b3 & 0xFF) << 16 | (b2 & 0xFF) << 8 | (b1 & 0xFF);
 
     }
@@ -286,14 +285,14 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
     @Override
     public long readLong(long pos) throws IOException {
 
-            byte b1 = readByte(pos - off);
-            byte b2 = readByte(pos - off + 1);
-            byte b3 = readByte(pos - off + 2);
-            byte b4 = readByte(pos - off + 3);
-            byte b5 = readByte(pos - off + 4);
-            byte b6 = readByte(pos - off + 5);
-            byte b7 = readByte(pos - off + 6);
-            byte b8 = readByte(pos - off + 7);
+            byte b1 = readByte(pos );
+            byte b2 = readByte(pos  + 1);
+            byte b3 = readByte(pos  + 2);
+            byte b4 = readByte(pos  + 3);
+            byte b5 = readByte(pos  + 4);
+            byte b6 = readByte(pos  + 5);
+            byte b7 = readByte(pos  + 6);
+            byte b8 = readByte(pos  + 7);
             return (b8 & 0xFFL) << 56
                 | (b7 & 0xFFL) << 48
                 | (b6 & 0xFFL) << 40
@@ -445,7 +444,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
 
     @Override
     public long length() {
-        return sliceLength;
+        return delegate.length();
     }
 
     @Override
