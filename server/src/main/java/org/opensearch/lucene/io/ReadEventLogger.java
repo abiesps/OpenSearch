@@ -5,6 +5,7 @@ package org.opensearch.lucene.io;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.opensearch.action.support.replication.PendingReplicationActions;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -20,6 +21,7 @@ public class ReadEventLogger implements AutoCloseable {
 
     private static final DateTimeFormatter SECOND_FMT =
         DateTimeFormatter.ISO_INSTANT.withZone(ZoneOffset.UTC);
+    public static ReadEventLogger instance = new ReadEventLogger(Duration.ofSeconds(30));
 
     private final Duration flushInterval;
     private final ScheduledExecutorService scheduler;
@@ -32,11 +34,11 @@ public class ReadEventLogger implements AutoCloseable {
     private final ConcurrentMap<Integer, Queue<ReadEvent>> eventsByShard = new ConcurrentHashMap<>();
 
     /** Create with a default 5s flush interval. */
-    public ReadEventLogger() {
+    private ReadEventLogger() {
         this(Duration.ofSeconds(5));
     }
 
-    public ReadEventLogger(Duration flushInterval) {
+    private ReadEventLogger(Duration flushInterval) {
         this.flushInterval = flushInterval == null ? Duration.ofSeconds(5) : flushInterval;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "read-event-logger");
