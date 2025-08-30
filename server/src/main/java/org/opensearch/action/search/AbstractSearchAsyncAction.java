@@ -519,6 +519,7 @@ public abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult
 
     private void executePhase(SearchPhase phase) {
         Span phaseSpan = tracer.startSpan(SpanCreationContext.server().name("[phase/" + phase.getName() + "]"));
+        logger.info("Starting search phase [{}]", phase.getName());
         try (final SpanScope scope = tracer.withSpanInScope(phaseSpan)) {
             onPhaseStart(phase);
             phase.recordAndRun();
