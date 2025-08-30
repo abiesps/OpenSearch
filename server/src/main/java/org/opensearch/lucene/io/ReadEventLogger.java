@@ -93,13 +93,6 @@ public class ReadEventLogger implements AutoCloseable {
         }
     }
 
-    /**
-     * Prints:
-     *  1) Per shard + phase + second: distinct threads (IO concurrency)
-     *  2) Per shard + phase + segGen + second: distinct threads
-     *
-     * Assumes readTime is epoch millis.
-     */
     private void logConcurrencySummaries(int shardId, List<ReadEvent> batch) {
         // phase -> second -> threads
         Map<String, Map<Long, Set<String>>> byPhaseSecond = new HashMap<>();
@@ -107,11 +100,14 @@ public class ReadEventLogger implements AutoCloseable {
         // phase -> segGen -> second -> threads
         Map<String, Map<String, Map<Long, Set<String>>>> byPhaseSegSecond = new HashMap<>();
 
+        // Raw event counts per phase/second
+        Map<String, Map<Long, Integer>> eventsPerPhaseSecond = new HashMap<>();
+
         for (ReadEvent e : batch) {
             String phase = nonNull(e.getPhaseName());
             String segGen = nonNull(e.getSegGen());
             String thread = nonNull(e.getThreadName());
-            long second = TimeUnit.MILLISECONDS.toSeconds(e.getReadTime());
+            long second = TimeUnit.MILLISECONDS.toSeconds(e.getReadTime()); // epoch millis -> second
 
             byPhaseSecond
                 .computeIfAbsent(phase, k -> new HashMap<>())
@@ -123,23 +119,30 @@ public class ReadEventLogger implements AutoCloseable {
                 .computeIfAbsent(segGen, k -> new HashMap<>())
                 .computeIfAbsent(second, k -> new HashSet<>())
                 .add(thread);
+
+            eventsPerPhaseSecond
+                .computeIfAbsent(phase, k -> new HashMap<>())
+                .merge(second, 1, Integer::sum);
         }
 
-        // Build deterministic output
         StringBuilder sb = new StringBuilder(1024);
         sb.append("=== ReadEvent Concurrency Summary (per second) ===\n")
             .append("shardId=").append(shardId)
             .append(", windowSize=").append(batch.size()).append(" events")
             .append(", at ").append(Instant.now()).append('\n');
 
-        // Per Phase
+        // ---- Per Phase ----
         sb.append("---- Per Phase ----\n");
         for (String phase : sortedKeys(byPhaseSecond)) {
             Map<Long, Set<String>> secMap = byPhaseSecond.get(phase);
             sb.append("phase=").append(phase).append('\n');
             for (Long sec : new TreeSet<>(secMap.keySet())) {
-                int threads = secMap.get(sec).size();
-                sb.append("  ").append(formatSecond(sec)).append("  threads=").append(threads).append('\n');
+                Set<String> names = secMap.get(sec);
+                int threads = names.size();
+                sb.append("  ").append(formatSecond(sec))
+                    .append("  threads=").append(threads)
+                    .append("  threadNames=").append(formatThreadList(names))
+                    .append('\n');
             }
             IntSummaryStatistics stats = secMap.values().stream().mapToInt(Set::size).summaryStatistics();
             sb.append("  summary: min=").append(stats.getMin())
@@ -147,7 +150,7 @@ public class ReadEventLogger implements AutoCloseable {
                 .append(", max=").append(stats.getMax()).append('\n');
         }
 
-        // Per Phase + SegGen
+        // ---- Per Phase + SegGen ----
         sb.append("---- Per Phase + SegGen ----\n");
         for (String phase : sortedKeys(byPhaseSegSecond)) {
             Map<String, Map<Long, Set<String>>> segMap = byPhaseSegSecond.get(phase);
@@ -156,8 +159,12 @@ public class ReadEventLogger implements AutoCloseable {
                 Map<Long, Set<String>> secMap = segMap.get(segGen);
                 sb.append("  segGen=").append(segGen).append('\n');
                 for (Long sec : new TreeSet<>(secMap.keySet())) {
-                    int threads = secMap.get(sec).size();
-                    sb.append("    ").append(formatSecond(sec)).append("  threads=").append(threads).append('\n');
+                    Set<String> names = secMap.get(sec);
+                    int threads = names.size();
+                    sb.append("    ").append(formatSecond(sec))
+                        .append("  threads=").append(threads)
+                        .append("  threadNames=").append(formatThreadList(names))
+                        .append('\n');
                 }
                 IntSummaryStatistics stats = secMap.values().stream().mapToInt(Set::size).summaryStatistics();
                 sb.append("    summary: min=").append(stats.getMin())
@@ -166,8 +173,50 @@ public class ReadEventLogger implements AutoCloseable {
             }
         }
 
-        // emit in chunks (no truncation)
+        // ---- Totals Per Second (threads + active segs + events + threadNames) ----
+        sb.append("---- Totals Per Second ----\n");
+        for (String phase : sortedKeys(byPhaseSecond)) {
+            sb.append("phase=").append(phase).append('\n');
+
+            Map<Long, Set<String>> threadsPerSecond = byPhaseSecond.get(phase);
+            Map<String, Map<Long, Set<String>>> segMap = byPhaseSegSecond.getOrDefault(phase, Map.of());
+            Map<Long, Integer> activeSegsPerSecond = new HashMap<>();
+            for (Map<Long, Set<String>> secMap : segMap.values()) {
+                for (Map.Entry<Long, Set<String>> e : secMap.entrySet()) {
+                    if (!e.getValue().isEmpty()) {
+                        activeSegsPerSecond.merge(e.getKey(), 1, Integer::sum);
+                    }
+                }
+            }
+
+            TreeSet<Long> seconds = new TreeSet<>();
+            seconds.addAll(threadsPerSecond.keySet());
+            seconds.addAll(activeSegsPerSecond.keySet());
+            seconds.addAll(eventsPerPhaseSecond.getOrDefault(phase, Map.of()).keySet());
+
+            for (Long sec : seconds) {
+                Set<String> names = threadsPerSecond.getOrDefault(sec, Set.of());
+                int threads = names.size();
+                int activeSegs = activeSegsPerSecond.getOrDefault(sec, 0);
+                int events = eventsPerPhaseSecond.getOrDefault(phase, Map.of()).getOrDefault(sec, 0);
+                sb.append("  ").append(formatSecond(sec))
+                    .append("  threads=").append(threads)
+                    .append("  activeSegs=").append(activeSegs)
+                    .append("  events=").append(events)
+                    .append("  threadNames=").append(formatThreadList(names))
+                    .append('\n');
+            }
+        }
+
+        // Emit (chunked to avoid downstream truncation; replace with logger.info if you didn't add chunking)
         logInfoChunked(sb.toString());
+    }
+
+    private static String formatThreadList(Collection<String> threads) {
+        if (threads == null || threads.isEmpty()) return "[]";
+        return threads.stream()
+            .sorted()
+            .collect(Collectors.joining(", ", "[", "]"));
     }
 
     /** Splits very large log messages into parts so nothing gets truncated downstream. */
