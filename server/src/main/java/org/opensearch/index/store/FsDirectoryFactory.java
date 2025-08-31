@@ -50,6 +50,7 @@ import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.lucene.io.BufferCache;
+import org.opensearch.lucene.io.ForcedDirectIODirectory;
 import org.opensearch.lucene.io.IOInterceptingDirectory;
 import org.opensearch.plugins.IndexStorePlugin;
 
@@ -121,7 +122,8 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                     delegate =  new HybridDirectory(lockFactory, setPreload(mMapDirectory, preLoadExtensions), nioFileExtensions);
                 }
                 if (delegate == null) delegate = dir;
-                return new IOInterceptingDirectory(location, lockFactory, bufferCache, delegate);
+                return new ForcedDirectIODirectory(delegate);
+               // return new IOInterceptingDirectory(location, lockFactory, bufferCache, delegate);
             case NIOFS:
                 return new NIOFSDirectory(location, lockFactory);
             default:

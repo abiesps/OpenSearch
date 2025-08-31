@@ -88,7 +88,8 @@ final class PointTreeTraversal {
     private static void intersectWithRanges(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
         throws IOException {
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
-
+        logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
+            collector, Thread.currentThread().getName(), Thread.currentThread().getId());
         switch (r) {
             case CELL_INSIDE_QUERY:
                 collector.countNode((int) pointTree.size());
