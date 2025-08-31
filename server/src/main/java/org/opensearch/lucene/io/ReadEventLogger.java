@@ -103,12 +103,20 @@ public class ReadEventLogger implements AutoCloseable {
         // Raw event counts per phase/second
         Map<String, Map<Long, Integer>> eventsPerPhaseSecond = new HashMap<>();
 
+        // NEW: totals per phase + segGen (all threads)
+        Map<String, Map<String, Integer>> totalEventsByPhaseSeg = new HashMap<>();
+
+        // NEW: totals per phase + segGen from SEARCH threads only
+        Map<String, Map<String, Integer>> searchEventsByPhaseSeg = new HashMap<>();
+        Map<String, Map<String, Set<String>>> searchThreadsByPhaseSeg = new HashMap<>();
+
         for (ReadEvent e : batch) {
             String phase = nonNull(e.getPhaseName());
             String segGen = nonNull(e.getSegGen());
             String thread = nonNull(e.getThreadName());
             long second = TimeUnit.MILLISECONDS.toSeconds(e.getReadTime()); // epoch millis -> second
 
+            // existing aggregations
             byPhaseSecond
                 .computeIfAbsent(phase, k -> new HashMap<>())
                 .computeIfAbsent(second, k -> new HashSet<>())
@@ -123,6 +131,23 @@ public class ReadEventLogger implements AutoCloseable {
             eventsPerPhaseSecond
                 .computeIfAbsent(phase, k -> new HashMap<>())
                 .merge(second, 1, Integer::sum);
+
+            // NEW: totals for this segGen (all threads)
+            totalEventsByPhaseSeg
+                .computeIfAbsent(phase, k -> new HashMap<>())
+                .merge(segGen, 1, Integer::sum);
+
+            // NEW: search-thread-only tallies
+            if (isSearchThread(thread)) {
+                searchEventsByPhaseSeg
+                    .computeIfAbsent(phase, k -> new HashMap<>())
+                    .merge(segGen, 1, Integer::sum);
+
+                searchThreadsByPhaseSeg
+                    .computeIfAbsent(phase, k -> new HashMap<>())
+                    .computeIfAbsent(segGen, k -> new HashSet<>())
+                    .add(thread);
+            }
         }
 
         StringBuilder sb = new StringBuilder(1024);
@@ -208,9 +233,54 @@ public class ReadEventLogger implements AutoCloseable {
             }
         }
 
-        // Emit (chunked to avoid downstream truncation; replace with logger.info if you didn't add chunking)
+        // ---- NEW: Search Threads: IO by SegGen ----
+        sb.append("---- Search Threads: IO by SegGen ----\n");
+        for (String phase : sortedKeys(searchEventsByPhaseSeg)) {
+            sb.append("phase=").append(phase).append('\n');
+
+            Map<String, Integer> perSeg = searchEventsByPhaseSeg.get(phase);
+            Map<String, Integer> totals = totalEventsByPhaseSeg.getOrDefault(phase, Map.of());
+            Map<String, Set<String>> perSegThreads = searchThreadsByPhaseSeg.getOrDefault(phase, Map.of());
+
+            // sort segGens by descending searchEvents (then segGen name)
+            List<Map.Entry<String, Integer>> rows = new ArrayList<>(perSeg.entrySet());
+            rows.sort((a, b) -> {
+                int c = Integer.compare(b.getValue(), a.getValue());
+                return c != 0 ? c : a.getKey().compareTo(b.getKey());
+            });
+
+            for (Map.Entry<String, Integer> e : rows) {
+                String segGen = e.getKey();
+                int searchEvents = e.getValue();
+                int total = totals.getOrDefault(segGen, 0);
+                double pct = total == 0 ? 0.0 : (100.0 * searchEvents / total);
+                Set<String> tnames = perSegThreads.getOrDefault(segGen, Set.of());
+
+                sb.append("  segGen=").append(segGen)
+                    .append("  searchEvents=").append(searchEvents)
+                    .append("  totalEvents=").append(total)
+                    .append("  pct=").append(String.format(Locale.ROOT, "%.1f%%", pct))
+                    .append("  uniqueThreads=").append(tnames.size())
+                    .append("  threadNames=").append(formatThreadList(tnames))
+                    .append('\n');
+            }
+        }
+
+        // Emit (chunked to avoid downstream truncation)
         logInfoChunked(sb.toString());
     }
+
+    /** Treat only the OpenSearch search thread-pool as "search threads". */
+    private static boolean isSearchThread(String name) {
+        if (name == null) return false;
+        // explicitly exclude these
+        if (name.startsWith("lookup-thread-")) return false;
+        if (name.contains("[index_searcher]")) return false;
+
+        // accept only the search pool, e.g. "...[search][T#11]"
+        return name.contains("[search]");
+    }
+
 
     private static String formatThreadList(Collection<String> threads) {
         if (threads == null || threads.isEmpty()) return "[]";
