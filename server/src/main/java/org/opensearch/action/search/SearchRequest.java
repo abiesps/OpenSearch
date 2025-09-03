@@ -607,7 +607,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
      * cluster can be throttled with this number to reduce the cluster load. The default is {@code 5}
      */
     public int getMaxConcurrentShardRequests() {
-        return maxConcurrentShardRequests == 0 ? 16 : maxConcurrentShardRequests;
+        return maxConcurrentShardRequests == 0 ? 200 : maxConcurrentShardRequests;
     }
 
     /**
