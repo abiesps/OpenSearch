@@ -42,6 +42,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
     protected final long pageSizeMask;
     protected final long sliceLength;
     protected final String basePathStr;
+    //private final String resourceDescription;
     // Current page state
     protected int currentPageIndex = -1;
     protected Page currentPage;
@@ -55,6 +56,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
                                         String name,
                                          Path basePath) throws IOException {
         super(resourceDescription);
+       // this.resourceDescription = "IOInterceptingIndexInput " + basePath.toString();
         this.delegate = underlyingIndexInput;
         this.context = context;
         this.off = 0;
@@ -349,7 +351,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
                 String phaseName = ongoingPhasePerShard.get(shardId);
                 String segmentGeneration = parseSegmentGeneration(basePathStr);
                 ReadEvent readEvent = new ReadEvent(shardId, Thread.currentThread().getName(),
-                    System.currentTimeMillis(), name, segmentGeneration, phaseName, QUERY_ID);
+                    System.currentTimeMillis(), name, segmentGeneration, phaseName, QUERY_ID, toString());
                 ReadEventLogger.instance.accept(readEvent);
             }
 

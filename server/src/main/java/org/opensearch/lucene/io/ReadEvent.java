@@ -3,6 +3,7 @@ package org.opensearch.lucene.io;
 import java.util.Objects;
 
 public class ReadEvent {
+    private final String resourceDescription;
     private String queryId;
     private int shardId;
     private String threadName;
@@ -11,10 +12,9 @@ public class ReadEvent {
     private String segGen;
     private String phaseName;
 
-    public ReadEvent() {}
 
     public ReadEvent(int shardId, String threadName, long readTime, String fileName,
-                     String segGen, String phaseName, String queryId) {
+                     String segGen, String phaseName, String queryId, String resourceDescription) {
         this.shardId = shardId;
         this.threadName = threadName;
         this.readTime = readTime;
@@ -22,6 +22,7 @@ public class ReadEvent {
         this.segGen = segGen;
         this.phaseName = phaseName;
         this.queryId = queryId;
+        this.resourceDescription = resourceDescription;
     }
 
     // Getters
@@ -52,12 +53,13 @@ public class ReadEvent {
             && Objects.equals(fileName, that.fileName)
             && Objects.equals(segGen, that.segGen)
             && Objects.equals(phaseName, that.phaseName)
-            && Objects.equals(queryId, that.queryId);
+            && Objects.equals(queryId, that.queryId)
+        && Objects.equals(resourceDescription, that.resourceDescription);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(shardId, threadName, fileName, segGen, phaseName, queryId);
+        return Objects.hash(shardId, threadName, fileName, segGen, phaseName, queryId, resourceDescription);
     }
 
     @Override
@@ -70,6 +72,7 @@ public class ReadEvent {
             ", fileName='" + fileName + '\'' +
             ", segGen='" + segGen + '\'' +
             ", phaseName='" + phaseName + '\'' +
+            ", resourceDesc='" + resourceDescription + '\'' +
             '}';
     }
 }
