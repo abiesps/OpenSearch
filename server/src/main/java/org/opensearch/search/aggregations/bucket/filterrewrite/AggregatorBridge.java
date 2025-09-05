@@ -126,7 +126,17 @@ public abstract class AggregatorBridge {
             subAggCollectorParam
         );
 
-        return multiRangesTraverse(tree, collector);
+        RangeCollector prefetchingCollector = createCollector(
+            ranges,
+            incrementFunc,
+            size,
+            activeIndex,
+            getBucketOrd,
+            optimizeResult,
+            subAggCollectorParam
+        );
+
+        return multiRangesTraverse(tree, collector, prefetchingCollector);
     }
 
     /**

@@ -73,8 +73,17 @@ final class PointTreeTraversal {
      * @param collector the collector to use for gathering results
      * @return a {@link FilterRewriteOptimizationContext.OptimizeResult} object containing debug information about the traversal
      */
-    static FilterRewriteOptimizationContext.OptimizeResult multiRangesTraverse(final PointValues.PointTree tree, RangeCollector collector)
+    static FilterRewriteOptimizationContext.OptimizeResult multiRangesTraverse(final PointValues.PointTree tree, RangeCollector collector,
+                                                                               RangeCollector prefetchingRangeCollector)
         throws IOException {
+
+        PointValues.IntersectVisitor prefetchingVisitor = getIntersectVisitor(collector);
+        try {
+            intersectWithRanges2(prefetchingVisitor, tree, prefetchingRangeCollector);
+        } catch (CollectionTerminatedException e) {
+            logger.debug("Early terminate since no more range to collect");
+        }
+
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
         try {
             intersectWithRanges(visitor, tree, collector);
@@ -85,8 +94,60 @@ final class PointTreeTraversal {
         return collector.getResult();
     }
 
+    /**
+     * Traverses the given {@link PointValues.PointTree} and collects document counts for the intersecting ranges.
+     *
+     * @param tree      the point tree to traverse
+     * @param collector the collector to use for gathering results
+     * @return a {@link FilterRewriteOptimizationContext.OptimizeResult} object containing debug information about the traversal
+     */
+    static FilterRewriteOptimizationContext.OptimizeResult multiRangesTraverse(final PointValues.PointTree tree, RangeCollector collector)
+        throws IOException {
+        PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
+        //RangeCollector collector2
+        try {
+            intersectWithRanges(visitor, tree, collector);
+        } catch (CollectionTerminatedException e) {
+            logger.debug("Early terminate since no more range to collect");
+        }
+        collector.finalizePreviousRange();
+        return collector.getResult();
+    }
+
+    private static void intersectWithRanges2(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
+        throws IOException {
+
+        PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
+        logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
+            collector, Thread.currentThread().getName(), Thread.currentThread().getId());
+        switch (r) {
+            case CELL_INSIDE_QUERY:
+                collector.countNode((int) pointTree.size());
+                if (collector.hasSubAgg()) {
+                  // pointTree.prefetchDocIDs(visitor);
+                   // pointTree.visitDocIDs(visitor);
+                } else {
+                    collector.visitInner();
+                }
+                break;
+            case CELL_CROSSES_QUERY:
+                if (pointTree.moveToChild()) {
+                    do {
+                        intersectWithRanges2(visitor, pointTree, collector);
+                    } while (pointTree.moveToSibling());
+                    pointTree.moveToParent();
+                } else {
+                    pointTree.prefetchDocValues(visitor);
+                    collector.visitLeaf();
+                }
+                break;
+            case CELL_OUTSIDE_QUERY:
+        }
+    }
+
     private static void intersectWithRanges(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
         throws IOException {
+
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
         logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
             collector, Thread.currentThread().getName(), Thread.currentThread().getId());
