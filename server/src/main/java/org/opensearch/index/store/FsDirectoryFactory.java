@@ -122,8 +122,8 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                     delegate =  new HybridDirectory(lockFactory, setPreload(mMapDirectory, preLoadExtensions), nioFileExtensions);
                 }
                 if (delegate == null) delegate = dir;
-                return new ForcedDirectIODirectory(delegate);
-               // return new IOInterceptingDirectory(location, lockFactory, bufferCache, delegate);
+                //return new ForcedDirectIODirectory(delegate);
+               return new IOInterceptingDirectory(location, lockFactory, bufferCache, delegate);
             case NIOFS:
                 return new NIOFSDirectory(location, lockFactory);
             default:
