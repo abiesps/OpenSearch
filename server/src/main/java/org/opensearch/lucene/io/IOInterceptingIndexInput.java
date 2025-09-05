@@ -351,7 +351,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
                 String phaseName = ongoingPhasePerShard.get(shardId);
                 String segmentGeneration = parseSegmentGeneration(basePathStr);
                 ReadEvent readEvent = new ReadEvent(shardId, Thread.currentThread().getName(),
-                    System.currentTimeMillis(), name, segmentGeneration, phaseName, QUERY_ID, toString());
+                    System.currentTimeMillis(), name, segmentGeneration, phaseName, QUERY_ID, toString(), pageIndex);
                 ReadEventLogger.instance.accept(readEvent);
             }
 

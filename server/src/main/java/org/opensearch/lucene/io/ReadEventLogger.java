@@ -266,6 +266,46 @@ public class ReadEventLogger implements AutoCloseable {
             }
         }
 
+        sb.append("---- Resources (files): totals & pageIds ----\n");
+
+// key by resourceDescription if present; else fall back to fileName
+        Map<String, ResourceAgg> resAggs = new HashMap<>();
+        for (ReadEvent e : batch) {
+            String key = e.getResourceDescription();
+            if (key == null || "(null)".equals(key)) {
+                key = e.getFileName() == null ? "(unknown)" : e.getFileName();
+            }
+            ResourceAgg agg = resAggs.computeIfAbsent(key, k -> new ResourceAgg());
+            agg.events++;
+            agg.pages.add(e.getPageIndex());
+        }
+
+// sort by descending events
+        List<Map.Entry<String, ResourceAgg>> rows = new ArrayList<>(resAggs.entrySet());
+        rows.sort((a,b) -> {
+            int c = Integer.compare(b.getValue().events, a.getValue().events);
+            return c != 0 ? c : a.getKey().compareTo(b.getKey());
+        });
+
+        for (Map.Entry<String, ResourceAgg> row : rows) {
+            String res = row.getKey();
+            ResourceAgg agg = row.getValue();
+            // pretty-print pages (sorted, and capped to keep logs tidy)
+            List<Integer> sortedPages = new ArrayList<>(agg.pages);
+            Collections.sort(sortedPages);
+            int maxShow = Math.min(100, sortedPages.size()); // cap to 100 page ids per line
+            String pagesStr = sortedPages.subList(0, maxShow).toString();
+            if (sortedPages.size() > maxShow) {
+                pagesStr = pagesStr.substring(0, pagesStr.length()-1) + ", ... +" + (sortedPages.size()-maxShow) + "]";
+            }
+
+            sb.append("resource=").append(res)
+                .append("  events=").append(agg.events)
+                .append("  uniquePages=").append(agg.pages.size())
+                .append("  pageIds=").append(pagesStr)
+                .append('\n');
+        }
+
         // Emit (chunked to avoid downstream truncation)
         logInfoChunked(sb.toString());
     }
@@ -281,6 +321,10 @@ public class ReadEventLogger implements AutoCloseable {
         return name.contains("[search]");
     }
 
+    private static final class ResourceAgg {
+        int events = 0;
+        Set<Integer> pages = new HashSet<>();
+    }
 
     private static String formatThreadList(Collection<String> threads) {
         if (threads == null || threads.isEmpty()) return "[]";

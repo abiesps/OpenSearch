@@ -4,6 +4,7 @@ import java.util.Objects;
 
 public class ReadEvent {
     private final String resourceDescription;
+    private final int pageIndex;              // NEW
     private String queryId;
     private int shardId;
     private String threadName;
@@ -12,9 +13,9 @@ public class ReadEvent {
     private String segGen;
     private String phaseName;
 
-
     public ReadEvent(int shardId, String threadName, long readTime, String fileName,
-                     String segGen, String phaseName, String queryId, String resourceDescription) {
+                     String segGen, String phaseName, String queryId,
+                     String resourceDescription, int pageIndex) { // NEW param
         this.shardId = shardId;
         this.threadName = threadName;
         this.readTime = readTime;
@@ -23,6 +24,7 @@ public class ReadEvent {
         this.phaseName = phaseName;
         this.queryId = queryId;
         this.resourceDescription = resourceDescription;
+        this.pageIndex = pageIndex;          // NEW
     }
 
     // Getters
@@ -33,15 +35,10 @@ public class ReadEvent {
     public String getFileName() { return fileName; }
     public String getSegGen() { return segGen; }
     public String getPhaseName() { return phaseName; }
+    public String getResourceDescription() { return resourceDescription; } // NEW
+    public int getPageIndex() { return pageIndex; } // NEW
 
-    // Setters
-    public void setQueryId(String queryId) { this.queryId = queryId; }
-    public void setShardId(int shardId) { this.shardId = shardId; }
-    public void setThreadName(String threadName) { this.threadName = threadName; }
-    public void setReadTime(long readTime) { this.readTime = readTime; }
-    public void setFileName(String fileName) { this.fileName = fileName; }
-    public void setSegGen(String segGen) { this.segGen = segGen; }
-    public void setPhaseName(String phaseName) { this.phaseName = phaseName; }
+    // Setters (unchanged) ...
 
     @Override
     public boolean equals(Object o) {
@@ -49,17 +46,19 @@ public class ReadEvent {
         if (o == null || getClass() != o.getClass()) return false;
         ReadEvent that = (ReadEvent) o;
         return shardId == that.shardId
+            && pageIndex == that.pageIndex               // NEW
             && Objects.equals(threadName, that.threadName)
             && Objects.equals(fileName, that.fileName)
             && Objects.equals(segGen, that.segGen)
             && Objects.equals(phaseName, that.phaseName)
             && Objects.equals(queryId, that.queryId)
-        && Objects.equals(resourceDescription, that.resourceDescription);
+            && Objects.equals(resourceDescription, that.resourceDescription);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(shardId, threadName, fileName, segGen, phaseName, queryId, resourceDescription);
+        return Objects.hash(shardId, threadName, fileName, segGen, phaseName,
+            queryId, resourceDescription, pageIndex); // NEW
     }
 
     @Override
@@ -72,6 +71,7 @@ public class ReadEvent {
             ", fileName='" + fileName + '\'' +
             ", segGen='" + segGen + '\'' +
             ", phaseName='" + phaseName + '\'' +
+            ", pageIndex=" + pageIndex +         // NEW
             ", resourceDesc='" + resourceDescription + '\'' +
             '}';
     }
