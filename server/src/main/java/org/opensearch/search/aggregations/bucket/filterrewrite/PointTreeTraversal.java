@@ -14,6 +14,7 @@ import org.apache.lucene.index.PointValues;
 import org.apache.lucene.search.CollectionTerminatedException;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.opensearch.common.CheckedRunnable;
+import org.opensearch.env.Environment;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.RangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SimpleRangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SubAggRangeCollector;
@@ -73,15 +74,30 @@ final class PointTreeTraversal {
      * @param collector the collector to use for gathering results
      * @return a {@link FilterRewriteOptimizationContext.OptimizeResult} object containing debug information about the traversal
      */
+
+
+    static boolean DOUBLE_TRAVERSAL = false;
+    static {
+
+        String doubleTraversalStr = System.getenv("DOUBLE_TRAVERSAL_ENABLED");
+        if (doubleTraversalStr == null || doubleTraversalStr.equalsIgnoreCase("false")) {
+            DOUBLE_TRAVERSAL = false;
+        } else {
+            DOUBLE_TRAVERSAL = true;
+        }
+    }
     static FilterRewriteOptimizationContext.OptimizeResult multiRangesTraverse(final PointValues.PointTree tree, RangeCollector collector,
                                                                                RangeCollector prefetchingRangeCollector)
         throws IOException {
 
-        PointValues.IntersectVisitor prefetchingVisitor = getIntersectVisitor(collector);
-        try {
-            intersectWithRanges2(prefetchingVisitor, tree, prefetchingRangeCollector);
-        } catch (CollectionTerminatedException e) {
-            logger.debug("Early terminate since no more range to collect");
+        if (DOUBLE_TRAVERSAL) {
+
+            PointValues.IntersectVisitor prefetchingVisitor = getIntersectVisitor(collector);
+            try {
+                intersectWithRanges2(prefetchingVisitor, tree, prefetchingRangeCollector);
+            } catch (CollectionTerminatedException e) {
+                logger.debug("Early terminate since no more range to collect");
+            }
         }
 
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
