@@ -256,6 +256,12 @@ tasks.register("branchConsistency") {
 }
 
 allprojects {
+
+  repositories {
+    mavenLocal()
+    // existing repositories will be added by other plugins
+  }
+
   // configure compiler options
   tasks.withType(JavaCompile).configureEach { JavaCompile compile ->
     options.fork = true
