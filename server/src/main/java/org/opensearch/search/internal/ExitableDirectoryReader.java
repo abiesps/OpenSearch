@@ -203,14 +203,14 @@ class ExitableDirectoryReader extends FilterDirectoryReader {
     }
 
     // delegates to PointValues but adds query cancellation checks
-    private static class ExitablePointTree implements PointValues.PointTree {
+    public static class ExitablePointTree implements PointValues.PointTree {
         private final PointValues values;
         private final PointValues.PointTree pointTree;
         private final ExitableIntersectVisitor exitableIntersectVisitor;
         private final QueryCancellation queryCancellation;
         private int calls;
 
-        private ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
+        public  ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
             this.values = values;
             this.pointTree = pointTree;
             this.exitableIntersectVisitor = new ExitableIntersectVisitor(queryCancellation);

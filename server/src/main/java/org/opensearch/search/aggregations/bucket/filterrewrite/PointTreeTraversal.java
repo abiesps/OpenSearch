@@ -10,6 +10,7 @@ package org.opensearch.search.aggregations.bucket.filterrewrite;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.index.ExitableDirectoryReader;
 import org.apache.lucene.index.PointValues;
 import org.apache.lucene.search.CollectionTerminatedException;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -170,7 +171,8 @@ final class PointTreeTraversal {
     private static void intersectWithRanges(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
         throws IOException {
 
-        BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+        ExitableDirectoryReader.ExitablePointTree exitablePointTree = (ExitableDirectoryReader.ExitablePointTree) pointTree;
+        BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) exitablePointTree;
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
         logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
             collector, Thread.currentThread().getName(), Thread.currentThread().getId());
