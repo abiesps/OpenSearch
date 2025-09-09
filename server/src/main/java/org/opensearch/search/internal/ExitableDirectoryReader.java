@@ -49,6 +49,7 @@ import org.opensearch.common.lucene.index.SequentialStoredFieldsLeafReader;
 import org.opensearch.core.common.Strings;
 
 import java.io.IOException;
+import java.util.Set;
 
 /**
  * Wraps an {@link IndexReader} with a {@link QueryCancellation}
@@ -216,6 +217,22 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             return bkdPointTree.logState();
         }
 
+        public Set<Long> leafBlocks() {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.leafBlocks();
+        }
+
+
+        public void prefetch(long offset) {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.prefetch(offset, 1);
+        }
+
+        public void resetNodeDataPosition() throws IOException {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.resetNodeDataPosition();
+        }
+
         public  ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
             this.values = values;
             this.pointTree = pointTree;
@@ -283,6 +300,11 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             if ((calls++ & ExitableIntersectVisitor.MAX_CALLS_BEFORE_QUERY_TIMEOUT_CHECK) == 0) {
                 queryCancellation.checkCancelled();
             }
+        }
+
+        public void visitLeaf(PointValues.IntersectVisitor visitor, Long leafBlock) {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.visitLeaf(leafBlock);
         }
     }
 

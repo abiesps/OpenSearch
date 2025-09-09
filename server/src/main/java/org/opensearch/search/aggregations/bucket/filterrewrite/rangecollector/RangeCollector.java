@@ -85,4 +85,6 @@ public interface RangeCollector {
     void visitLeaf();
 
     FilterRewriteOptimizationContext.OptimizeResult getResult();
+
+    default int docCount() { return 0;};
 }

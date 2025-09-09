@@ -22,6 +22,7 @@ import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.Si
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SubAggRangeCollector;
 
 import java.io.IOException;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -94,15 +95,6 @@ final class PointTreeTraversal {
         throws IOException {
 
         if (DOUBLE_TRAVERSAL) {
-
-//            PointValues.IntersectVisitor prefetchingVisitor = getIntersectVisitor(collector);
-//            try {
-//                intersectWithRanges2(prefetchingVisitor, tree, prefetchingRangeCollector);
-//            } catch (CollectionTerminatedException e) {
-//                logger.debug("Early terminate since no more range to collect");
-//            }
-
-            PointValues.IntersectVisitor visitor = getIntersectLeafCachingVisitor(collector);
         }
 
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
@@ -176,14 +168,16 @@ final class PointTreeTraversal {
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
         logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
             collector, Thread.currentThread().getName(), Thread.currentThread().getId());
-        logger.info(exitablePointTree.logState());
+        //logger.info(exitablePointTree.logState());
         switch (r) {
             case CELL_INSIDE_QUERY:
                 collector.countNode((int) pointTree.size());
                 if (collector.hasSubAgg()) {
+                    System.out.println("Any subaggregations ??");
                     pointTree.visitDocIDs(visitor);
                 } else {
-                    collector.visitInner();
+                    System.out.println("Collector visit inner");
+                    //collector.visitInner();//what does it do ?//Just debug I can remove this//
                 }
                 break;
             case CELL_CROSSES_QUERY:
@@ -195,12 +189,39 @@ final class PointTreeTraversal {
                 } else {
                     logger.info("Now visiting leaf {} ", exitablePointTree.logState());
                     pointTree.visitDocValues(visitor);//
-                    collector.visitLeaf();
+                   // collector.visitLeaf();only for debugging.
 
                 }
                 break;
             case CELL_OUTSIDE_QUERY:
         }
+        Set<Long> longs = exitablePointTree.leafBlocks();
+        logger.info("Total number of docs as per collector {} ", collector.docCount());
+        logger.info("All leaf blocks that we need to prefetch {} ", longs);
+        for (Long leafBlock : longs) {
+            exitablePointTree.prefetch(leafBlock);
+            //collector.visitLeaf();
+          //  pointTree.visitDocValues(visitor);//
+        }
+
+        for (Long leafBlock : longs) {
+//            exitablePointTree.prefetch(leafBlock);
+//            collector.visitLeaf();
+//            pointTree.visitDocValues(visitor);//
+
+            exitablePointTree.visitLeaf(visitor, leafBlock);
+            //Code to read docId from respective leaf of the BKDTree
+            /// leafNodes.seek(getLeafBlockFP());
+            ///         // How many points are stored in this leaf cell:
+            ///         int count = leafNodes.readVInt();
+            ///         // No need to call grow(), it has been called up-front
+            ///         // Borrow scratchIterator.docIds as decoding buffer
+            ///         docIdsWriter.readInts(leafNodes, count, visitor, scratchIterator.docIDs);
+        }
+        logger.info("Total number of docs as per collector {} ", collector.docCount());
+        //traverse again.
+
+
     }
 
     private static PointValues.IntersectVisitor getIntersectLeafCachingVisitor(RangeCollector collector) {
@@ -273,8 +294,13 @@ final class PointTreeTraversal {
         };
     }
 
+
     private static PointValues.IntersectVisitor getIntersectVisitor(RangeCollector collector) {
         return new PointValues.IntersectVisitor() {
+
+            public int totalDocsVisited() {
+                return collector.docCount();
+            }
             @Override
             public void visit(int docID) {
                 collector.collectDocId(docID);
