@@ -225,7 +225,7 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
 
         public void prefetch(long offset) {
             BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            return bkdPointTree.prefetch(offset, 1);
+            bkdPointTree.prefetch(offset, 1);
         }
 
         public  ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
@@ -297,9 +297,9 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             }
         }
 
-        public void visitDocValues(PointValues.IntersectVisitor visitor, Long leafBlock) throws IOException {
+        public void visitDocValues(PointValues.IntersectVisitor visitor, long leafBlock) throws IOException {
             BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            return bkdPointTree.visitDocValues(visitor, leafBlock);
+            bkdPointTree.visitDocValues(visitor, leafBlock);
         }
     }
 
