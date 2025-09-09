@@ -94,23 +94,25 @@ final class PointTreeTraversal {
                                                                                RangeCollector prefetchingRangeCollector)
         throws IOException {
 
-        if (DOUBLE_TRAVERSAL) {
-        }
-
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
         try {
             intersectWithRanges(visitor, tree, collector);
             org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
             Set<Long> longs = exitablePointTree.leafBlocks();
-            logger.info("Total number of docs as per collector {} ", collector.docCount());
+            logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
             logger.info("All leaf blocks that we need to prefetch {} ", longs);
             for (Long leafBlock : longs) {
                 exitablePointTree.prefetch(leafBlock);
             }
             for (Long leafBlock : longs) {
+                if (leafBlock == 0) {
+                    System.out.println("Skipping leaf block " + leafBlock);
+                    continue;
+                }
+                System.out.println("Visiting leaf block " + leafBlock);
                 exitablePointTree.visitDocValues(visitor, leafBlock);
             }
-            logger.info("Total number of docs as per collector {} ", collector.docCount());
+            logger.info("Total number of docs after leaf visit as per collector {} ", collector.docCount());
         } catch (CollectionTerminatedException e) {
             logger.debug("Early terminate since no more range to collect");
         }
