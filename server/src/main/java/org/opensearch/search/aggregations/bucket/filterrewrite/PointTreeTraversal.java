@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.PointValues;
 import org.apache.lucene.search.CollectionTerminatedException;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.util.bkd.BKDReader;
 import org.opensearch.common.CheckedRunnable;
 import org.opensearch.env.Environment;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.RangeCollector;
@@ -93,12 +94,14 @@ final class PointTreeTraversal {
 
         if (DOUBLE_TRAVERSAL) {
 
-            PointValues.IntersectVisitor prefetchingVisitor = getIntersectVisitor(collector);
-            try {
-                intersectWithRanges2(prefetchingVisitor, tree, prefetchingRangeCollector);
-            } catch (CollectionTerminatedException e) {
-                logger.debug("Early terminate since no more range to collect");
-            }
+//            PointValues.IntersectVisitor prefetchingVisitor = getIntersectVisitor(collector);
+//            try {
+//                intersectWithRanges2(prefetchingVisitor, tree, prefetchingRangeCollector);
+//            } catch (CollectionTerminatedException e) {
+//                logger.debug("Early terminate since no more range to collect");
+//            }
+
+            PointValues.IntersectVisitor visitor = getIntersectLeafCachingVisitor(collector);
         }
 
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
@@ -110,6 +113,8 @@ final class PointTreeTraversal {
         collector.finalizePreviousRange();
         return collector.getResult();
     }
+
+
 
     /**
      * Traverses the given {@link PointValues.PointTree} and collects document counts for the intersecting ranges.
@@ -165,9 +170,11 @@ final class PointTreeTraversal {
     private static void intersectWithRanges(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
         throws IOException {
 
+        BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
         logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
             collector, Thread.currentThread().getName(), Thread.currentThread().getId());
+        logger.info(bkdPointTree.logState());
         switch (r) {
             case CELL_INSIDE_QUERY:
                 collector.countNode((int) pointTree.size());
@@ -184,12 +191,84 @@ final class PointTreeTraversal {
                     } while (pointTree.moveToSibling());
                     pointTree.moveToParent();
                 } else {
-                    pointTree.visitDocValues(visitor);
+                    logger.info("Now visiting leaf {} ", bkdPointTree.logState());
+                    pointTree.visitDocValues(visitor);//
                     collector.visitLeaf();
+
                 }
                 break;
             case CELL_OUTSIDE_QUERY:
         }
+    }
+
+    private static PointValues.IntersectVisitor getIntersectLeafCachingVisitor(RangeCollector collector) {
+        return new PointValues.IntersectVisitor() {
+            @Override
+            public void visit(int docID) {
+                collector.collectDocId(docID);
+            }
+
+            @Override
+            public void visit(DocIdSetIterator iterator) throws IOException {
+                collector.collectDocIdSet(iterator);
+            }
+
+            @Override
+            public void visit(int docID, byte[] packedValue) throws IOException {
+                visitPoints(packedValue, () -> {
+                    collector.count();
+                    if (collector.hasSubAgg()) {
+                        collector.collectDocId(docID);
+                    }
+                });
+            }
+
+            @Override
+            public void visit(DocIdSetIterator iterator, byte[] packedValue) throws IOException {
+                visitPoints(packedValue, () -> {
+                    // note: iterator can only iterate once
+                    for (int doc = iterator.nextDoc(); doc != NO_MORE_DOCS; doc = iterator.nextDoc()) {
+                        collector.count();
+                        if (collector.hasSubAgg()) {
+                            collector.collectDocId(doc);
+                        }
+                    }
+                });
+            }
+
+            private void visitPoints(byte[] packedValue, CheckedRunnable<IOException> collect) throws IOException {
+                if (!collector.withinUpperBound(packedValue)) {
+                    collector.finalizePreviousRange();
+                    if (collector.iterateRangeEnd(packedValue, true)) {
+                        throw new CollectionTerminatedException();
+                    }
+                }
+
+                if (collector.withinRange(packedValue)) {
+                    collect.run();
+                }
+            }
+
+            @Override
+            public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
+                // try to find the first range that may collect values from this cell
+                if (!collector.withinUpperBound(minPackedValue)) {
+                    collector.finalizePreviousRange();
+                    if (collector.iterateRangeEnd(minPackedValue, false)) {
+                        throw new CollectionTerminatedException();
+                    }
+                }
+                // after the loop, min < upper
+                // cell could be outside [min max] lower
+                if (!collector.withinLowerBound(maxPackedValue)) {
+                    return PointValues.Relation.CELL_OUTSIDE_QUERY;
+                }
+                if (collector.withinRange(minPackedValue) && collector.withinRange(maxPackedValue)) {
+                    return PointValues.Relation.CELL_INSIDE_QUERY;
+                }
+                return PointValues.Relation.CELL_CROSSES_QUERY;
+            }
+        };
     }
 
     private static PointValues.IntersectVisitor getIntersectVisitor(RangeCollector collector) {
