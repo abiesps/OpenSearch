@@ -302,9 +302,9 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             }
         }
 
-        public void visitLeaf(PointValues.IntersectVisitor visitor, Long leafBlock) {
+        public void visitDocValues(PointValues.IntersectVisitor visitor, Long leafBlock) throws IOException {
             BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            return bkdPointTree.visitLeaf(leafBlock);
+            return bkdPointTree.visitDocValues(visitor, leafBlock);
         }
     }
 

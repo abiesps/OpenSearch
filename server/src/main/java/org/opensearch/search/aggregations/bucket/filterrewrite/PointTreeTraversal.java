@@ -209,7 +209,7 @@ final class PointTreeTraversal {
 //            collector.visitLeaf();
 //            pointTree.visitDocValues(visitor);//
 
-            exitablePointTree.visitLeaf(visitor, leafBlock);
+            exitablePointTree.visitDocValues(visitor, leafBlock);
             //Code to read docId from respective leaf of the BKDTree
             /// leafNodes.seek(getLeafBlockFP());
             ///         // How many points are stored in this leaf cell:
