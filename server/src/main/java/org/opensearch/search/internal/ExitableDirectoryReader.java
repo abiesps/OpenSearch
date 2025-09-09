@@ -55,7 +55,7 @@ import java.io.IOException;
  *
  * @opensearch.internal
  */
-class ExitableDirectoryReader extends FilterDirectoryReader {
+public class ExitableDirectoryReader extends FilterDirectoryReader {
 
     /**
      * Used to check if query cancellation is actually enabled

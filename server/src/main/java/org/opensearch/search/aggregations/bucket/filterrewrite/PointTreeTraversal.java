@@ -171,7 +171,7 @@ final class PointTreeTraversal {
     private static void intersectWithRanges(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
         throws IOException {
 
-        ExitableDirectoryReader.ExitablePointTree exitablePointTree = (ExitableDirectoryReader.ExitablePointTree) pointTree;
+        org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) pointTree;
         BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) exitablePointTree;
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
         logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
