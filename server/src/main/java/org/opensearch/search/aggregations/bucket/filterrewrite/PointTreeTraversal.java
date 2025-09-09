@@ -67,14 +67,6 @@ final class PointTreeTraversal {
         }
     }
 
-    /**
-     * Traverses the given {@link PointValues.PointTree} and collects document counts for the intersecting ranges.
-     *
-     * @param tree      the point tree to traverse
-     * @param collector the collector to use for gathering results
-     * @return a {@link FilterRewriteOptimizationContext.OptimizeResult} object containing debug information about the traversal
-     */
-
 
     static boolean DOUBLE_TRAVERSAL = false;
     static {
@@ -86,6 +78,15 @@ final class PointTreeTraversal {
             DOUBLE_TRAVERSAL = true;
         }
     }
+
+    /**
+     * Traverses the given {@link PointValues.PointTree} and collects document counts for the intersecting ranges.
+     *
+     * @param tree      the point tree to traverse
+     * @param collector the collector to use for gathering results
+     * @param prefetchingRangeCollector the collector to use for gathering results
+     * @return a {@link FilterRewriteOptimizationContext.OptimizeResult} object containing debug information about the traversal
+     */
     static FilterRewriteOptimizationContext.OptimizeResult multiRangesTraverse(final PointValues.PointTree tree, RangeCollector collector,
                                                                                RangeCollector prefetchingRangeCollector)
         throws IOException {
