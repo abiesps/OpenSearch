@@ -170,7 +170,6 @@ final class PointTreeTraversal {
         for (Long leafBlock : longs) {
             exitablePointTree.prefetch(leafBlock);
         }
-
         for (Long leafBlock : longs) {
             exitablePointTree.visitDocValues(visitor, leafBlock);
         }
