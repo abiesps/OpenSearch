@@ -99,7 +99,7 @@ final class PointTreeTraversal {
             long st = System.currentTimeMillis();
             intersectWithRanges(visitor, tree, collector);
             long et = System.currentTimeMillis();
-            logger.info("IntersectWithRanges traversed in {} for segment {} ms", (et - st), collector);
+            logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
             org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
             Set<Long> longs = exitablePointTree.leafBlocks();
             logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
@@ -158,8 +158,8 @@ final class PointTreeTraversal {
         org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) pointTree;
        // BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) exitablePointTree;
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
-        logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
-            collector, Thread.currentThread().getName(), Thread.currentThread().getId());
+        //logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
+         //   collector, Thread.currentThread().getName(), Thread.currentThread().getId());
         //logger.info(exitablePointTree.logState());
         switch (r) {
             case CELL_INSIDE_QUERY:
@@ -179,7 +179,7 @@ final class PointTreeTraversal {
                     } while (pointTree.moveToSibling());
                     pointTree.moveToParent();
                 } else {
-                    logger.info("Now visiting leaf {} ", exitablePointTree.logState());
+                    //logger.info("Now visiting leaf {} ", exitablePointTree.logState());
                     pointTree.visitDocValues(visitor);//
                    // collector.visitLeaf();only for debugging.
 
