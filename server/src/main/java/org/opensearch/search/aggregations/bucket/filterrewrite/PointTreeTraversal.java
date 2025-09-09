@@ -10,19 +10,15 @@ package org.opensearch.search.aggregations.bucket.filterrewrite;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.index.ExitableDirectoryReader;
 import org.apache.lucene.index.PointValues;
 import org.apache.lucene.search.CollectionTerminatedException;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.util.bkd.BKDReader;
 import org.opensearch.common.CheckedRunnable;
-import org.opensearch.env.Environment;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.RangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SimpleRangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SubAggRangeCollector;
 
 import java.io.IOException;
-import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -38,7 +34,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * PointValues.IntersectVisitor} implementation is responsible for the actual visitation and
  * document count collection.
  */
-public final class PointTreeTraversal {
+final class PointTreeTraversal {
     private PointTreeTraversal() {}
 
     private static final Logger logger = LogManager.getLogger(Helper.loggerName);
@@ -70,69 +66,6 @@ public final class PointTreeTraversal {
         }
     }
 
-
-    static boolean DOUBLE_TRAVERSAL = false;
-    static {
-
-        String doubleTraversalStr = System.getenv("DOUBLE_TRAVERSAL_ENABLED");
-        if (doubleTraversalStr == null || doubleTraversalStr.equalsIgnoreCase("false")) {
-            DOUBLE_TRAVERSAL = false;
-        } else {
-            DOUBLE_TRAVERSAL = true;
-        }
-    }
-
-    /**
-     * Traverses the given {@link PointValues.PointTree} and collects document counts for the intersecting ranges.
-     *
-     * @param tree      the point tree to traverse
-     * @param collector the collector to use for gathering results
-     * @param prefetchingRangeCollector the collector to use for gathering results
-     * @return a {@link FilterRewriteOptimizationContext.OptimizeResult} object containing debug information about the traversal
-     */
-    static FilterRewriteOptimizationContext.OptimizeResult multiRangesTraverse(final PointValues.PointTree tree, RangeCollector collector,
-                                                                               RangeCollector prefetchingRangeCollector)
-        throws IOException {
-
-        PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
-        try {
-            org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
-            logger.info("Size of inner nodes {} ", exitablePointTree.innerNodesSize());
-            long st = System.currentTimeMillis();
-            intersectWithRanges(visitor, tree, collector);
-            long et = System.currentTimeMillis();
-            logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
-            Set<Long> longs = exitablePointTree.leafBlocks();
-            logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
-            logger.info("All leaf blocks that we need to prefetch {} ", longs);
-            st = System.currentTimeMillis();
-            for (Long leafBlock : longs) {
-                exitablePointTree.prefetch(leafBlock);
-            }
-            et = System.currentTimeMillis();
-            logger.info("Time to prefetch {} leaves in {} for segment {} ms",longs.size(), (et - st), collector);
-            st = System.currentTimeMillis();
-            for (Long leafBlock : longs) {
-                if (leafBlock == 0) {
-                    //System.out.println("Skipping leaf block " + leafBlock);
-                    continue;
-                }
-                //System.out.println("Visiting leaf block " + leafBlock);
-                exitablePointTree.visitDocValues(visitor, leafBlock);
-            }
-            et = System.currentTimeMillis();
-
-            logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
-                et - st);
-        } catch (CollectionTerminatedException e) {
-            logger.debug("Early terminate since no more range to collect");
-        }
-        collector.finalizePreviousRange();
-        return collector.getResult();
-    }
-
-
-
     /**
      * Traverses the given {@link PointValues.PointTree} and collects document counts for the intersecting ranges.
      *
@@ -143,7 +76,6 @@ public final class PointTreeTraversal {
     static FilterRewriteOptimizationContext.OptimizeResult multiRangesTraverse(final PointValues.PointTree tree, RangeCollector collector)
         throws IOException {
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
-        //RangeCollector collector2
         try {
             intersectWithRanges(visitor, tree, collector);
         } catch (CollectionTerminatedException e) {
@@ -155,22 +87,15 @@ public final class PointTreeTraversal {
 
     private static void intersectWithRanges(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
         throws IOException {
-
-        org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) pointTree;
-       // BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) exitablePointTree;
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
-        //logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
-         //   collector, Thread.currentThread().getName(), Thread.currentThread().getId());
-        //logger.info(exitablePointTree.logState());
+
         switch (r) {
             case CELL_INSIDE_QUERY:
                 collector.countNode((int) pointTree.size());
                 if (collector.hasSubAgg()) {
-                    //System.out.println("Any subaggregations ??");
                     pointTree.visitDocIDs(visitor);
                 } else {
-                    //System.out.println("Collector visit inner");
-                    //collector.visitInner();//what does it do ?//Just debug I can remove this//
+                    collector.visitInner();
                 }
                 break;
             case CELL_CROSSES_QUERY:
@@ -180,95 +105,16 @@ public final class PointTreeTraversal {
                     } while (pointTree.moveToSibling());
                     pointTree.moveToParent();
                 } else {
-                    //logger.info("Now visiting leaf {} ", exitablePointTree.logState());
-                    exitablePointTree.resetNodeDataPosition();
-                   // pointTree.visitDocValues(visitor);//
-                   // collector.visitLeaf();only for debugging.
-
+                    pointTree.visitDocValues(visitor);
+                    collector.visitLeaf();
                 }
                 break;
             case CELL_OUTSIDE_QUERY:
         }
-
     }
-
-    private static PointValues.IntersectVisitor getIntersectLeafCachingVisitor(RangeCollector collector) {
-        return new PointValues.IntersectVisitor() {
-            @Override
-            public void visit(int docID) {
-                collector.collectDocId(docID);
-            }
-
-            @Override
-            public void visit(DocIdSetIterator iterator) throws IOException {
-                collector.collectDocIdSet(iterator);
-            }
-
-            @Override
-            public void visit(int docID, byte[] packedValue) throws IOException {
-                visitPoints(packedValue, () -> {
-                    collector.count();
-                    if (collector.hasSubAgg()) {
-                        collector.collectDocId(docID);
-                    }
-                });
-            }
-
-            @Override
-            public void visit(DocIdSetIterator iterator, byte[] packedValue) throws IOException {
-                visitPoints(packedValue, () -> {
-                    // note: iterator can only iterate once
-                    for (int doc = iterator.nextDoc(); doc != NO_MORE_DOCS; doc = iterator.nextDoc()) {
-                        collector.count();
-                        if (collector.hasSubAgg()) {
-                            collector.collectDocId(doc);
-                        }
-                    }
-                });
-            }
-
-            private void visitPoints(byte[] packedValue, CheckedRunnable<IOException> collect) throws IOException {
-                if (!collector.withinUpperBound(packedValue)) {
-                    collector.finalizePreviousRange();
-                    if (collector.iterateRangeEnd(packedValue, true)) {
-                        throw new CollectionTerminatedException();
-                    }
-                }
-
-                if (collector.withinRange(packedValue)) {
-                    collect.run();
-                }
-            }
-
-            @Override
-            public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
-                // try to find the first range that may collect values from this cell
-                if (!collector.withinUpperBound(minPackedValue)) {
-                    collector.finalizePreviousRange();
-                    if (collector.iterateRangeEnd(minPackedValue, false)) {
-                        throw new CollectionTerminatedException();
-                    }
-                }
-                // after the loop, min < upper
-                // cell could be outside [min max] lower
-                if (!collector.withinLowerBound(maxPackedValue)) {
-                    return PointValues.Relation.CELL_OUTSIDE_QUERY;
-                }
-                if (collector.withinRange(minPackedValue) && collector.withinRange(maxPackedValue)) {
-                    return PointValues.Relation.CELL_INSIDE_QUERY;
-                }
-                return PointValues.Relation.CELL_CROSSES_QUERY;
-            }
-        };
-    }
-
 
     private static PointValues.IntersectVisitor getIntersectVisitor(RangeCollector collector) {
         return new PointValues.IntersectVisitor() {
-
-            public int totalDocsVisited() {
-                return collector.docCount();
-            }
             @Override
             public void visit(int docID) {
                 collector.collectDocId(docID);
