@@ -113,10 +113,10 @@ final class PointTreeTraversal {
             st = System.currentTimeMillis();
             for (Long leafBlock : longs) {
                 if (leafBlock == 0) {
-                    System.out.println("Skipping leaf block " + leafBlock);
+                    //System.out.println("Skipping leaf block " + leafBlock);
                     continue;
                 }
-                System.out.println("Visiting leaf block " + leafBlock);
+                //System.out.println("Visiting leaf block " + leafBlock);
                 exitablePointTree.visitDocValues(visitor, leafBlock);
             }
             et = System.currentTimeMillis();
@@ -165,10 +165,10 @@ final class PointTreeTraversal {
             case CELL_INSIDE_QUERY:
                 collector.countNode((int) pointTree.size());
                 if (collector.hasSubAgg()) {
-                    System.out.println("Any subaggregations ??");
+                    //System.out.println("Any subaggregations ??");
                     pointTree.visitDocIDs(visitor);
                 } else {
-                    System.out.println("Collector visit inner");
+                    //System.out.println("Collector visit inner");
                     //collector.visitInner();//what does it do ?//Just debug I can remove this//
                 }
                 break;
