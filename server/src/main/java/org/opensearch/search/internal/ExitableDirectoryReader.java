@@ -232,7 +232,7 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             bkdPointTree.prefetch(offset, 1);
         }
 
-        public void resetNodeDataPosition() {
+        public void resetNodeDataPosition() throws IOException {
             BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
             bkdPointTree.resetNodeDataPosition();
         }
