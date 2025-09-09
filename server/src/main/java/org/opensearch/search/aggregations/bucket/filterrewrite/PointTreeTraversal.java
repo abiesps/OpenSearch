@@ -94,41 +94,82 @@ public final class PointTreeTraversal {
                                                                                RangeCollector prefetchingRangeCollector)
         throws IOException {
 
-        PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
-        try {
-            org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
-            logger.info("Size of inner nodes {} ", exitablePointTree.innerNodesSize());
-            long st = System.currentTimeMillis();
-            intersectWithRanges(visitor, tree, collector);
-            long et = System.currentTimeMillis();
-            logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
-            Set<Long> longs = exitablePointTree.leafBlocks();
-            logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
-            logger.info("All leaf blocks that we need to prefetch {} ", longs);
-            st = System.currentTimeMillis();
-            for (Long leafBlock : longs) {
-                exitablePointTree.prefetch(leafBlock);
-            }
-            et = System.currentTimeMillis();
-            logger.info("Time to prefetch {} leaves in {} for segment {} ms",longs.size(), (et - st), collector);
-            st = System.currentTimeMillis();
-            for (Long leafBlock : longs) {
-                if (leafBlock == 0) {
-                    //System.out.println("Skipping leaf block " + leafBlock);
-                    continue;
+        if (!DOUBLE_TRAVERSAL) {
+            logger.info("Taking normal path");
+            PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
+            try {
+                org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
+                logger.info("Size of inner nodes {} ", exitablePointTree.innerNodesSize());
+                long st = System.currentTimeMillis();
+                intersectWithRanges2(visitor, tree, collector);
+                long et = System.currentTimeMillis();
+                logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
+                Set<Long> longs = exitablePointTree.leafBlocks();
+                logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
+                logger.info("All leaf blocks that we need to prefetch {} ", longs);
+                st = System.currentTimeMillis();
+                for (Long leafBlock : longs) {
+                    exitablePointTree.prefetch(leafBlock);
                 }
-                //System.out.println("Visiting leaf block " + leafBlock);
-                exitablePointTree.visitDocValues(visitor, leafBlock);
-            }
-            et = System.currentTimeMillis();
+                et = System.currentTimeMillis();
+                logger.info("Time to prefetch {} leaves in {} for segment {} ms", longs.size(), (et - st), collector);
+                st = System.currentTimeMillis();
+                for (Long leafBlock : longs) {
+                    if (leafBlock == 0) {
+                        //System.out.println("Skipping leaf block " + leafBlock);
+                        continue;
+                    }
+                    //System.out.println("Visiting leaf block " + leafBlock);
+                    exitablePointTree.visitDocValues(visitor, leafBlock);
+                }
+                et = System.currentTimeMillis();
 
-            logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
-                et - st);
-        } catch (CollectionTerminatedException e) {
-            logger.debug("Early terminate since no more range to collect");
+                logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
+                    et - st);
+            } catch (CollectionTerminatedException e) {
+                logger.debug("Early terminate since no more range to collect");
+            }
+            collector.finalizePreviousRange();
+            return collector.getResult();
+        } else {
+
+            logger.info("Taking prefetch path");
+            PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
+            try {
+                org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
+                logger.info("Size of inner nodes {} ", exitablePointTree.innerNodesSize());
+                long st = System.currentTimeMillis();
+                intersectWithRanges(visitor, tree, collector);
+                long et = System.currentTimeMillis();
+                logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
+                Set<Long> longs = exitablePointTree.leafBlocks();
+                logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
+                logger.info("All leaf blocks that we need to prefetch {} ", longs);
+                st = System.currentTimeMillis();
+                for (Long leafBlock : longs) {
+                    exitablePointTree.prefetch(leafBlock);
+                }
+                et = System.currentTimeMillis();
+                logger.info("Time to prefetch {} leaves in {} for segment {} ms", longs.size(), (et - st), collector);
+                st = System.currentTimeMillis();
+                for (Long leafBlock : longs) {
+                    if (leafBlock == 0) {
+                        //System.out.println("Skipping leaf block " + leafBlock);
+                        continue;
+                    }
+                    //System.out.println("Visiting leaf block " + leafBlock);
+                    exitablePointTree.visitDocValues(visitor, leafBlock);
+                }
+                et = System.currentTimeMillis();
+
+                logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
+                    et - st);
+            } catch (CollectionTerminatedException e) {
+                logger.debug("Early terminate since no more range to collect");
+            }
+            collector.finalizePreviousRange();
+            return collector.getResult();
         }
-        collector.finalizePreviousRange();
-        return collector.getResult();
     }
 
 
@@ -185,6 +226,36 @@ public final class PointTreeTraversal {
                    // pointTree.visitDocValues(visitor);//
                    // collector.visitLeaf();only for debugging.
 
+                }
+                break;
+            case CELL_OUTSIDE_QUERY:
+        }
+
+    }
+
+    private static void intersectWithRanges2(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
+        throws IOException {
+
+        PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
+
+        switch (r) {
+            case CELL_INSIDE_QUERY:
+                collector.countNode((int) pointTree.size());
+                if (collector.hasSubAgg()) {
+                    pointTree.visitDocIDs(visitor);
+                } else {
+                    collector.visitInner();//what does it do ?//Just debug I can remove this//
+                }
+                break;
+            case CELL_CROSSES_QUERY:
+                if (pointTree.moveToChild()) {
+                    do {
+                        intersectWithRanges2(visitor, pointTree, collector);
+                    } while (pointTree.moveToSibling());
+                    pointTree.moveToParent();
+                } else {
+                     pointTree.visitDocValues(visitor);//
+                     collector.visitLeaf();//only for debugging.
                 }
                 break;
             case CELL_OUTSIDE_QUERY:
