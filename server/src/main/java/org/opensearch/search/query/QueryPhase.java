@@ -134,6 +134,8 @@ public class QueryPhase {
     }
 
     public void execute(SearchContext searchContext) throws QueryPhaseExecutionException {
+        Query query = searchContext.query();
+        System.out.println("Executing query: " + query + " of class " + query.getClass());
         if (searchContext.hasOnlySuggest()) {
             suggestProcessor.process(searchContext);
             searchContext.queryResult()
