@@ -129,37 +129,6 @@ final class PointTreeTraversal {
         return collector.getResult();
     }
 
-    private static void intersectWithRanges2(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
-        throws IOException {
-
-        PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
-        logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
-            collector, Thread.currentThread().getName(), Thread.currentThread().getId());
-        switch (r) {
-            case CELL_INSIDE_QUERY:
-                collector.countNode((int) pointTree.size());
-                if (collector.hasSubAgg()) {
-                  // pointTree.prefetchDocIDs(visitor);
-                   // pointTree.visitDocIDs(visitor);
-                } else {
-                    collector.visitInner();
-                }
-                break;
-            case CELL_CROSSES_QUERY:
-                if (pointTree.moveToChild()) {
-                    do {
-                        intersectWithRanges2(visitor, pointTree, collector);
-                    } while (pointTree.moveToSibling());
-                    pointTree.moveToParent();
-                } else {
-                    pointTree.prefetchDocValues(visitor);
-                    collector.visitLeaf();
-                }
-                break;
-            case CELL_OUTSIDE_QUERY:
-        }
-    }
-
     private static void intersectWithRanges(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, RangeCollector collector)
         throws IOException {
 
@@ -200,28 +169,12 @@ final class PointTreeTraversal {
         logger.info("All leaf blocks that we need to prefetch {} ", longs);
         for (Long leafBlock : longs) {
             exitablePointTree.prefetch(leafBlock);
-            //collector.visitLeaf();
-          //  pointTree.visitDocValues(visitor);//
         }
 
         for (Long leafBlock : longs) {
-//            exitablePointTree.prefetch(leafBlock);
-//            collector.visitLeaf();
-//            pointTree.visitDocValues(visitor);//
-
             exitablePointTree.visitDocValues(visitor, leafBlock);
-            //Code to read docId from respective leaf of the BKDTree
-            /// leafNodes.seek(getLeafBlockFP());
-            ///         // How many points are stored in this leaf cell:
-            ///         int count = leafNodes.readVInt();
-            ///         // No need to call grow(), it has been called up-front
-            ///         // Borrow scratchIterator.docIds as decoding buffer
-            ///         docIdsWriter.readInts(leafNodes, count, visitor, scratchIterator.docIDs);
         }
         logger.info("Total number of docs as per collector {} ", collector.docCount());
-        //traverse again.
-
-
     }
 
     private static PointValues.IntersectVisitor getIntersectLeafCachingVisitor(RangeCollector collector) {
