@@ -232,6 +232,11 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             bkdPointTree.prefetch(offset, 1);
         }
 
+        public void resetNodeDataPosition() {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            bkdPointTree.resetNodeDataPosition();
+        }
+
         public  ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
             this.values = values;
             this.pointTree = pointTree;

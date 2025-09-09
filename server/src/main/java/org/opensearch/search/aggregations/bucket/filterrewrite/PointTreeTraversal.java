@@ -38,7 +38,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * PointValues.IntersectVisitor} implementation is responsible for the actual visitation and
  * document count collection.
  */
-final class PointTreeTraversal {
+public final class PointTreeTraversal {
     private PointTreeTraversal() {}
 
     private static final Logger logger = LogManager.getLogger(Helper.loggerName);
@@ -102,7 +102,6 @@ final class PointTreeTraversal {
             intersectWithRanges(visitor, tree, collector);
             long et = System.currentTimeMillis();
             logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
-
             Set<Long> longs = exitablePointTree.leafBlocks();
             logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
             logger.info("All leaf blocks that we need to prefetch {} ", longs);
@@ -182,7 +181,8 @@ final class PointTreeTraversal {
                     pointTree.moveToParent();
                 } else {
                     //logger.info("Now visiting leaf {} ", exitablePointTree.logState());
-                    pointTree.visitDocValues(visitor);//
+                    exitablePointTree.resetNodeDataPosition();
+                   // pointTree.visitDocValues(visitor);//
                    // collector.visitLeaf();only for debugging.
 
                 }
