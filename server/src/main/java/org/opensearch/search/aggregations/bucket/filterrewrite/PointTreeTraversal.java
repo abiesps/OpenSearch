@@ -96,11 +96,13 @@ final class PointTreeTraversal {
 
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
         try {
+            org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
+            logger.info("Size of inner nodes {} ", exitablePointTree.innerNodesSize());
             long st = System.currentTimeMillis();
             intersectWithRanges(visitor, tree, collector);
             long et = System.currentTimeMillis();
             logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
-            org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
+
             Set<Long> longs = exitablePointTree.leafBlocks();
             logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
             logger.info("All leaf blocks that we need to prefetch {} ", longs);

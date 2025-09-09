@@ -222,6 +222,10 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             return bkdPointTree.leafBlocks();
         }
 
+        public long innerNodesSize() {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.innerNodesSize();
+        }
 
         public void prefetch(long offset) {
             BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
