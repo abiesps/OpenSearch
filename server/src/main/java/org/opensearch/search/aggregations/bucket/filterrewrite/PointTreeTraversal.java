@@ -96,14 +96,21 @@ final class PointTreeTraversal {
 
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
         try {
+            long st = System.currentTimeMillis();
             intersectWithRanges(visitor, tree, collector);
+            long et = System.currentTimeMillis();
+            logger.info("IntersectWithRanges traversed in {} for segment {} ms", (et - st), collector);
             org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
             Set<Long> longs = exitablePointTree.leafBlocks();
             logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
             logger.info("All leaf blocks that we need to prefetch {} ", longs);
+            st = System.currentTimeMillis();
             for (Long leafBlock : longs) {
                 exitablePointTree.prefetch(leafBlock);
             }
+            et = System.currentTimeMillis();
+            logger.info("Time to prefetch {} leaves in {} for segment {} ms",longs.size(), (et - st), collector);
+            st = System.currentTimeMillis();
             for (Long leafBlock : longs) {
                 if (leafBlock == 0) {
                     System.out.println("Skipping leaf block " + leafBlock);
@@ -112,7 +119,10 @@ final class PointTreeTraversal {
                 System.out.println("Visiting leaf block " + leafBlock);
                 exitablePointTree.visitDocValues(visitor, leafBlock);
             }
-            logger.info("Total number of docs after leaf visit as per collector {} ", collector.docCount());
+            et = System.currentTimeMillis();
+
+            logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
+                et - st);
         } catch (CollectionTerminatedException e) {
             logger.debug("Early terminate since no more range to collect");
         }
