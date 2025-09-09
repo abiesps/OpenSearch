@@ -100,6 +100,17 @@ final class PointTreeTraversal {
         PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
         try {
             intersectWithRanges(visitor, tree, collector);
+            org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
+            Set<Long> longs = exitablePointTree.leafBlocks();
+            logger.info("Total number of docs as per collector {} ", collector.docCount());
+            logger.info("All leaf blocks that we need to prefetch {} ", longs);
+            for (Long leafBlock : longs) {
+                exitablePointTree.prefetch(leafBlock);
+            }
+            for (Long leafBlock : longs) {
+                exitablePointTree.visitDocValues(visitor, leafBlock);
+            }
+            logger.info("Total number of docs as per collector {} ", collector.docCount());
         } catch (CollectionTerminatedException e) {
             logger.debug("Early terminate since no more range to collect");
         }
@@ -164,16 +175,7 @@ final class PointTreeTraversal {
                 break;
             case CELL_OUTSIDE_QUERY:
         }
-        Set<Long> longs = exitablePointTree.leafBlocks();
-        logger.info("Total number of docs as per collector {} ", collector.docCount());
-        logger.info("All leaf blocks that we need to prefetch {} ", longs);
-        for (Long leafBlock : longs) {
-            exitablePointTree.prefetch(leafBlock);
-        }
-        for (Long leafBlock : longs) {
-            exitablePointTree.visitDocValues(visitor, leafBlock);
-        }
-        logger.info("Total number of docs as per collector {} ", collector.docCount());
+
     }
 
     private static PointValues.IntersectVisitor getIntersectLeafCachingVisitor(RangeCollector collector) {
