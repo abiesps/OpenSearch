@@ -172,11 +172,11 @@ final class PointTreeTraversal {
         throws IOException {
 
         org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) pointTree;
-        BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) exitablePointTree;
+       // BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) exitablePointTree;
         PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
         logger.info("Intersect with ranges is called for segment {} thread name {} thread id {}",
             collector, Thread.currentThread().getName(), Thread.currentThread().getId());
-        logger.info(bkdPointTree.logState());
+        logger.info(exitablePointTree.logState());
         switch (r) {
             case CELL_INSIDE_QUERY:
                 collector.countNode((int) pointTree.size());
@@ -193,7 +193,7 @@ final class PointTreeTraversal {
                     } while (pointTree.moveToSibling());
                     pointTree.moveToParent();
                 } else {
-                    logger.info("Now visiting leaf {} ", bkdPointTree.logState());
+                    logger.info("Now visiting leaf {} ", exitablePointTree.logState());
                     pointTree.visitDocValues(visitor);//
                     collector.visitLeaf();
 

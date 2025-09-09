@@ -44,6 +44,7 @@ import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.suggest.document.CompletionTerms;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
+import org.apache.lucene.util.bkd.BKDReader;
 import org.opensearch.common.lucene.index.SequentialStoredFieldsLeafReader;
 import org.opensearch.core.common.Strings;
 
@@ -209,6 +210,11 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         private final ExitableIntersectVisitor exitableIntersectVisitor;
         private final QueryCancellation queryCancellation;
         private int calls;
+
+        public String logState() {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.logState();
+        }
 
         public  ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
             this.values = values;
