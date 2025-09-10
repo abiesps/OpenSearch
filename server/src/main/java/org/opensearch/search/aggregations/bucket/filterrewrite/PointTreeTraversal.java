@@ -163,7 +163,7 @@ public final class PointTreeTraversal {
                     //System.out.println("Visiting leaf block " + leafBlock);
 
                 }
-                //latch.await(10, TimeUnit.HOURS);
+                latch.await(10, TimeUnit.HOURS);
                 et = System.currentTimeMillis();
 
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms for {}  ", collector.docCount(),
