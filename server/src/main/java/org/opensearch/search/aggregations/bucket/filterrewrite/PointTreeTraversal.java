@@ -125,12 +125,12 @@ public final class PointTreeTraversal {
                 Set<Long> longs = exitablePointTree.leafBlocks();
                 //logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
                 //logger.info("All leaf blocks that we need to prefetch {} ", longs);
-                st = System.currentTimeMillis();
-                for (Long leafBlock : longs) {
-                    exitablePointTree.prefetch(leafBlock);
-                }
-                et = System.currentTimeMillis();
-                logger.info("Time to prefetch {} leaves in {} for segment {} ms", longs.size(), (et - st), exitablePointTree.name());
+//                st = System.currentTimeMillis();
+//                for (Long leafBlock : longs) {
+//                    exitablePointTree.prefetch(leafBlock);
+//                }
+//                et = System.currentTimeMillis();
+//                logger.info("Time to prefetch {} leaves is {} ms for segment {}", longs.size(), (et - st), exitablePointTree.name());
                 st = System.currentTimeMillis();
                 for (Long leafBlock : longs) {
                     if (leafBlock == 0) {
