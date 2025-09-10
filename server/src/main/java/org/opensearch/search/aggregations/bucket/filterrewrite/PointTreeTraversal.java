@@ -10,7 +10,6 @@ package org.opensearch.search.aggregations.bucket.filterrewrite;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.index.ExitableDirectoryReader;
 import org.apache.lucene.index.PointValues;
 import org.apache.lucene.search.CollectionTerminatedException;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -20,6 +19,7 @@ import org.opensearch.env.Environment;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.RangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SimpleRangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SubAggRangeCollector;
+import org.opensearch.search.internal.ExitableDirectoryReader;
 
 import java.io.IOException;
 import java.util.Set;
@@ -104,7 +104,6 @@ public final class PointTreeTraversal {
             PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
             try {
                 org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
-                logger.info("Size of inner nodes {} ", exitablePointTree.innerNodesSize());
                 long st = System.currentTimeMillis();
                 intersectWithRanges2(visitor, tree, collector);
                 long et = System.currentTimeMillis();
@@ -122,60 +121,18 @@ public final class PointTreeTraversal {
             PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
             try {
                 org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
-                logger.info("Size of inner nodes {} for {} ", exitablePointTree.innerNodesSize(), exitablePointTree.name());
                 long st = System.currentTimeMillis();
                 intersectWithRanges(visitor, tree, collector);
                 long et = System.currentTimeMillis();
                 logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), exitablePointTree.name());
-                Set<Long> longs = exitablePointTree.leafBlocks();
-                //logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
-                //logger.info("All leaf blocks that we need to prefetch {} ", longs);
-//                st = System.currentTimeMillis();
-//                for (Long leafBlock : longs) {
-//                    exitablePointTree.prefetch(leafBlock);
-//                }
-//                et = System.currentTimeMillis();
-//                logger.info("Time to prefetch {} leaves is {} ms for segment {}", longs.size(), (et - st), exitablePointTree.name());
                 st = System.currentTimeMillis();
-
-
-                /// concurrency here[?]
-
-                CountDownLatch latch = new CountDownLatch(longs.size());
-                for (Long leafBlock : longs) {
-                    if (leafBlock == 0) {
-                        //System.out.println("Skipping leaf block " + leafBlock);
-                        //latch.countDown();
-                        continue;
-                    }
-                    exitablePointTree.visitDocValues(visitor, leafBlock);
-//                    executors.execute(() -> {
-//                        org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree clone = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) exitablePointTree.clone();
-//                        PointValues.IntersectVisitor localVisitor = getIntersectVisitor(collector);
-//                        try {
-//                            clone.visitDocValues(localVisitor, leafBlock);
-//                        } catch (Exception e) {
-//                            e.printStackTrace();
-//                        } finally {
-//                            latch.countDown();
-//                        }
-//                    });
-                    //System.out.println("Visiting leaf block " + leafBlock);
-
-                }
-                //latch.await(10, TimeUnit.HOURS);
+                exitablePointTree.visitMatchingDocValues(visitor);
                 et = System.currentTimeMillis();
-
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms for {}  ", collector.docCount(),
                     et - st, exitablePointTree.name());
-                //logger.info("Traversal tree state with prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
             } catch (CollectionTerminatedException e) {
                 logger.info("Early terminate since no more range to collect");
             }
-//            catch (InterruptedException e) {
-//                Thread.currentThread().interrupt();
-//                throw new RuntimeException(e);
-//            }
             collector.finalizePreviousRange();
             return collector.getResult();
         }
@@ -231,8 +188,7 @@ public final class PointTreeTraversal {
                     pointTree.moveToParent();
                 } else {
                     //logger.info("Now visiting leaf {} ", exitablePointTree.logState());
-                    exitablePointTree.resetNodeDataPosition();
-                    exitablePointTree.markLeafForVisiting();
+                    ((ExitableDirectoryReader.ExitablePointTree) pointTree).prefetchDocValues(visitor);
                    // pointTree.visitDocValues(visitor);//
                    // collector.visitLeaf();only for debugging.
 

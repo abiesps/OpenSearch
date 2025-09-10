@@ -265,10 +265,17 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 // Handle leaf nodes
                 if (pointTree.moveToChild() == false) {
                     if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-                        pointTree.visitDocIDs(visitor);
+
+                        //I wont be able to terminate early here anyways because the condition is outside of pointTree.visitDocIDs,
+                        ///
+                        //pointTree.matchAllDocIDsFromCurrentNode();
+                        pointTree.prefetchDocIDs(visitor);
+                        //pointTree.visitDocIDs(visitor);
                     } else {
                         // CELL_CROSSES_QUERY
-                        pointTree.visitDocValues(visitor);
+                        //pointTree.matchAllDocValues();
+                        pointTree.prefetchDocValues(visitor);
+                        //pointTree.visitDocValues(visitor);
                     }
                     return;
                 }
@@ -367,6 +374,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                             @Override
                             public Scorer get(long leadCost) throws IOException {
                                 intersectLeft(values.getPointTree(), visitor, docCount);
+                                values.getPointTree().visitMatchingDocIDs(visitor);
+                                values.getPointTree().visitMatchingDocValues(visitor);
                                 DocIdSetIterator iterator = result.build().iterator();
                                 return new ConstantScoreScorer(score(), scoreMode, iterator);
                             }

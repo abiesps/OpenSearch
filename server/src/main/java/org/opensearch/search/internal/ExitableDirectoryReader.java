@@ -217,24 +217,22 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             return bkdPointTree.logState();
         }
 
-        public Set<Long> leafBlocks() {
-            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            return bkdPointTree.leafBlocks();
+        public void prefetchDocValues(PointValues.IntersectVisitor visitor) throws IOException {
+            pointTree.prefetchDocValues(visitor);
         }
 
-        public long innerNodesSize() {
-            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            return bkdPointTree.innerNodesSize();
+        public void prefetchDocIDs(PointValues.IntersectVisitor visitor) throws IOException {
+            pointTree.prefetchDocIDs(visitor);
         }
 
-        public void prefetch(long offset) {
-            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            bkdPointTree.prefetch(offset, 1);
+        //visit all matching doc IDs
+        public void visitMatchingDocIDs(PointValues.IntersectVisitor visitor) throws IOException {
+            pointTree.visitMatchingDocIDs(visitor);
         }
 
-        public void resetNodeDataPosition() throws IOException {
-            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            bkdPointTree.resetNodeDataPosition();
+        //visit all matching doc values
+        public void visitMatchingDocValues(PointValues.IntersectVisitor visitor) throws IOException {
+            pointTree.visitMatchingDocValues(visitor);
         }
 
         public  ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
