@@ -23,6 +23,10 @@ import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.Su
 
 import java.io.IOException;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -82,6 +86,7 @@ public final class PointTreeTraversal {
         }
     }
 
+    static ExecutorService executors = Executors.newVirtualThreadPerTaskExecutor();
     /**
      * Traverses the given {@link PointValues.PointTree} and collects document counts for the intersecting ranges.
      *
@@ -132,14 +137,31 @@ public final class PointTreeTraversal {
 //                et = System.currentTimeMillis();
 //                logger.info("Time to prefetch {} leaves is {} ms for segment {}", longs.size(), (et - st), exitablePointTree.name());
                 st = System.currentTimeMillis();
+
+
+                /// concurrency here[?]
+
+                CountDownLatch latch = new CountDownLatch(longs.size());
                 for (Long leafBlock : longs) {
                     if (leafBlock == 0) {
                         //System.out.println("Skipping leaf block " + leafBlock);
+                        latch.countDown();
                         continue;
                     }
+                    executors.execute(() -> {
+                        org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree clone = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) exitablePointTree.clone();
+                        try {
+                            clone.visitDocValues(visitor, leafBlock);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
                     //System.out.println("Visiting leaf block " + leafBlock);
-                    exitablePointTree.visitDocValues(visitor, leafBlock);
+
                 }
+                latch.await(10, TimeUnit.HOURS);
                 et = System.currentTimeMillis();
 
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms for {}  ", collector.docCount(),
@@ -147,6 +169,9 @@ public final class PointTreeTraversal {
                 //logger.info("Traversal tree state with prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
             } catch (CollectionTerminatedException e) {
                 logger.info("Early terminate since no more range to collect");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
             }
             collector.finalizePreviousRange();
             return collector.getResult();
