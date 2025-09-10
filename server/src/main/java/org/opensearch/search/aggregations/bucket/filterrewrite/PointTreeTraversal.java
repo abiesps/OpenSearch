@@ -145,25 +145,25 @@ public final class PointTreeTraversal {
                 for (Long leafBlock : longs) {
                     if (leafBlock == 0) {
                         //System.out.println("Skipping leaf block " + leafBlock);
-                        latch.countDown();
+                        //latch.countDown();
                         continue;
                     }
-                    //exitablePointTree.visitDocValues(visitor, leafBlock);
-                    executors.execute(() -> {
-                        org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree clone = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) exitablePointTree.clone();
-                        PointValues.IntersectVisitor localVisitor = getIntersectVisitor(collector);
-                        try {
-                            clone.visitDocValues(localVisitor, leafBlock);
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
+                    exitablePointTree.visitDocValues(visitor, leafBlock);
+//                    executors.execute(() -> {
+//                        org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree clone = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) exitablePointTree.clone();
+//                        PointValues.IntersectVisitor localVisitor = getIntersectVisitor(collector);
+//                        try {
+//                            clone.visitDocValues(localVisitor, leafBlock);
+//                        } catch (Exception e) {
+//                            e.printStackTrace();
+//                        } finally {
+//                            latch.countDown();
+//                        }
+//                    });
                     //System.out.println("Visiting leaf block " + leafBlock);
 
                 }
-                latch.await(10, TimeUnit.HOURS);
+                //latch.await(10, TimeUnit.HOURS);
                 et = System.currentTimeMillis();
 
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms for {}  ", collector.docCount(),
