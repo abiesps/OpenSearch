@@ -117,20 +117,20 @@ public final class PointTreeTraversal {
             PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
             try {
                 org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree exitablePointTree = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) tree;
-                logger.info("Size of inner nodes {} ", exitablePointTree.innerNodesSize());
+                logger.info("Size of inner nodes {} for {} ", exitablePointTree.innerNodesSize(), exitablePointTree.name());
                 long st = System.currentTimeMillis();
                 intersectWithRanges(visitor, tree, collector);
                 long et = System.currentTimeMillis();
-                logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
+                logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), exitablePointTree.name());
                 Set<Long> longs = exitablePointTree.leafBlocks();
-                logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
-                logger.info("All leaf blocks that we need to prefetch {} ", longs);
+                //logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
+                //logger.info("All leaf blocks that we need to prefetch {} ", longs);
                 st = System.currentTimeMillis();
                 for (Long leafBlock : longs) {
                     exitablePointTree.prefetch(leafBlock);
                 }
                 et = System.currentTimeMillis();
-                logger.info("Time to prefetch {} leaves in {} for segment {} ms", longs.size(), (et - st), collector);
+                logger.info("Time to prefetch {} leaves in {} for segment {} ms", longs.size(), (et - st), exitablePointTree.name());
                 st = System.currentTimeMillis();
                 for (Long leafBlock : longs) {
                     if (leafBlock == 0) {
@@ -142,11 +142,11 @@ public final class PointTreeTraversal {
                 }
                 et = System.currentTimeMillis();
 
-                logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
-                    et - st);
-                logger.info("Traversal tree state with prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
+                logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms for {}  ", collector.docCount(),
+                    et - st, exitablePointTree.name());
+                //logger.info("Traversal tree state with prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
             } catch (CollectionTerminatedException e) {
-                logger.debug("Early terminate since no more range to collect");
+                logger.info("Early terminate since no more range to collect");
             }
             collector.finalizePreviousRange();
             return collector.getResult();

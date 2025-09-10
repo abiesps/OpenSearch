@@ -315,6 +315,11 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
             bkdPointTree.markLeafForVisiting();
         }
+
+        public String name() {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.name();
+        }
     }
 
     /**
