@@ -204,6 +204,7 @@ public final class PointTreeTraversal {
                 } else {
                     //logger.info("Now visiting leaf {} ", exitablePointTree.logState());
                     exitablePointTree.resetNodeDataPosition();
+                    exitablePointTree.markLeafForVisiting();
                    // pointTree.visitDocValues(visitor);//
                    // collector.visitLeaf();only for debugging.
 
