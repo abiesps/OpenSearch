@@ -148,10 +148,12 @@ public final class PointTreeTraversal {
                         latch.countDown();
                         continue;
                     }
+                    //exitablePointTree.visitDocValues(visitor, leafBlock);
                     executors.execute(() -> {
                         org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree clone = (org.opensearch.search.internal.ExitableDirectoryReader.ExitablePointTree) exitablePointTree.clone();
+                        PointValues.IntersectVisitor localVisitor = getIntersectVisitor(collector);
                         try {
-                            clone.visitDocValues(visitor, leafBlock);
+                            clone.visitDocValues(localVisitor, leafBlock);
                         } catch (Exception e) {
                             e.printStackTrace();
                         } finally {
@@ -161,7 +163,7 @@ public final class PointTreeTraversal {
                     //System.out.println("Visiting leaf block " + leafBlock);
 
                 }
-                latch.await(10, TimeUnit.HOURS);
+                //latch.await(10, TimeUnit.HOURS);
                 et = System.currentTimeMillis();
 
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms for {}  ", collector.docCount(),
