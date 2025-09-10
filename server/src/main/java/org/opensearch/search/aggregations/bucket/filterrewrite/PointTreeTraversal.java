@@ -104,28 +104,9 @@ public final class PointTreeTraversal {
                 intersectWithRanges2(visitor, tree, collector);
                 long et = System.currentTimeMillis();
                 logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
-                Set<Long> longs = exitablePointTree.leafBlocks();
-                logger.info("Total number of docs as per collector before actual leaf visit {} ", collector.docCount());
-                logger.info("All leaf blocks that we need to prefetch {} ", longs);
-                st = System.currentTimeMillis();
-                for (Long leafBlock : longs) {
-                    exitablePointTree.prefetch(leafBlock);
-                }
-                et = System.currentTimeMillis();
-                logger.info("Time to prefetch {} leaves in {} for segment {} ms", longs.size(), (et - st), collector);
-                st = System.currentTimeMillis();
-                for (Long leafBlock : longs) {
-                    if (leafBlock == 0) {
-                        //System.out.println("Skipping leaf block " + leafBlock);
-                        continue;
-                    }
-                    //System.out.println("Visiting leaf block " + leafBlock);
-                    exitablePointTree.visitDocValues(visitor, leafBlock);
-                }
-                et = System.currentTimeMillis();
-
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
                     et - st);
+                logger.info("Traversal tree state without prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
             } catch (CollectionTerminatedException e) {
                 logger.debug("Early terminate since no more range to collect");
             }
@@ -164,6 +145,7 @@ public final class PointTreeTraversal {
 
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
                     et - st);
+                logger.info("Traversal tree state with prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
             } catch (CollectionTerminatedException e) {
                 logger.debug("Early terminate since no more range to collect");
             }
