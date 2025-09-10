@@ -71,14 +71,14 @@ public final class PointTreeTraversal {
     }
 
 
-    static boolean DOUBLE_TRAVERSAL = false;
+    static boolean ENABLE_PREFETCH = false;
     static {
 
-        String doubleTraversalStr = System.getenv("DOUBLE_TRAVERSAL_ENABLED");
+        String doubleTraversalStr = System.getenv("ENABLE_PREFETCH");
         if (doubleTraversalStr == null || doubleTraversalStr.equalsIgnoreCase("false")) {
-            DOUBLE_TRAVERSAL = false;
+            ENABLE_PREFETCH = false;
         } else {
-            DOUBLE_TRAVERSAL = true;
+            ENABLE_PREFETCH = true;
         }
     }
 
@@ -94,7 +94,7 @@ public final class PointTreeTraversal {
                                                                                RangeCollector prefetchingRangeCollector)
         throws IOException {
 
-        if (!DOUBLE_TRAVERSAL) {
+        if (!ENABLE_PREFETCH) {
             logger.info("Taking normal path");
             PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
             try {
@@ -113,7 +113,6 @@ public final class PointTreeTraversal {
             collector.finalizePreviousRange();
             return collector.getResult();
         } else {
-
             logger.info("Taking prefetch path");
             PointValues.IntersectVisitor visitor = getIntersectVisitor(collector);
             try {
