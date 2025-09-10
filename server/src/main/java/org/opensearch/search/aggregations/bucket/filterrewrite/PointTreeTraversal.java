@@ -171,10 +171,11 @@ public final class PointTreeTraversal {
                 //logger.info("Traversal tree state with prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
             } catch (CollectionTerminatedException e) {
                 logger.info("Early terminate since no more range to collect");
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException(e);
             }
+//            catch (InterruptedException e) {
+//                Thread.currentThread().interrupt();
+//                throw new RuntimeException(e);
+//            }
             collector.finalizePreviousRange();
             return collector.getResult();
         }
