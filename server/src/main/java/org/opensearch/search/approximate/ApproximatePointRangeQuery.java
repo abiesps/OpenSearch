@@ -41,6 +41,8 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.function.Function;
 
+import static org.opensearch.search.aggregations.bucket.filterrewrite.PointTreeTraversal.ENABLE_PREFETCH;
+
 /**
  * An approximate-able version of {@link PointRangeQuery}. It creates an instance of {@link PointRangeQuery} but short-circuits the intersect logic
  * after {@code size} is hit
@@ -246,10 +248,60 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 assert pointTree.moveToParent() == false;
             }
 
+            private void intersectLeft2(PointValues.PointTree pointTree, PointValues.IntersectVisitor visitor, long[] docCount)
+                throws IOException {
+                intersectLeft2(visitor, pointTree, docCount);
+                assert pointTree.moveToParent() == false;
+            }
+
             private void intersectRight(PointValues.PointTree pointTree, PointValues.IntersectVisitor visitor, long[] docCount)
                 throws IOException {
                 intersectRight(visitor, pointTree, docCount);
                 assert pointTree.moveToParent() == false;
+            }
+
+            public void intersectLeft2(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
+                throws IOException {
+                if (docCount[0] >= size) {
+                    return;
+                }
+                PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
+                if (r == PointValues.Relation.CELL_OUTSIDE_QUERY) {
+                    return;
+                }
+                // Handle leaf nodes
+                if (pointTree.moveToChild() == false) {
+                    if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
+                        pointTree.visitDocIDs(visitor);
+                    } else {
+                        pointTree.visitDocValues(visitor);
+                    }
+                    return;
+                }
+                // For CELL_INSIDE_QUERY, check if we can skip right child
+                if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
+                    long leftSize = pointTree.size();
+                    long needed = size - docCount[0];
+
+                    if (leftSize >= needed) {
+                        intersectLeft2(visitor, pointTree, docCount);
+                        pointTree.moveToParent();
+                        return;
+                    }
+                }
+                // We need both children - now clone right
+                PointValues.PointTree rightChild = null;
+                if (pointTree.moveToSibling()) {
+                    rightChild = pointTree.clone();
+                    pointTree.moveToParent();
+                    pointTree.moveToChild();
+                }
+                // Process both children: left first, then right if needed
+                intersectLeft2(visitor, pointTree, docCount);
+                if (docCount[0] < size && rightChild != null) {
+                    intersectLeft2(visitor, rightChild, docCount);
+                }
+                pointTree.moveToParent();
             }
 
             // custom intersect visitor to walk the left of the tree
@@ -373,9 +425,13 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
                             @Override
                             public Scorer get(long leadCost) throws IOException {
-                                intersectLeft(values.getPointTree(), visitor, docCount);
-                                values.getPointTree().visitMatchingDocIDs(visitor);
-                                values.getPointTree().visitMatchingDocValues(visitor);
+                                if (ENABLE_PREFETCH) {
+                                    intersectLeft(values.getPointTree(), visitor, docCount);
+                                    values.getPointTree().visitMatchingDocIDs(visitor);
+                                    values.getPointTree().visitMatchingDocValues(visitor);
+                                } else  {
+                                    intersectLeft2(values.getPointTree(), visitor, docCount);
+                                }
                                 DocIdSetIterator iterator = result.build().iterator();
                                 return new ConstantScoreScorer(score(), scoreMode, iterator);
                             }

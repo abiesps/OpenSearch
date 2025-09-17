@@ -75,7 +75,7 @@ public final class PointTreeTraversal {
     }
 
 
-    static boolean ENABLE_PREFETCH = false;
+    public static boolean ENABLE_PREFETCH = false;
     static {
 
         String doubleTraversalStr = System.getenv("ENABLE_PREFETCH");
