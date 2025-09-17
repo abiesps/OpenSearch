@@ -250,6 +250,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
             private void intersectLeft2(PointValues.PointTree pointTree, PointValues.IntersectVisitor visitor, long[] docCount)
                 throws IOException {
+                System.out.println("Taking non prefetch path");
                 intersectLeft2(visitor, pointTree, docCount);
                 assert pointTree.moveToParent() == false;
             }
@@ -426,6 +427,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                             @Override
                             public Scorer get(long leadCost) throws IOException {
                                 if (ENABLE_PREFETCH) {
+                                    System.out.println("Taking prefetch path");
                                     intersectLeft(values.getPointTree(), visitor, docCount);
                                     values.getPointTree().visitMatchingDocIDs(visitor);
                                     values.getPointTree().visitMatchingDocValues(visitor);
