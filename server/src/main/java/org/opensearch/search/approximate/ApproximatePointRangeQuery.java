@@ -8,6 +8,8 @@
 
 package org.opensearch.search.approximate;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.document.FloatPoint;
 import org.apache.lucene.document.IntPoint;
@@ -33,12 +35,14 @@ import org.apache.lucene.util.DocIdSetBuilder;
 import org.apache.lucene.util.IntsRef;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.NumericPointEncoder;
+import org.opensearch.search.internal.ContextIndexSearcher;
 import org.opensearch.search.internal.SearchContext;
 import org.opensearch.search.sort.FieldSortBuilder;
 import org.opensearch.search.sort.SortOrder;
 
 import java.io.IOException;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 import static org.opensearch.search.aggregations.bucket.filterrewrite.PointTreeTraversal.ENABLE_PREFETCH;
@@ -55,6 +59,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
     public static final Function<byte[], String> DOUBLE_FORMAT = bytes -> Double.toString(DoublePoint.decodeDimension(bytes, 0));
     public static final Function<byte[], String> UNSIGNED_LONG_FORMAT = bytes -> BigIntegerPoint.decodeDimension(bytes, 0).toString();
 
+    private static final Logger logger = LogManager.getLogger(ApproximatePointRangeQuery.class);
     private int size;
     private SortOrder sortOrder;
     public PointRangeQuery pointRangeQuery;
@@ -426,14 +431,21 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
                             @Override
                             public Scorer get(long leadCost) throws IOException {
+                                long st = System.currentTimeMillis();
                                 if (ENABLE_PREFETCH) {
                                     System.out.println("Taking prefetch path");
                                     intersectLeft(values.getPointTree(), visitor, docCount);
                                     values.getPointTree().visitMatchingDocIDs(visitor);
                                     values.getPointTree().visitMatchingDocValues(visitor);
+
                                 } else  {
                                     intersectLeft2(values.getPointTree(), visitor, docCount);
                                 }
+                                long elapsed = System.currentTimeMillis() - st;
+                                String name = values.getPointTree().name();
+                                Set<Long> matchingLeafFp = values.getPointTree().matchingLeafNodesfp();
+                                logger.info("With prefetching flag {} it took {} ms for point tree {} and matching leaf fps {} ",
+                                    ENABLE_PREFETCH, elapsed, name, matchingLeafFp);
                                 DocIdSetIterator iterator = result.build().iterator();
                                 return new ConstantScoreScorer(score(), scoreMode, iterator);
                             }
