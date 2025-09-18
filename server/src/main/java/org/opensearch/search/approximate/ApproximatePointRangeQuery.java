@@ -372,30 +372,30 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 pointTree.moveToParent();
             }
 
-            public static void compareSets(Set<Long> set1, Set<Long> set2) {
+            public static void compareSets(Set<Long> set1, Set<Long> set2, String name) {
                 // Find common elements (Intersection)
                 Set<Long> intersection = new HashSet<>(set1);
                 intersection.retainAll(set2);
-                System.out.println("Common elements: " + intersection);
+               // System.out.println(" Name " + name + " Common elements: " + intersection);
 
                 // Find elements present in set1 but not in set2 (Difference)
                 Set<Long> difference = new HashSet<>(set1);
                 difference.removeAll(set2);
-                System.out.println("Elements in without prefetching but not in with prefetching: " + difference);
+                System.out.println(" Name " + name + " elements in without prefetching but not in with prefetching: " + difference);
 
                 // Find elements present in set2 but not in set1 (Difference)
                 Set<Long> reverseDifference = new HashSet<>(set2);
                 reverseDifference.removeAll(set1);
-                System.out.println("Elements in with prefetching but not in without prefetching: " + reverseDifference);
+                System.out.println(" Name " + name + " elements in with prefetching but not in without prefetching: " + reverseDifference);
 
                 // Check if both sets are equal
                 boolean areEqual = set1.equals(set2);
-                System.out.println("Are both sets equal? " + areEqual);
+                System.out.println("Name" + name + " Are both sets equal? " + areEqual);
 
                 // Find union of both sets
                 Set<Long> union = new HashSet<>(set1);
                 union.addAll(set2);
-                System.out.println("Union of both sets: " + union);
+               // System.out.println("Union of both sets: " + union);
             }
 
             // custom intersect visitor to walk the right of tree (from rightmost leaf going left)
@@ -488,9 +488,9 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                                 String name = pointTree.name();
                                 Set<Long> matchingLeafFpWithPrefetching = visitorWithPrefetching.matchingLeafNodesfp();
                                 Set<Long> matchingLeafFp = visitor.matchingLeafNodesfp();
-                                compareSets(matchingLeafFp, matchingLeafFpWithPrefetching);
-                                logger.info("For point tree {} results from prefetching {} and non prefetching {} ",
-                                    name, matchingLeafFpWithPrefetching, matchingLeafFp);
+                                compareSets(matchingLeafFp, matchingLeafFpWithPrefetching, name);
+//                                logger.info("For point tree {} results from prefetching {} and non prefetching {} ",
+//                                    name, matchingLeafFpWithPrefetching, matchingLeafFp);
 //                                logger.info("With prefetching flag {} it took {} ms for point tree {} and matching leaf fps {} ",
 //                                    ENABLE_PREFETCH, elapsed, name, matchingLeafFp);
                                 DocIdSetIterator iterator = result.build().iterator();
