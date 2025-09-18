@@ -249,6 +249,13 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         }
 
         @Override
+        public PointValues.PointTree statefulClone() {
+            queryCancellation.checkCancelled();
+            return new ExitablePointTree(values, pointTree.statefulClone(), queryCancellation);
+        }
+
+
+        @Override
         public boolean moveToChild() throws IOException {
             checkAndThrowWithSampling();
             return pointTree.moveToChild();
