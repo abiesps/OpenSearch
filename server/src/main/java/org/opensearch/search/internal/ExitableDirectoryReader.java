@@ -213,10 +213,10 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         private final QueryCancellation queryCancellation;
         private int calls;
 
-        public String logState() {
-            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
-            return bkdPointTree.logState();
-        }
+//        public String logState() {
+//            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+//            return bkdPointTree.logState();
+//        }
 
         public void prefetchDocValues(PointValues.IntersectVisitor visitor) throws IOException {
             pointTree.prefetchDocValues(visitor);
