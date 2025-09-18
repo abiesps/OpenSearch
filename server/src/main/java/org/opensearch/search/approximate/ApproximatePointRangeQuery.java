@@ -41,6 +41,8 @@ import org.opensearch.search.sort.FieldSortBuilder;
 import org.opensearch.search.sort.SortOrder;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
@@ -172,6 +174,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 return new PointValues.IntersectVisitor() {
 
                     DocIdSetBuilder.BulkAdder adder;
+                    Set<Long> matchingLeafBlocksFPs = new LinkedHashSet<>();
 
                     @Override
                     public void grow(int count) {
@@ -213,6 +216,16 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     @Override
                     public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
                         return relate(minPackedValue, maxPackedValue);
+                    }
+
+                    @Override
+                     public void matchedLeafFp(long fp) {
+                        matchingLeafBlocksFPs.add(fp);
+                     };
+
+                    @Override
+                    public  Set<Long> matchingLeafNodesfp() {
+                        return matchingLeafBlocksFPs;
                     }
                 };
             }
@@ -436,7 +449,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                                 }
                                 long elapsed = System.currentTimeMillis() - st;
                                 String name = pointTree.name();
-                                Set<Long> matchingLeafFp = pointTree.matchingLeafNodesfp();
+                                Set<Long> matchingLeafFp = visitor.matchingLeafNodesfp();
                                 logger.info("With prefetching flag {} it took {} ms for point tree {} and matching leaf fps {} ",
                                     ENABLE_PREFETCH, elapsed, name, matchingLeafFp);
                                 DocIdSetIterator iterator = result.build().iterator();
