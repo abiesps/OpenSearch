@@ -293,7 +293,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
             public void intersectLeft2(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
                 throws IOException {
                 if (docCount[0] >= size) {
-                   // return;
+                    return;
                 }
                 PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
                 if (r == PointValues.Relation.CELL_OUTSIDE_QUERY) {
@@ -310,14 +310,14 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 }
                 // For CELL_INSIDE_QUERY, check if we can skip right child
                 if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-//                    long leftSize = pointTree.size();
-//                    long needed = size - docCount[0];
+                    long leftSize = pointTree.size();
+                    long needed = size - docCount[0];
 
-                    //if (leftSize >= needed) {
-                      //  intersectLeft2(visitor, pointTree, docCount);
-                      //  pointTree.moveToParent();
-                      //  return;
-                   // }
+                    if (leftSize >= needed) {
+                        intersectLeft2(visitor, pointTree, docCount);
+                        pointTree.moveToParent();
+                        return;
+                    }
                 }
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
@@ -328,8 +328,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 }
                 // Process both children: left first, then right if needed
                 intersectLeft2(visitor, pointTree, docCount);
-                if (rightChild != null) {
-                //if (docCount[0] < size && rightChild != null) {
+                //if (rightChild != null) {
+                if (docCount[0] < size && rightChild != null) {
                     intersectLeft2(visitor, rightChild, docCount);
                 }
                 pointTree.moveToParent();
@@ -339,7 +339,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
             public void intersectLeft(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
                 throws IOException {
                 if (docCount[0] >= size) {
-                    //return;
+                    return;
                 }
                 PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
                 if (r == PointValues.Relation.CELL_OUTSIDE_QUERY) {
@@ -355,17 +355,17 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     return;
                 }
                 // For CELL_INSIDE_QUERY, check if we can skip right child
-               // if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-//                    long leftSize = pointTree.size();
-//                    long needed = size - docCount[0];
-//
-//                    if (leftSize >= needed) {
-//                        // Process only left child
-//                        intersectLeft(visitor, pointTree, docCount);
-//                       // pointTree.moveToParent();
-//                        return;
-//                    }
-            //    }
+                if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
+                    long leftSize = pointTree.size();
+                    long needed = size - docCount[0];
+
+                    if (leftSize >= needed) {
+                        // Process only left child
+                        intersectLeft(visitor, pointTree, docCount);
+                        pointTree.moveToParent();
+                        return;
+                    }
+                }
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
                 if (pointTree.moveToSibling()) {
@@ -375,8 +375,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 }
                 // Process both children: left first, then right if needed
                 intersectLeft(visitor, pointTree, docCount);
-                if (rightChild != null) {
-               // if (docCount[0] < size && rightChild != null) {
+                //if (rightChild != null) {
+                if (docCount[0] < size && rightChild != null) {
                     intersectLeft(visitor, rightChild, docCount);
                 }
                 pointTree.moveToParent();
@@ -487,6 +487,29 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                             public Scorer get(long leadCost) throws IOException {
                                 String name = pointTree.name();
                                 long st = System.currentTimeMillis();
+                                intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
+                                long travelTime = System.currentTimeMillis() - st;
+                                logger.info("Travel time with prefetching: {} ms for {} ", travelTime, name);
+                                long s1 = System.currentTimeMillis();
+                                pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
+                                pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
+                                intersectLeft2(pointTree, visitor, docCount);
+                                Set<Long> matchedDocIdsPf = visitorWithPrefetching.matchingLeafNodesfpDocIds();
+                                Set<Long> matchedDocValuespf = visitorWithPrefetching.matchingLeafNodesfpDocValues();
+                                matchedDocIdsPf.addAll(matchedDocValuespf);
+
+                                Set<Long> matchedDocIds = visitor.matchingLeafNodesfpDocIds();
+                                Set<Long> matchedDocValues = visitor.matchingLeafNodesfpDocValues();
+                                matchedDocIds.addAll(matchedDocValues);
+                                compareSets(matchedDocIds, matchedDocIdsPf, name);
+                                //long travelTime = System.currentTimeMillis() - st;
+                                //logger.info("Travel time without prefetching: {} ms for {} ", travelTime, name);
+                                DocIdSetIterator iterator = result.build().iterator();
+                                long elapsed = System.currentTimeMillis() - st;
+                                logger.info("It took {} ms for {} without prefetching", elapsed, name);
+                                return new ConstantScoreScorer(score(), scoreMode, iterator);
+
+
                                 if (ENABLE_PREFETCH) {
                                     intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
                                     long travelTime = System.currentTimeMillis() - st;
