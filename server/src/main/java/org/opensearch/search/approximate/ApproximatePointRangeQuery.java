@@ -381,12 +381,14 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 // Find elements present in set1 but not in set2 (Difference)
                 Set<Long> difference = new HashSet<>(set1);
                 difference.removeAll(set2);
-                System.out.println(" Name " + name + " elements in without prefetching but not in with prefetching: " + difference);
+                if (!difference.isEmpty())
+                  System.out.println(" Name " + name + " elements in without prefetching but not in with prefetching: " + difference);
 
                 // Find elements present in set2 but not in set1 (Difference)
                 Set<Long> reverseDifference = new HashSet<>(set2);
                 reverseDifference.removeAll(set1);
-                System.out.println(" Name " + name + " elements in with prefetching but not in without prefetching: " + reverseDifference);
+                if (!reverseDifference.isEmpty())
+                  System.out.println(" Name " + name + " elements in with prefetching but not in without prefetching: " + reverseDifference);
 
                 // Check if both sets are equal
                 boolean areEqual = set1.equals(set2);
