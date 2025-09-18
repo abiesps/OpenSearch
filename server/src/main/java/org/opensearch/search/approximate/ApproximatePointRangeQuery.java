@@ -302,11 +302,11 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     long leftSize = pointTree.size();
                     long needed = size - docCount[0];
 
-                    if (leftSize >= needed) {
+                    //if (leftSize >= needed) {
                         intersectLeft2(visitor, pointTree, docCount);
                         pointTree.moveToParent();
                         return;
-                    }
+                   // }
                 }
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
@@ -317,7 +317,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 }
                 // Process both children: left first, then right if needed
                 intersectLeft2(visitor, pointTree, docCount);
-                if (docCount[0] < size && rightChild != null) {
+                if (rightChild != null) {
+                //if (docCount[0] < size && rightChild != null) {
                     intersectLeft2(visitor, rightChild, docCount);
                 }
                 pointTree.moveToParent();
