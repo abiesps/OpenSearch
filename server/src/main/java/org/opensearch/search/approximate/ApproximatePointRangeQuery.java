@@ -327,6 +327,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                         //I wont be able to terminate early here anyways because the condition is outside of pointTree.visitDocIDs,
                         ///
                         //pointTree.matchAllDocIDsFromCurrentNode();
+
                         pointTree.prefetchDocIDs(visitor);
                         //pointTree.visitDocIDs(visitor);
                     } else {
@@ -422,6 +423,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 if (size > values.size()) {
                     return pointRangeQueryWeight.scorerSupplier(context);
                 } else {
+                    PointValues.PointTree pointTree = values.getPointTree();
                     if (sortOrder == null || sortOrder.equals(SortOrder.ASC)) {
                         return new ScorerSupplier() {
 
@@ -434,16 +436,16 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                                 long st = System.currentTimeMillis();
                                 if (ENABLE_PREFETCH) {
                                     System.out.println("Taking prefetch path");
-                                    intersectLeft(values.getPointTree(), visitor, docCount);
-                                    values.getPointTree().visitMatchingDocIDs(visitor);
-                                    values.getPointTree().visitMatchingDocValues(visitor);
+                                    intersectLeft(pointTree, visitor, docCount);
+                                    pointTree.visitMatchingDocIDs(visitor);
+                                    pointTree.visitMatchingDocValues(visitor);
 
                                 } else  {
-                                    intersectLeft2(values.getPointTree(), visitor, docCount);
+                                    intersectLeft2(pointTree, visitor, docCount);
                                 }
                                 long elapsed = System.currentTimeMillis() - st;
-                                String name = values.getPointTree().name();
-                                Set<Long> matchingLeafFp = values.getPointTree().matchingLeafNodesfp();
+                                String name = pointTree.name();
+                                Set<Long> matchingLeafFp = pointTree.matchingLeafNodesfp();
                                 logger.info("With prefetching flag {} it took {} ms for point tree {} and matching leaf fps {} ",
                                     ENABLE_PREFETCH, elapsed, name, matchingLeafFp);
                                 DocIdSetIterator iterator = result.build().iterator();
@@ -473,7 +475,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
                             @Override
                             public Scorer get(long leadCost) throws IOException {
-                                intersectRight(values.getPointTree(), visitor, docCount);
+                                intersectRight(pointTree, visitor, docCount);
                                 DocIdSetIterator iterator = result.build().iterator();
                                 return new ConstantScoreScorer(score(), scoreMode, iterator);
                             }
