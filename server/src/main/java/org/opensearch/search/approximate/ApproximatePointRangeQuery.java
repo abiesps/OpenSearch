@@ -42,6 +42,7 @@ import org.opensearch.search.sort.SortOrder;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -370,6 +371,32 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 pointTree.moveToParent();
             }
 
+            public static void compareSets(Set<Long> set1, Set<Long> set2) {
+                // Find common elements (Intersection)
+                Set<Long> intersection = new HashSet<>(set1);
+                intersection.retainAll(set2);
+                System.out.println("Common elements: " + intersection);
+
+                // Find elements present in set1 but not in set2 (Difference)
+                Set<Long> difference = new HashSet<>(set1);
+                difference.removeAll(set2);
+                System.out.println("Elements in without prefetching but not in with prefetching: " + difference);
+
+                // Find elements present in set2 but not in set1 (Difference)
+                Set<Long> reverseDifference = new HashSet<>(set2);
+                reverseDifference.removeAll(set1);
+                System.out.println("Elements in with prefetching but not in without prefetching: " + reverseDifference);
+
+                // Check if both sets are equal
+                boolean areEqual = set1.equals(set2);
+                System.out.println("Are both sets equal? " + areEqual);
+
+                // Find union of both sets
+                Set<Long> union = new HashSet<>(set1);
+                union.addAll(set2);
+                System.out.println("Union of both sets: " + union);
+            }
+
             // custom intersect visitor to walk the right of tree (from rightmost leaf going left)
             public void intersectRight(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
                 throws IOException {
@@ -428,9 +455,14 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 if (size > values.size()) {
                     return pointRangeQueryWeight.scorerSupplier(context);
                 } else {
+                    PointValues.PointTree pointTreeWithPrefetching = values.getPointTree();
                     PointValues.PointTree pointTree = values.getPointTree();
+
                     if (sortOrder == null || sortOrder.equals(SortOrder.ASC)) {
                         return new ScorerSupplier() {
+
+                            final DocIdSetBuilder resultWithPrefetching = new DocIdSetBuilder(reader.maxDoc(), values);
+                            final PointValues.IntersectVisitor visitorWithPrefetching = getIntersectVisitor(resultWithPrefetching, docCount);
 
                             final DocIdSetBuilder result = new DocIdSetBuilder(reader.maxDoc(), values);
                             final PointValues.IntersectVisitor visitor = getIntersectVisitor(result, docCount);
@@ -439,20 +471,27 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                             @Override
                             public Scorer get(long leadCost) throws IOException {
                                 long st = System.currentTimeMillis();
-                                if (ENABLE_PREFETCH) {
-                                    System.out.println("Taking prefetch path");
-                                    intersectLeft(pointTree, visitor, docCount);
-                                    pointTree.visitMatchingDocIDs(visitor);
-                                    pointTree.visitMatchingDocValues(visitor);
 
-                                } else  {
+
+
+                                //if (ENABLE_PREFETCH) {
+                                    System.out.println("Taking prefetch path");
+                                    intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
+                                    pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
+                                    pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
+
+                               // } else  {
                                     intersectLeft2(pointTree, visitor, docCount);
-                                }
+                                //}
                                 long elapsed = System.currentTimeMillis() - st;
                                 String name = pointTree.name();
+                                Set<Long> matchingLeafFpWithPrefetching = visitorWithPrefetching.matchingLeafNodesfp();
                                 Set<Long> matchingLeafFp = visitor.matchingLeafNodesfp();
-                                logger.info("With prefetching flag {} it took {} ms for point tree {} and matching leaf fps {} ",
-                                    ENABLE_PREFETCH, elapsed, name, matchingLeafFp);
+                                compareSets(matchingLeafFp, matchingLeafFpWithPrefetching);
+                                logger.info("For point tree {} results from prefetching {} and non prefetching {} ",
+                                    name, matchingLeafFpWithPrefetching, matchingLeafFp);
+//                                logger.info("With prefetching flag {} it took {} ms for point tree {} and matching leaf fps {} ",
+//                                    ENABLE_PREFETCH, elapsed, name, matchingLeafFp);
                                 DocIdSetIterator iterator = result.build().iterator();
                                 return new ConstantScoreScorer(score(), scoreMode, iterator);
                             }
