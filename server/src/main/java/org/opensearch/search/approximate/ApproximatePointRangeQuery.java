@@ -474,22 +474,26 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
                             @Override
                             public Scorer get(long leadCost) throws IOException {
+                                String name = pointTree.name();
                                 long st = System.currentTimeMillis();
-
                                 if (ENABLE_PREFETCH) {
                                     intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
+                                    long travelTime = System.currentTimeMillis() - st;
+                                    logger.info("Travel time with prefetching: {} ms for {} ", travelTime, name);
+                                    long s1 = System.currentTimeMillis();
                                     pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
                                     pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
                                     DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
                                     long elapsed = System.currentTimeMillis() - st;
-                                    String name = pointTree.name();
+
                                     logger.info("It took {} ms for {} with prefetching", elapsed, name);
                                     return new ConstantScoreScorer(score(), scoreMode, iterator);
                                 } else  {
                                     intersectLeft2(pointTree, visitor, docCount);
+                                    long travelTime = System.currentTimeMillis() - st;
+                                    logger.info("Travel time without prefetching: {} ms for {} ", travelTime, name);
                                     DocIdSetIterator iterator = result.build().iterator();
                                     long elapsed = System.currentTimeMillis() - st;
-                                    String name = pointTree.name();
                                     logger.info("It took {} ms for {} without prefetching", elapsed, name);
                                     return new ConstantScoreScorer(score(), scoreMode, iterator);
                                 }

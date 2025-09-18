@@ -422,13 +422,23 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         }
 
         @Override
-         public void matchedLeafFp(long fp) {
-            in.matchedLeafFp(fp);
+         public void matchedLeafFpDocIds(long fp) {
+            in.matchedLeafFpDocIds(fp);
          };
 
         @Override
-         public Set<Long> matchingLeafNodesfp() {
-            return in.matchingLeafNodesfp();
+         public Set<Long> matchingLeafNodesfpDocIds() {
+            return in.matchingLeafNodesfpDocIds();
+        }
+
+        @Override
+        public void matchedLeafFpDocValues(long fp) {
+            in.matchedLeafFpDocValues(fp);
+        };
+
+        @Override
+        public Set<Long> matchingLeafNodesfpDocValues() {
+            return in.matchingLeafNodesfpDocValues();
         }
     }
 }
