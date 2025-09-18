@@ -373,7 +373,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
             public static void compareSets(Set<Long> set1, Set<Long> set2, String name) {
                 // Find common elements (Intersection)
-                System.out.println("Name : " + name + " non-prefetching size " + set1.size()  + " prefetching " + set2.size());
+                //System.out.println("Name : " + name + " non-prefetching size " + set1.size()  + " prefetching " + set2.size());
                 Set<Long> intersection = new HashSet<>(set1);
                 intersection.retainAll(set2);
                // System.out.println(" Name " + name + " Common elements: " + intersection);
@@ -392,7 +392,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
                 // Check if both sets are equal
                 boolean areEqual = set1.equals(set2);
-                System.out.println("Name" + name + " Are both sets equal? " + areEqual);
+                if (!areEqual)
+                    System.out.println("Name" + name + " Are both sets equal? " + areEqual);
 
                 // Find union of both sets
                 Set<Long> union = new HashSet<>(set1);
