@@ -269,7 +269,6 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
             private void intersectLeft2(PointValues.PointTree pointTree, PointValues.IntersectVisitor visitor, long[] docCount)
                 throws IOException {
-                System.out.println("Taking non prefetch path");
                 intersectLeft2(visitor, pointTree, docCount);
                 assert pointTree.moveToParent() == false;
             }
@@ -300,8 +299,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 }
                 // For CELL_INSIDE_QUERY, check if we can skip right child
                 if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-                    long leftSize = pointTree.size();
-                    long needed = size - docCount[0];
+//                    long leftSize = pointTree.size();
+//                    long needed = size - docCount[0];
 
                     //if (leftSize >= needed) {
                       //  intersectLeft2(visitor, pointTree, docCount);
@@ -345,17 +344,17 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     return;
                 }
                 // For CELL_INSIDE_QUERY, check if we can skip right child
-                if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
+               // if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
 //                    long leftSize = pointTree.size();
 //                    long needed = size - docCount[0];
 //
 //                    if (leftSize >= needed) {
 //                        // Process only left child
 //                        intersectLeft(visitor, pointTree, docCount);
-//                        pointTree.moveToParent();
+//                       // pointTree.moveToParent();
 //                        return;
 //                    }
-                }
+            //    }
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
                 if (pointTree.moveToSibling()) {
@@ -374,6 +373,9 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
             public static void compareSets(Set<Long> set1, Set<Long> set2, String name) {
                 // Find common elements (Intersection)
+                System.out.println("Name : " + name + " non-prefetching size " + set1.size()  + " prefetching " + set2.size()
+                + " actual set non prefetching " + set1 + " actual set with prefetching " + set2
+                );
                 Set<Long> intersection = new HashSet<>(set1);
                 intersection.retainAll(set2);
                // System.out.println(" Name " + name + " Common elements: " + intersection);
@@ -475,14 +477,11 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                             public Scorer get(long leadCost) throws IOException {
                                 long st = System.currentTimeMillis();
 
-
-
                                 //if (ENABLE_PREFETCH) {
                                     System.out.println("Taking prefetch path");
                                     intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
                                     pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
                                     pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
-
                                // } else  {
                                     intersectLeft2(pointTree, visitor, docCount);
                                 //}
@@ -491,10 +490,6 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                                 Set<Long> matchingLeafFpWithPrefetching = visitorWithPrefetching.matchingLeafNodesfp();
                                 Set<Long> matchingLeafFp = visitor.matchingLeafNodesfp();
                                 compareSets(matchingLeafFp, matchingLeafFpWithPrefetching, name);
-//                                logger.info("For point tree {} results from prefetching {} and non prefetching {} ",
-//                                    name, matchingLeafFpWithPrefetching, matchingLeafFp);
-//                                logger.info("With prefetching flag {} it took {} ms for point tree {} and matching leaf fps {} ",
-//                                    ENABLE_PREFETCH, elapsed, name, matchingLeafFp);
                                 DocIdSetIterator iterator = result.build().iterator();
                                 return new ConstantScoreScorer(score(), scoreMode, iterator);
                             }
