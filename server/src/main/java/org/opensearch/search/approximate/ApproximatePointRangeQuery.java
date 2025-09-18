@@ -175,7 +175,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 return new PointValues.IntersectVisitor() {
 
                     DocIdSetBuilder.BulkAdder adder;
-                    Set<Long> matchingLeafBlocksFPs = new LinkedHashSet<>();
+                    Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
+                    Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
 
                     @Override
                     public void grow(int count) {
@@ -220,13 +221,23 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     }
 
                     @Override
-                     public void matchedLeafFp(long fp) {
-                        matchingLeafBlocksFPs.add(fp);
+                     public void matchedLeafFpDocIds(long fp) {
+                        matchingLeafBlocksFPsDocIds.add(fp);
                      };
 
                     @Override
-                    public  Set<Long> matchingLeafNodesfp() {
-                        return matchingLeafBlocksFPs;
+                    public  Set<Long> matchingLeafNodesfpDocIds() {
+                        return matchingLeafBlocksFPsDocIds;
+                    }
+
+                    @Override
+                    public void matchedLeafFpDocValues(long fp) {
+                        matchingLeafBlocksFPsDocValues.add(fp);
+                    };
+
+                    @Override
+                    public  Set<Long> matchingLeafNodesfpDocValues() {
+                        return matchingLeafBlocksFPsDocValues;
                     }
                 };
             }
