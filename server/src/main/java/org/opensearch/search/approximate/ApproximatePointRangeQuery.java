@@ -476,21 +476,23 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                             public Scorer get(long leadCost) throws IOException {
                                 long st = System.currentTimeMillis();
 
-                                //if (ENABLE_PREFETCH) {
-                                    System.out.println("Taking prefetch path");
+                                if (ENABLE_PREFETCH) {
                                     intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
                                     pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
                                     pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
-                               // } else  {
+                                    DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
+                                    long elapsed = System.currentTimeMillis() - st;
+                                    String name = pointTree.name();
+                                    logger.info("It took {} ms for {} with prefetching", elapsed, name);
+                                    return new ConstantScoreScorer(score(), scoreMode, iterator);
+                                } else  {
                                     intersectLeft2(pointTree, visitor, docCount);
-                                //}
-                                long elapsed = System.currentTimeMillis() - st;
-                                String name = pointTree.name();
-                                Set<Long> matchingLeafFpWithPrefetching = visitorWithPrefetching.matchingLeafNodesfp();
-                                Set<Long> matchingLeafFp = visitor.matchingLeafNodesfp();
-                                compareSets(matchingLeafFp, matchingLeafFpWithPrefetching, name);
-                                DocIdSetIterator iterator = result.build().iterator();
-                                return new ConstantScoreScorer(score(), scoreMode, iterator);
+                                    DocIdSetIterator iterator = result.build().iterator();
+                                    long elapsed = System.currentTimeMillis() - st;
+                                    String name = pointTree.name();
+                                    logger.info("It took {} ms for {} without prefetching", elapsed, name);
+                                    return new ConstantScoreScorer(score(), scoreMode, iterator);
+                                }
                             }
 
                             @Override
