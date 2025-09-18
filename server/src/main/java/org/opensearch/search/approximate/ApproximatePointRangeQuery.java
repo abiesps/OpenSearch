@@ -298,7 +298,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
                 if (pointTree.moveToSibling()) {
-                    rightChild = pointTree.clone();
+                    rightChild = pointTree.statefulClone();
                     pointTree.moveToParent();
                     pointTree.moveToChild();
                 }
@@ -323,18 +323,9 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 // Handle leaf nodes
                 if (pointTree.moveToChild() == false) {
                     if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-
-                        //I wont be able to terminate early here anyways because the condition is outside of pointTree.visitDocIDs,
-                        ///
-                        //pointTree.matchAllDocIDsFromCurrentNode();
-
                         pointTree.prefetchDocIDs(visitor);
-                        //pointTree.visitDocIDs(visitor);
                     } else {
-                        // CELL_CROSSES_QUERY
-                        //pointTree.matchAllDocValues();
                         pointTree.prefetchDocValues(visitor);
-                        //pointTree.visitDocValues(visitor);
                     }
                     return;
                 }
@@ -353,7 +344,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
                 if (pointTree.moveToSibling()) {
-                    rightChild = pointTree.clone();
+                    rightChild = pointTree.statefulClone();
                     pointTree.moveToParent();
                     pointTree.moveToChild();
                 }
@@ -386,7 +377,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     return;
                 }
                 // Internal node - get left child reference (we're at left child initially)
-                PointValues.PointTree leftChild = pointTree.clone();
+                PointValues.PointTree leftChild = pointTree.statefulClone();
                 // Move to right child if it exists
                 boolean hasRightChild = pointTree.moveToSibling();
                 // For CELL_INSIDE_QUERY, check if we can skip left child
