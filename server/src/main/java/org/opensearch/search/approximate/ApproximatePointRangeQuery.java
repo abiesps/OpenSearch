@@ -327,7 +327,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
             public void intersectLeft(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
                 throws IOException {
                 if (docCount[0] >= size) {
-                    return;
+                    //return;
                 }
                 PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
                 if (r == PointValues.Relation.CELL_OUTSIDE_QUERY) {
