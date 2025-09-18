@@ -110,7 +110,7 @@ public final class PointTreeTraversal {
                 logger.info("IntersectWithRanges traversed in {} ms for segment {} ms", (et - st), collector);
                 logger.info("Total number of docs after leaf visit as per collector {} and it took {} ms ", collector.docCount(),
                     et - st);
-                logger.info("Traversal tree state without prefetching {} for tree {} ", exitablePointTree.logState(), exitablePointTree);
+                logger.info("Traversal tree state without prefetching for tree {} ", exitablePointTree);
             } catch (CollectionTerminatedException e) {
                 logger.debug("Early terminate since no more range to collect");
             }
