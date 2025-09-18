@@ -49,6 +49,7 @@ import org.opensearch.common.lucene.index.SequentialStoredFieldsLeafReader;
 import org.opensearch.core.common.Strings;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Set;
 
 /**
@@ -235,7 +236,7 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             pointTree.visitMatchingDocValues(visitor);
         }
 
-        public  ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
+        public ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
             this.values = values;
             this.pointTree = pointTree;
             this.exitableIntersectVisitor = new ExitableIntersectVisitor(queryCancellation);
@@ -293,7 +294,9 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         @Override
         public void visitDocValues(PointValues.IntersectVisitor visitor) throws IOException {
             queryCancellation.checkCancelled();
-            exitableIntersectVisitor.setVisitor(visitor);
+            if (exitableIntersectVisitor.in == null) {
+                exitableIntersectVisitor.setVisitor(visitor);//Why do i set the visitor again and again here?
+            }
             pointTree.visitDocValues(exitableIntersectVisitor);
         }
 
@@ -416,6 +419,16 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         public void grow(int count) {
             queryCancellation.checkCancelled();
             in.grow(count);
+        }
+
+        @Override
+         public void matchedLeafFp(long fp) {
+            in.matchedLeafFp(fp);
+         };
+
+        @Override
+         public Set<Long> matchingLeafNodesfp() {
+            return in.matchingLeafNodesfp();
         }
     }
 }
