@@ -346,15 +346,15 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 }
                 // For CELL_INSIDE_QUERY, check if we can skip right child
                 if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-                    long leftSize = pointTree.size();
-                    long needed = size - docCount[0];
-
-                    if (leftSize >= needed) {
-                        // Process only left child
-                        intersectLeft(visitor, pointTree, docCount);
-                        pointTree.moveToParent();
-                        return;
-                    }
+//                    long leftSize = pointTree.size();
+//                    long needed = size - docCount[0];
+//
+//                    if (leftSize >= needed) {
+//                        // Process only left child
+//                        intersectLeft(visitor, pointTree, docCount);
+//                        pointTree.moveToParent();
+//                        return;
+//                    }
                 }
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
@@ -365,7 +365,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 }
                 // Process both children: left first, then right if needed
                 intersectLeft(visitor, pointTree, docCount);
-                if (docCount[0] < size && rightChild != null) {
+                if (rightChild != null) {
+               // if (docCount[0] < size && rightChild != null) {
                     intersectLeft(visitor, rightChild, docCount);
                 }
                 pointTree.moveToParent();
