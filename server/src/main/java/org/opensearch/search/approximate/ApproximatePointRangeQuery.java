@@ -311,7 +311,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
                 if (pointTree.moveToSibling()) {
-                    rightChild = pointTree.statefulClone();
+                    rightChild = pointTree.clone();
                     pointTree.moveToParent();
                     pointTree.moveToChild();
                 }
@@ -357,7 +357,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                 // We need both children - now clone right
                 PointValues.PointTree rightChild = null;
                 if (pointTree.moveToSibling()) {
-                    rightChild = pointTree.statefulClone();
+                    rightChild = pointTree.clone();
                     pointTree.moveToParent();
                     pointTree.moveToChild();
                 }
@@ -390,7 +390,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     return;
                 }
                 // Internal node - get left child reference (we're at left child initially)
-                PointValues.PointTree leftChild = pointTree.statefulClone();
+                PointValues.PointTree leftChild = pointTree.clone();
                 // Move to right child if it exists
                 boolean hasRightChild = pointTree.moveToSibling();
                 // For CELL_INSIDE_QUERY, check if we can skip left child
