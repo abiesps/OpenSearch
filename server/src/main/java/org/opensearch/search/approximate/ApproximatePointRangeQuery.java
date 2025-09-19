@@ -548,73 +548,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                     PointValues.PointTree pointTree = values.getPointTree();
 
                     if (sortOrder == null || sortOrder.equals(SortOrder.ASC)) {
-                        return new ScorerSupplier() {
 
-                            final DocIdSetBuilder resultWithPrefetching = new DocIdSetBuilder(reader.maxDoc(), values);
-                            final PointValues.IntersectVisitor visitorWithPrefetching = getPrefetchingIntersectVisitor(resultWithPrefetching, docCountWithPrefetching);
-
-                            final DocIdSetBuilder result = new DocIdSetBuilder(reader.maxDoc(), values);
-                            final PointValues.IntersectVisitor visitor = getIntersectVisitor(result, docCount);
-                            long cost = -1;
-
-                            @Override
-                            public Scorer get(long leadCost) throws IOException {
-                                String name = pointTree.name();
-                                long st = System.currentTimeMillis();
-//                                intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCountWithPrefetching);
-//                                long travelTime = System.currentTimeMillis() - st;
-//                                //logger.info("Travel time with prefetching: {} ms for {} ", travelTime, name);
-//                                long s1 = System.currentTimeMillis();
-//                                pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
-//                                pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
-//                                intersectLeft2(pointTree, visitor, docCount);
-//                                Set<Long> matchedDocIdsPf = visitorWithPrefetching.matchingLeafNodesfpDocIds();
-//                                Set<Long> matchedDocValuespf = visitorWithPrefetching.matchingLeafNodesfpDocValues();
-//                                matchedDocIdsPf.addAll(matchedDocValuespf);
-//
-//                                Set<Long> matchedDocIds = visitor.matchingLeafNodesfpDocIds();
-//                                Set<Long> matchedDocValues = visitor.matchingLeafNodesfpDocValues();
-//                                matchedDocIds.addAll(matchedDocValues);
-//                                compareSets(matchedDocIds, matchedDocIdsPf, name);
-//                                //long travelTime = System.currentTimeMillis() - st;
-//                                //logger.info("Travel time without prefetching: {} ms for {} ", travelTime, name);
-//                                DocIdSetIterator iterator = result.build().iterator();
-//                                long elapsed = System.currentTimeMillis() - st;
-//                                //logger.info("It took {} ms for {} without prefetching", elapsed, name);
-//                                return new ConstantScoreScorer(score(), scoreMode, iterator);
-
-                                if (ENABLE_PREFETCH) {
-                                    intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
-                                    long travelTime = System.currentTimeMillis() - st;
-                                    logger.info("Travel time with prefetching: {} ms for {} ", travelTime, name);
-                                    long s1 = System.currentTimeMillis();
-                                    pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
-                                    pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
-                                    DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
-                                    long elapsed = System.currentTimeMillis() - st;
-                                    logger.info("It took {} ms for {} with prefetching", elapsed, name);
-                                    return new ConstantScoreScorer(score(), scoreMode, iterator);
-                                } else  {
-                                    intersectLeft2(pointTree, visitor, docCount);
-                                    long travelTime = System.currentTimeMillis() - st;
-                                    logger.info("Travel time without prefetching: {} ms for {} ", travelTime, name);
-                                    DocIdSetIterator iterator = result.build().iterator();
-                                    long elapsed = System.currentTimeMillis() - st;
-                                    logger.info("It took {} ms for {} without prefetching", elapsed, name);
-                                    return new ConstantScoreScorer(score(), scoreMode, iterator);
-                                }
-                            }
-
-                            @Override
-                            public long cost() {
-                                if (cost == -1) {
-                                    // Computing the cost may be expensive, so only do it if necessary
-                                    cost = values.estimateDocCount(visitor);
-                                    assert cost >= 0;
-                                }
-                                return cost;
-                            }
-                        };
+                        return new ApproximatePointRangeScorerSupplier(pointRangeQuery,reader, values, size, this, scoreMode);
                     } else {
                         // we need to fetch size + deleted docs since the collector will prune away deleted docs resulting in fewer results
                         // than expected
