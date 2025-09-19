@@ -460,6 +460,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
             @Override
             public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
                 LeafReader reader = context.reader();
+                long[] docCountWithPrefetching = { 0 };
                 long[] docCount = { 0 };
 
                 PointValues values = reader.getPointValues(pointRangeQuery.getField());
@@ -477,7 +478,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                         return new ScorerSupplier() {
 
                             final DocIdSetBuilder resultWithPrefetching = new DocIdSetBuilder(reader.maxDoc(), values);
-                            final PointValues.IntersectVisitor visitorWithPrefetching = getIntersectVisitor(resultWithPrefetching, docCount);
+                            final PointValues.IntersectVisitor visitorWithPrefetching = getIntersectVisitor(resultWithPrefetching, docCountWithPrefetching);
 
                             final DocIdSetBuilder result = new DocIdSetBuilder(reader.maxDoc(), values);
                             final PointValues.IntersectVisitor visitor = getIntersectVisitor(result, docCount);
@@ -487,7 +488,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                             public Scorer get(long leadCost) throws IOException {
                                 String name = pointTree.name();
                                 long st = System.currentTimeMillis();
-                                intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
+                                intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCountWithPrefetching);
                                 long travelTime = System.currentTimeMillis() - st;
                                 logger.info("Travel time with prefetching: {} ms for {} ", travelTime, name);
                                 long s1 = System.currentTimeMillis();
