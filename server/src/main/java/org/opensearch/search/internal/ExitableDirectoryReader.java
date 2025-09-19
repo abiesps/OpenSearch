@@ -425,8 +425,8 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         }
 
         @Override
-         public void matchedLeafFpDocIds(long fp) {
-            in.matchedLeafFpDocIds(fp);
+         public void matchedLeafFpDocIds(long fp, int count) {
+            in.matchedLeafFpDocIds(fp, count);
          };
 
         @Override
