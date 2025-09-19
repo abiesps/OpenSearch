@@ -288,6 +288,9 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         @Override
         public void visitDocIDs(PointValues.IntersectVisitor visitor) throws IOException {
             queryCancellation.checkCancelled();
+            if (exitableIntersectVisitor.in == null) {
+                exitableIntersectVisitor.setVisitor(visitor);
+            }
             pointTree.visitDocIDs(visitor);
         }
 
