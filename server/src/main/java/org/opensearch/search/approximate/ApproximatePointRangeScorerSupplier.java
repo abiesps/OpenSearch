@@ -366,6 +366,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             TreeSet<Long> allLeafs = new TreeSet<>(visitorWithPrefetching.matchingLeafNodesfpDocValues());
             allLeafs.addAll(visitorWithPrefetching.matchingLeafNodesfpDocIds());
 
+            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(), /*pageSize*/128*1024,
+                visitorWithPrefetching.matchingDocIdsFps(), visitorWithPrefetching.matchingDocValuesFps(),
+                pointTree.name());
             logger.info("All matching leaves {} for segment {} ", allLeafs, name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         } else  {

@@ -42,8 +42,10 @@ import org.apache.lucene.index.PointValues;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.suggest.document.CompletionTerms;
+import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
+import org.apache.lucene.util.bkd.BKDConfig;
 import org.apache.lucene.util.bkd.BKDReader;
 import org.opensearch.common.lucene.index.SequentialStoredFieldsLeafReader;
 import org.opensearch.core.common.Strings;
@@ -313,6 +315,16 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         public String name() {
             BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
             return bkdPointTree.name();
+        }
+
+        public IndexInput leaves() {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.leaves();
+        }
+
+        public BKDConfig config() {
+            BKDReader.BKDPointTree bkdPointTree = (BKDReader.BKDPointTree) pointTree;
+            return bkdPointTree.config();
         }
     }
 
