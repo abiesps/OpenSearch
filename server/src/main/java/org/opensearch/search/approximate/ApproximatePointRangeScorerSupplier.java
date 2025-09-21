@@ -358,7 +358,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
             logger.info("It took {} ms for visiting {} leafs with prefetching for {} ", elapsed,
-                visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchedLeafFpDocValues().size()
+                visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchingLeafNodesfpDocIds().size()
                 , name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         } else  {
