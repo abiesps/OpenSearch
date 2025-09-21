@@ -335,6 +335,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.cost = -1;
         String name = pointTree.name();
         long st = System.currentTimeMillis();
+
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
             long travelTime = System.currentTimeMillis() - st;
@@ -356,7 +357,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
-            logger.info("It took {} ms for {} with prefetching", elapsed, name);
+            logger.info("It took {} ms for visiting {} leafs with prefetching for {} ", elapsed,
+                visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchedLeafFpDocValues().size()
+                , name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         } else  {
             DocIdSetIterator iterator = result.build().iterator();
