@@ -30,18 +30,7 @@ public final class BKDPrefetchPlanner {
         long end() { return start + length; }
     }
 
-    /**
-     * Plan and issue prefetches for the given leaf FPs.
-     *
-     * @param in             the leaf-data IndexInput (e.g., .kdd)
-     * @param cfg            BKD config
-     * @param pageSize       OS/page cache page size used by your IO layer (e.g., 4096)
-     * @param docIdsFps      leaf FPs you will only call readDocIDs() on
-     * @param docValuesFps   leaf FPs you will call readDocValues() on (these also need docIDs header first)
-     * @param mergeGapBytes  merge two adjacent slices if gap <= this
-     * @param maxWindowBytes cap a merged prefetch window at this size
-     * @param name Segment name
-     */
+
     public static void planAndPrefetch(
         IndexInput in,
         BKDConfig cfg,
