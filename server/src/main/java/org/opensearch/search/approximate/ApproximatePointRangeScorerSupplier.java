@@ -26,7 +26,9 @@ import org.apache.lucene.util.bkd.BKDConfig;
 
 import java.io.IOException;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 import static org.opensearch.search.aggregations.bucket.filterrewrite.PointTreeTraversal.ENABLE_PREFETCH;
@@ -75,6 +77,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             DocIdSetBuilder.BulkAdder adder;
             Set<Long> matchingLeafBlocksFPsDocIds = new TreeSet<>();
             Set<Long> matchingLeafBlocksFPsDocValues = new TreeSet<>();
+            TreeMap<Integer, Long> leafOrdinalFPDocIds = new TreeMap<>();
+            TreeMap<Integer, Long> leafOrdinalFPDocValues = new TreeMap<>();
+
             boolean firstMatchFound = false;
             long firstMatchedFp = -1;
 
@@ -151,6 +156,27 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                 logger.info("First matching leaf fp {} all matching {}", firstMatchedFp, matchingLeafBlocksFPsDocValues);
                 return matchingLeafBlocksFPsDocValues;
             }
+
+            @Override
+            void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
+                leafOrdinalFPDocIds.put(leafOrdinal, fp);
+            };
+
+            @Override
+            void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
+                leafOrdinalFPDocValues.put(leafOrdinal, fp);
+            };
+
+            @Override
+            Map<Integer,Long> matchingLeafNodesDocValues() {
+                return leafOrdinalFPDocValues;
+            }
+
+            @Override
+            Map<Integer,Long> matchingLeafNodesDocIds() {
+                return leafOrdinalFPDocIds;
+            }
+
         };
     }
 
@@ -361,8 +387,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 //                visitorWithPrefetching.matchingLeafNodesfpDocIds(), visitorWithPrefetching.matchingLeafNodesfpDocValues(),
 //                pointTree.name());
             long travelTime = System.currentTimeMillis() - st;
-            logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
-                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size()
+            logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} leaf ordinal to fp map docids : {} doc values: {}", travelTime, name,
+                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size(),
+                visitorWithPrefetching.matchingLeafNodesDocIds(), visitorWithPrefetching.matchingLeafNodesDocValues()
                 );
         } else  {
             intersectLeft2(pointTree, visitor, docCount);

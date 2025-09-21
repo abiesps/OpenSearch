@@ -52,7 +52,9 @@ import org.opensearch.core.common.Strings;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Wraps an {@link IndexReader} with a {@link QueryCancellation}
@@ -397,6 +399,8 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         private PointValues.IntersectVisitor in;
         private final QueryCancellation queryCancellation;
         private int calls;
+        private TreeSet<Long> matchedLeafNodeOrdinalsDocIds  = new TreeSet<>();
+        private TreeSet<Long> matchedLeafNodeOrdinalsDocValues = new TreeSet<>();
 
         private ExitableIntersectVisitor(QueryCancellation queryCancellation) {
             this.queryCancellation = queryCancellation;
@@ -439,6 +443,7 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         @Override
          public void matchedLeafFpDocIds(long fp, int count) {
             in.matchedLeafFpDocIds(fp, count);
+
          };
 
         @Override
@@ -455,5 +460,26 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         public Set<Long> matchingLeafNodesfpDocValues() {
             return in.matchingLeafNodesfpDocValues();
         }
+
+        @Override
+        void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
+            in.matchedLeafOrdinalDocIds(leafOrdinal, fp, count);
+        };
+
+        @Override
+        void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
+            in.matchedLeafOrdinalDocValues(leafOrdinal, fp);
+        };
+
+        @Override
+        Map<Integer,Long> matchingLeafNodesDocValues() {
+            return in.matchingLeafNodesDocValues();
+        }
+
+        @Override
+        Map<Integer,Long> matchingLeafNodesDocIds() {
+            return in.matchingLeafNodesDocIds();
+        }
+
     }
 }
