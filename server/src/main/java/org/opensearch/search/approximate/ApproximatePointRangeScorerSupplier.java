@@ -26,6 +26,7 @@ import org.apache.lucene.util.IntsRef;
 import java.io.IOException;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.TreeSet;
 
 import static org.opensearch.search.aggregations.bucket.filterrewrite.PointTreeTraversal.ENABLE_PREFETCH;
 
@@ -71,8 +72,8 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         return new PointValues.IntersectVisitor() {
 
             DocIdSetBuilder.BulkAdder adder;
-            Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
-            Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
+            Set<Long> matchingLeafBlocksFPsDocIds = new TreeSet<>();
+            Set<Long> matchingLeafBlocksFPsDocValues = new TreeSet<>();
 
             @Override
             public void grow(int count) {
@@ -361,6 +362,11 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             logger.info("It took {} ms for visiting {} leafs with prefetching for {} ", elapsed,
                 visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchingLeafNodesfpDocIds().size()
                 , name);
+
+            TreeSet<Long> allLeafs = new TreeSet<>(visitorWithPrefetching.matchingLeafNodesfpDocValues());
+            allLeafs.addAll(visitorWithPrefetching.matchingLeafNodesfpDocIds());
+
+            logger.info("All matching leaves {} for segment {} ", allLeafs, name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         } else  {
             DocIdSetIterator iterator = result.build().iterator();
