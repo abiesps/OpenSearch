@@ -342,6 +342,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
+            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(), /*pageSize*/128*1024,
+                visitorWithPrefetching.matchingLeafNodesfpDocIds(), visitorWithPrefetching.matchingLeafNodesfpDocValues(),
+                pointTree.name());
             long travelTime = System.currentTimeMillis() - st;
             logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
                 visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size());
@@ -367,14 +370,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             logger.info("It took {} ms for visiting {} leafs with prefetching for {} ", elapsed,
                 visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchingLeafNodesfpDocIds().size()
                 , name);
-
-            TreeSet<Long> allLeafs = new TreeSet<>(visitorWithPrefetching.matchingLeafNodesfpDocValues());
-            allLeafs.addAll(visitorWithPrefetching.matchingLeafNodesfpDocIds());
-
-            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(), /*pageSize*/128*1024,
-                visitorWithPrefetching.matchingLeafNodesfpDocIds(), visitorWithPrefetching.matchingLeafNodesfpDocValues(),
-                pointTree.name());
-            logger.info("All matching leaves size {} and actual fps {} for segment {} ", allLeafs.size(), allLeafs, name);
+//            TreeSet<Long> allLeafs = new TreeSet<>(visitorWithPrefetching.matchingLeafNodesfpDocValues());
+//            allLeafs.addAll(visitorWithPrefetching.matchingLeafNodesfpDocIds());
+//            logger.info("All matching leaves size {} and actual fps {} for segment {} ", allLeafs.size(), allLeafs, name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         } else  {
             DocIdSetIterator iterator = result.build().iterator();
