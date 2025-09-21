@@ -42,7 +42,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 
     private static final Logger logger = LogManager.getLogger(ApproximatePointRangeScorerSupplier.class);
     private final PointValues.PointTree pointTreeWithPrefetching;
-    private final int cost;
+    private long cost;
     private final ConstantScoreWeight constantScoreWeight;
     private final ScoreMode scoreMode;
     private final PointValues values;
