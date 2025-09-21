@@ -342,7 +342,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
-            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(), /*pageSize*/128*1024,
+            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(),
                 visitorWithPrefetching.matchingLeafNodesfpDocIds(), visitorWithPrefetching.matchingLeafNodesfpDocValues(),
                 pointTree.name());
             long travelTime = System.currentTimeMillis() - st;
