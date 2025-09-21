@@ -22,6 +22,7 @@ import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.DocIdSetBuilder;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.bkd.BKDConfig;
 
 import java.io.IOException;
 import java.util.LinkedHashSet;
@@ -335,6 +336,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.visitor = getIntersectVisitor(result, docCount);
         this.cost = -1;
         String name = pointTree.name();
+        BKDConfig bkdConfig = pointTree.config();
+        bkdConfig.numDims();
+        logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
@@ -352,6 +356,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
     @Override
     public Scorer get(long leadCost) throws IOException {
         String name = pointTree.name();
+
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             st = System.currentTimeMillis();
