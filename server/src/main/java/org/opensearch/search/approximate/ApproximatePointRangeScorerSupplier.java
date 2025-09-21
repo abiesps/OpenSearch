@@ -335,15 +335,16 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.cost = -1;
         String name = pointTree.name();
         long st = System.currentTimeMillis();
-
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
             long travelTime = System.currentTimeMillis() - st;
-            logger.info("Travel time with prefetching: {} ms for {} ", travelTime, name);
+            logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
+                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size());
         } else  {
             intersectLeft2(pointTree, visitor, docCount);
             long travelTime = System.currentTimeMillis() - st;
-            logger.info("Travel time without prefetching: {} ms for {} ", travelTime, name);
+            logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
+                visitor.matchingLeafNodesfpDocIds().size() + visitor.matchingLeafNodesfpDocValues().size());
         }
     }
 
