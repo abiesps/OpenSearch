@@ -87,7 +87,7 @@ public final class BKDPrefetchPlanner {
             // single leaf: prefetch at least 1 byte
             long start = uniq.get(0);
             in.prefetch(start, 1);
-            logger.info("Prefetched 1 slice for {} -> [start={}, length=1]", segmentName, start);
+           // logger.info("Prefetched 1 slice for {} -> [start={}, length=1]", segmentName, start);
             return;
         }
 
@@ -120,6 +120,6 @@ public final class BKDPrefetchPlanner {
         for (Slice s : slices) {
             in.prefetch(s.start, s.length);
         }
-        logger.info("Prefetched {} slice(s) for {} -> {}", slices.size(), segmentName, slices);
+       // logger.info("Prefetched {} slice(s) for {} -> {}", slices.size(), segmentName, slices);
     }
 }

@@ -75,6 +75,8 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             DocIdSetBuilder.BulkAdder adder;
             Set<Long> matchingLeafBlocksFPsDocIds = new TreeSet<>();
             Set<Long> matchingLeafBlocksFPsDocValues = new TreeSet<>();
+            boolean firstMatchFound = false;
+            long firstMatchedFp = -1;
 
             @Override
             public void grow(int count) {
@@ -120,22 +122,33 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 
             @Override
             public void matchedLeafFpDocIds(long fp, int count) {
+                if (firstMatchFound == false) {
+                    firstMatchFound = true;
+                    firstMatchedFp = fp;
+                }
                 matchingLeafBlocksFPsDocIds.add(fp);
                 docCount[0] += count;
             };
 
             @Override
             public  Set<Long> matchingLeafNodesfpDocIds() {
+                logger.info("First matching leaf fp {} all matching {}", firstMatchedFp, matchingLeafBlocksFPsDocIds);
                 return matchingLeafBlocksFPsDocIds;
             }
 
             @Override
             public void matchedLeafFpDocValues(long fp) {
+                if (firstMatchFound == false) {
+                    firstMatchFound = true;
+                    firstMatchedFp = fp;
+                }
+
                 matchingLeafBlocksFPsDocValues.add(fp);
             };
 
             @Override
             public  Set<Long> matchingLeafNodesfpDocValues() {
+                logger.info("First matching leaf fp {} all matching {}", firstMatchedFp, matchingLeafBlocksFPsDocValues);
                 return matchingLeafBlocksFPsDocValues;
             }
         };
@@ -272,7 +285,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         pointTree.moveToParent();
     }
 
-    public void intersectLeft(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
+
+    public void intersectLeft(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree,
+                              long[] docCount)
         throws IOException {
         if (docCount[0] >= size) {
             return;
@@ -338,16 +353,17 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         String name = pointTree.name();
         BKDConfig bkdConfig = pointTree.config();
         bkdConfig.numDims();
-        logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
+       // logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
-            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(),
-                visitorWithPrefetching.matchingLeafNodesfpDocIds(), visitorWithPrefetching.matchingLeafNodesfpDocValues(),
-                pointTree.name());
+//            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(),
+//                visitorWithPrefetching.matchingLeafNodesfpDocIds(), visitorWithPrefetching.matchingLeafNodesfpDocValues(),
+//                pointTree.name());
             long travelTime = System.currentTimeMillis() - st;
             logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
-                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size());
+                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size()
+                );
         } else  {
             intersectLeft2(pointTree, visitor, docCount);
             long travelTime = System.currentTimeMillis() - st;
