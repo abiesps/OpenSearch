@@ -117,7 +117,7 @@ public final class BKDPrefetchPlanner {
             }
         }
         merged.add(cur);
-        logger.info("Leafs to be prefetched after merging {} for segment {}", merged, name);
+        logger.info("Leafs to be prefetched after merging {} for segment {}", merged.size(), name);
         // 4) Issue prefetches: one syscall per merged window
         for (Slice w : merged) {
             // Your IndexInput has prefetch(offset,len). This should end up in a single madvise(WILLNEED)
