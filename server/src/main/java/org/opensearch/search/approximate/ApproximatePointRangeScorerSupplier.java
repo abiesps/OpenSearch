@@ -345,15 +345,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             logger.info("Travel time without prefetching: {} ms for {} ", travelTime, name);
         }
     }
-    /**
-     * Get the {@link Scorer}. This may not return {@code null} and must be called at most once.
-     *
-     * @param leadCost Cost of the scorer that will be used in order to lead iteration. This can be
-     *                 interpreted as an upper bound of the number of times that {@link DocIdSetIterator#nextDoc},
-     *                 {@link DocIdSetIterator#advance} and {@link TwoPhaseIterator#matches} will be called. Under
-     *                 doubt, pass {@link Long#MAX_VALUE}, which will produce a {@link Scorer} that has good
-     *                 iteration capabilities.
-     */
+
     @Override
     public Scorer get(long leadCost) throws IOException {
         String name = pointTree.name();
@@ -374,12 +366,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         }
     }
 
-    /**
-     * Get an estimate of the {@link Scorer} that would be returned by {@link #get}. This may be a
-     * costly operation, so it should only be called if necessary.
-     *
-     * @see DocIdSetIterator#cost
-     */
     @Override
     public long cost() {
         if (cost == -1) {
