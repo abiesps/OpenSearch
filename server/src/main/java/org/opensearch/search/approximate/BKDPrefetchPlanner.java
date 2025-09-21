@@ -40,6 +40,7 @@ public final class BKDPrefetchPlanner {
      * @param docValuesFps   leaf FPs you will call readDocValues() on (these also need docIDs header first)
      * @param mergeGapBytes  merge two adjacent slices if gap <= this
      * @param maxWindowBytes cap a merged prefetch window at this size
+     * @param name Segment name
      */
     public static void planAndPrefetch(
         IndexInput in,
@@ -127,7 +128,7 @@ public final class BKDPrefetchPlanner {
             }
         }
         merged.add(cur);
-        logger.info("Leafs to be prefetched after merging {} for segment {}", merged, merged.size());
+        logger.info("Leafs to be prefetched after merging {} for segment {}", merged, name);
         // 4) Issue prefetches: one syscall per merged window
         for (Slice w : merged) {
             // Your IndexInput has prefetch(offset,len). This should end up in a single madvise(WILLNEED)
@@ -142,9 +143,10 @@ public final class BKDPrefetchPlanner {
         BKDConfig cfg,
         int pageSize,
         Collection<Long> docIdsFps,
-        Collection<Long> docValuesFps
+        Collection<Long> docValuesFps,
+        String name
     ) throws java.io.IOException {
         planAndPrefetch(in, cfg, pageSize, docIdsFps, docValuesFps,
-            DEFAULT_MERGE_GAP_BYTES, DEFAULT_MAX_WINDOW_BYTES);
+            DEFAULT_MERGE_GAP_BYTES, DEFAULT_MAX_WINDOW_BYTES, name);
     }
 }
