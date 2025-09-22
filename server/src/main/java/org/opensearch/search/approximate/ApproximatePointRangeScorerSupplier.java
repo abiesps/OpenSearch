@@ -128,10 +128,10 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 
             @Override
             public void matchedLeafFpDocIds(long fp, int count) {
-                if (firstMatchFound == false) {
-                    firstMatchFound = true;
-                    firstMatchedFp = fp;
-                }
+//                if (firstMatchFound == false) {
+//                    firstMatchFound = true;
+//                    firstMatchedFp = fp;
+//                }
                 matchingLeafBlocksFPsDocIds.add(fp);
                 docCount[0] += count;
             };
@@ -143,11 +143,10 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 
             @Override
             public void matchedLeafFpDocValues(long fp) {
-                if (firstMatchFound == false) {
-                    firstMatchFound = true;
-                    firstMatchedFp = fp;
-                }
-
+//                if (firstMatchFound == false) {
+//                    firstMatchFound = true;
+//                    firstMatchedFp = fp;
+//                }
                 matchingLeafBlocksFPsDocValues.add(fp);
             };
 
@@ -189,11 +188,16 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             @Override
             public void visitAfterPrefetch(int docID) throws IOException {
                 //in.visitAfterPrefetch(docID);
+                adder.add(docID);
             }
 
             @Override
             public void visitAfterPrefetch(int docID, byte[] packedValue) throws IOException {
                 //in.visitAfterPrefetch(docID, packedValue);
+                if (matches(packedValue)) {
+                    //visit(docID);
+                    adder.add(docID);
+                }
             };
 
 
@@ -401,7 +405,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         long st = System.currentTimeMillis();
         //preload k
         if (ENABLE_PREFETCH) {
-            intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
+            intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCountWithPrefetching);
             long travelTime = System.currentTimeMillis() - st;
             logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
                 visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size()
