@@ -481,5 +481,15 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
             return in.matchingLeafNodesDocIds();
         }
 
+        @Override
+        public int lastMatchingLeafOrdinal() {
+            return in.lastMatchingLeafOrdinal();
+        }
+
+        @Override
+        public  void setLastMatchingLeafOrdinal(int leafOrdinal) {
+            in.setLastMatchingLeafOrdinal(leafOrdinal);
+        }
+
     }
 }

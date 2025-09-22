@@ -79,6 +79,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             Set<Long> matchingLeafBlocksFPsDocValues = new TreeSet<>();
             TreeMap<Integer, Long> leafOrdinalFPDocIds = new TreeMap<>();
             TreeMap<Integer, Long> leafOrdinalFPDocValues = new TreeMap<>();
+            int lastMatchingLeafOrdinal = -1;
 
             boolean firstMatchFound = false;
             long firstMatchedFp = -1;
@@ -175,6 +176,16 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             @Override
             public Map<Integer,Long> matchingLeafNodesDocIds() {
                 return leafOrdinalFPDocIds;
+            }
+
+            @Override
+            public int lastMatchingLeafOrdinal() {
+                return lastMatchingLeafOrdinal;
+            }
+
+            @Override
+            public  void setLastMatchingLeafOrdinal(int leafOrdinal) {
+                lastMatchingLeafOrdinal = leafOrdinal;
             }
 
         };
@@ -383,9 +394,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
-//            BKDPrefetchPlanner.planAndPrefetch(pointTree.leaves(), pointTree.config(),
-//                visitorWithPrefetching.matchingLeafNodesfpDocIds(), visitorWithPrefetching.matchingLeafNodesfpDocValues(),
-//                pointTree.name());
             long travelTime = System.currentTimeMillis() - st;
             logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} leaf ordinal to fp map docids : {} doc values: {}", travelTime, name,
                 visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size(),
