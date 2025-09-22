@@ -472,12 +472,12 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         };
 
         @Override
-        Map<Integer,Long> matchingLeafNodesDocValues() {
+        public Map<Integer,Long> matchingLeafNodesDocValues() {
             return in.matchingLeafNodesDocValues();
         }
 
         @Override
-        Map<Integer,Long> matchingLeafNodesDocIds() {
+        public Map<Integer,Long> matchingLeafNodesDocIds() {
             return in.matchingLeafNodesDocIds();
         }
 

@@ -168,12 +168,12 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             };
 
             @Override
-            Map<Integer,Long> matchingLeafNodesDocValues() {
+            public Map<Integer,Long> matchingLeafNodesDocValues() {
                 return leafOrdinalFPDocValues;
             }
 
             @Override
-            Map<Integer,Long> matchingLeafNodesDocIds() {
+            public Map<Integer,Long> matchingLeafNodesDocIds() {
                 return leafOrdinalFPDocIds;
             }
 
