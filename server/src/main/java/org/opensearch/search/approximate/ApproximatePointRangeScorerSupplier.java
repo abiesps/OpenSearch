@@ -158,12 +158,12 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             }
 
             @Override
-            void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
+            public void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
                 leafOrdinalFPDocIds.put(leafOrdinal, fp);
             };
 
             @Override
-            void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
+            public void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
                 leafOrdinalFPDocValues.put(leafOrdinal, fp);
             };
 

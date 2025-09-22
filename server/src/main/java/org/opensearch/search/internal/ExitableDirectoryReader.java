@@ -462,12 +462,12 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         }
 
         @Override
-        void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
+        public void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
             in.matchedLeafOrdinalDocIds(leafOrdinal, fp, count);
         };
 
         @Override
-        void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
+        public void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
             in.matchedLeafOrdinalDocValues(leafOrdinal, fp);
         };
 
