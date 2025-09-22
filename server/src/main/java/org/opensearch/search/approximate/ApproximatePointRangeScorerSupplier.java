@@ -138,7 +138,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 
             @Override
             public  Set<Long> matchingLeafNodesfpDocIds() {
-                logger.info("First matching leaf fp {} all matching {}", firstMatchedFp, matchingLeafBlocksFPsDocIds);
                 return matchingLeafBlocksFPsDocIds;
             }
 
@@ -154,7 +153,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 
             @Override
             public  Set<Long> matchingLeafNodesfpDocValues() {
-                logger.info("First matching leaf fp {} all matching {}", firstMatchedFp, matchingLeafBlocksFPsDocValues);
                 return matchingLeafBlocksFPsDocValues;
             }
 
@@ -388,16 +386,13 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.visitor = getIntersectVisitor(result, docCount);
         this.cost = -1;
         String name = pointTree.name();
-        BKDConfig bkdConfig = pointTree.config();
-        bkdConfig.numDims();
        // logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
             long travelTime = System.currentTimeMillis() - st;
-            logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} leaf ordinal to fp map docids : {} doc values: {}", travelTime, name,
-                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size(),
-                visitorWithPrefetching.matchingLeafNodesDocIds(), visitorWithPrefetching.matchingLeafNodesDocValues()
+            logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
+                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size()
                 );
         } else  {
             intersectLeft2(pointTree, visitor, docCount);
