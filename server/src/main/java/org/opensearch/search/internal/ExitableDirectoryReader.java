@@ -41,9 +41,11 @@ import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.PointValues;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.suggest.document.CompletionTerms;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.IntsRef;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
 import org.apache.lucene.util.bkd.BKDConfig;
 import org.apache.lucene.util.bkd.BKDReader;
@@ -490,6 +492,16 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         public  void setLastMatchingLeafOrdinal(int leafOrdinal) {
             in.setLastMatchingLeafOrdinal(leafOrdinal);
         }
+
+        @Override
+        public void visitAfterPrefetch(int docID) throws IOException {
+            in.visitAfterPrefetch(docID);
+        }
+
+        @Override
+        public void visitAfterPrefetch(int docID, byte[] packedValue) throws IOException {
+            in.visitAfterPrefetch(docID, packedValue);
+        };
 
     }
 }

@@ -93,7 +93,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             public void visit(int docID) {
                 // it is possible that size < 1024 and docCount < size but we will continue to count through all the 1024 docs
                 adder.add(docID);
-                //docCount[0]++;
+                docCount[0]++;
             }
 
             @Override
@@ -104,7 +104,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             @Override
             public void visit(IntsRef ref) {
                 adder.add(ref);
-                //docCount[0] += ref.length;
+                docCount[0] += ref.length;
             }
 
             @Override
@@ -185,6 +185,17 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             public  void setLastMatchingLeafOrdinal(int leafOrdinal) {
                 lastMatchingLeafOrdinal = leafOrdinal;
             }
+
+            @Override
+            public void visitAfterPrefetch(int docID) throws IOException {
+                //in.visitAfterPrefetch(docID);
+            }
+
+            @Override
+            public void visitAfterPrefetch(int docID, byte[] packedValue) throws IOException {
+                //in.visitAfterPrefetch(docID, packedValue);
+            };
+
 
         };
     }
