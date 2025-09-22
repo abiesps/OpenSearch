@@ -388,6 +388,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         String name = pointTree.name();
        // logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
         long st = System.currentTimeMillis();
+        //preload k
         if (ENABLE_PREFETCH) {
             intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCount);
             long travelTime = System.currentTimeMillis() - st;
@@ -410,7 +411,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         if (ENABLE_PREFETCH) {
             st = System.currentTimeMillis();
             pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
-            pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
+            //pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
             logger.info("It took {} ms for visiting {} leafs with prefetching for {} ", elapsed,
