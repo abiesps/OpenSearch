@@ -58,9 +58,9 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
     ApproximatePointRangeQuery query;
     static ExecutorService lookupExecutors = Executors.newVirtualThreadPerTaskExecutor();
     private static final Logger logger = LogManager.getLogger(ApproximatePointWeight.class);
-    ConcurrentHashMap<IndexReader.CacheKey, PointValues.PointTree> pointTreeMap = new ConcurrentHashMap<>();
-    ConcurrentHashMap<IndexReader.CacheKey, PointValues.IntersectVisitor> visitorConcurrentHashMap = new ConcurrentHashMap<>();
-    ConcurrentHashMap<IndexReader.CacheKey, DocIdSetBuilder> resultMap = new ConcurrentHashMap<>();
+    ConcurrentHashMap<String, PointValues.PointTree> pointTreeMap = new ConcurrentHashMap<>();
+    ConcurrentHashMap<String, PointValues.IntersectVisitor> visitorConcurrentHashMap = new ConcurrentHashMap<>();
+    ConcurrentHashMap<String, DocIdSetBuilder> resultMap = new ConcurrentHashMap<>();
 
 
     private ApproximatePointWeight(Query query, float score) {
@@ -97,9 +97,9 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                         String name = pointTreeWithPrefetching.name();
                         DocIdSetBuilder resultsWithPrefetching = new DocIdSetBuilder(reader.maxDoc(), values);
                         PointValues.IntersectVisitor visitorWithPrefetching = getPrefetchingIntersectVisitor(resultsWithPrefetching, docCountWithPrefetching);
-                        resultMap.put(key, resultsWithPrefetching);
-                        pointTreeMap.put(key,  pointTreeWithPrefetching);
-                        visitorConcurrentHashMap.put(key, visitorWithPrefetching);
+                        resultMap.put(name, resultsWithPrefetching);
+                        pointTreeMap.put(name,  pointTreeWithPrefetching);
+                        visitorConcurrentHashMap.put(name, visitorWithPrefetching);
                         intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCountWithPrefetching);
                         long travelTime = System.currentTimeMillis() - st;
                        // logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
@@ -129,12 +129,16 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         long s = System.currentTimeMillis();
         LeafReader reader = context.reader();
         long[] docCount = { 0 };
-        IndexReader.CacheKey key = reader.getCoreCacheHelper().getKey();
-        PointValues.PointTree pointTreeWithPrefetching = pointTreeMap.get(key);
-        PointValues.IntersectVisitor visitorWithPrefetching = visitorConcurrentHashMap.get(key);
-        DocIdSetBuilder resultsWithPrefetching = resultMap.get(key);
-
         PointValues values = reader.getPointValues(query.getField());
+        PointValues.PointTree pointTreeTempForName = values.getPointTree();
+        String name = pointTreeTempForName.name();
+        IndexReader.CacheKey key = reader.getCoreCacheHelper().getKey();
+
+        PointValues.PointTree pointTreeWithPrefetching = pointTreeMap.get(name);
+        PointValues.IntersectVisitor visitorWithPrefetching = visitorConcurrentHashMap.get(name);
+        DocIdSetBuilder resultsWithPrefetching = resultMap.get(name);
+
+
         if (checkValidPointValues(values) == false) {
             return null;
         }
@@ -142,11 +146,11 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         if (this.size > values.size()) {
             return pointRangeQueryWeight.scorerSupplier(context);
         } else {
-            PointValues.PointTree pointTree = values.getPointTree();
             if (sortOrder == null || sortOrder.equals(SortOrder.ASC)) {
                 return new ApproximatePointRangeScorerSupplier(query, reader, values, size, this, scoreMode,
                     pointTreeWithPrefetching, visitorWithPrefetching, resultsWithPrefetching);
             } else {
+                PointValues.PointTree pointTree = values.getPointTree();
                 // we need to fetch size + deleted docs since the collector will prune away deleted docs resulting in fewer results
                 // than expected
                 final int deletedDocs = reader.numDeletedDocs();
@@ -494,7 +498,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         }
         // Process both children: left first, then right if needed
         intersectLeft(visitor, pointTree, docCount);
-        //if (rightChild != null) {
         if (docCount[0] < size && rightChild != null) {
             intersectLeft(visitor, rightChild, docCount);
         }

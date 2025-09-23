@@ -418,6 +418,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.visitor = getIntersectVisitor(result, docCount);
         this.cost = -1;
         String name = pointTree.name();
+
        // logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
         long st = System.currentTimeMillis();
         //preload k
@@ -485,11 +486,13 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         boolean same =  docIDLeavesWitPrefetching.equals(docIDLeavesWithoutPrefetching);
         if (!same) {
             logger.info("======================================DocIDs are not matching with prefetch size {} without prefetch size {} " +
-                " with prefetch {} without prefetch {}  name {} ", docIDLeavesWitPrefetching.size(),
+                " with prefetch {} without prefetch {}  name withour prefetch {} name with prefetching {} ",
+                docIDLeavesWitPrefetching.size(),
                 docIDLeavesWithoutPrefetching.size(),
                 docIDLeavesWitPrefetching ,
                 docIDLeavesWithoutPrefetching,
-                name);
+                name,
+                pointTreeWithPrefetching.name());
         }
 
         Set<Long> docValuesLeavesWithoutPrefetching = visitor.matchingLeafNodesfpDocValues();
