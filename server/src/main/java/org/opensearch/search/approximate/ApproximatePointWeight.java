@@ -134,12 +134,11 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
 
         PointValues values = reader.getPointValues(query.getField());
         if (checkValidPointValues(values) == false) {
-            if (1==1) throw new IllegalArgumentException("Are we here!!");
             return null;
         }
         // values.size(): total points indexed, In most cases: values.size() ≈ number of documents (assuming single-valued fields)
         if (this.size > values.size()) {
-            throw new IllegalArgumentException("Are we here!!");
+
             //return pointRangeQueryWeight.scorerSupplier(context);
         } else {
             PointValues.PointTree pointTree = values.getPointTree();
@@ -147,8 +146,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                 return new ApproximatePointRangeScorerSupplier(query, reader, values, size, this, scoreMode,
                     pointTreeWithPrefetching, visitorWithPrefetching, resultsWithPrefetching);
             } else {
-                if (1==1)
-                    throw new IllegalArgumentException("Are we here!!");
                 // we need to fetch size + deleted docs since the collector will prune away deleted docs resulting in fewer results
                 // than expected
                 final int deletedDocs = reader.numDeletedDocs();
