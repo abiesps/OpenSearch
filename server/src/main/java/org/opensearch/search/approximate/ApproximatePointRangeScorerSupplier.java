@@ -299,11 +299,14 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         }
         // Handle leaf nodes
         if (pointTree.moveToChild() == false) {
+            long st = System.currentTimeMillis();
             if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
                 pointTree.visitDocIDs(visitor);
             } else {
                 pointTree.visitDocValues(visitor);
             }
+            long dt = System.currentTimeMillis() - st;
+            logger.info("leaf visiting time without prefetch {} ms for {} ", dt, pointTree.name());
             return;
         }
         // For CELL_INSIDE_QUERY, check if we can skip right child
@@ -384,17 +387,19 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
     public ApproximatePointRangeScorerSupplier(PointRangeQuery pointRangeQuery,
                                                LeafReader reader, PointValues values,
                                                int size, ConstantScoreWeight constantScoreWeight,
-                                               ScoreMode scoreMode) throws IOException {
+                                               ScoreMode scoreMode,
+                                               PointValues.PointTree pointTreeWithPrefetching,
+                                               PointValues.IntersectVisitor visitorWithPrefetching,
+                                               DocIdSetBuilder resultWithPrefetching) throws IOException {
         this.pointRangeQuery = pointRangeQuery;
         this.comparator = ArrayUtil.getUnsignedComparator(pointRangeQuery.getBytesPerDim());
         this.pointTree = values.getPointTree();
-        this.pointTreeWithPrefetching = values.getPointTree();
-        resultWithPrefetching = new DocIdSetBuilder(reader.maxDoc(), values);
+        this.resultWithPrefetching = resultWithPrefetching;
         this.size = size;
         this.scoreMode = scoreMode;
         this.constantScoreWeight = constantScoreWeight;
         this.values = values;
-        visitorWithPrefetching = getPrefetchingIntersectVisitor(resultWithPrefetching, docCountWithPrefetching);
+        this.visitorWithPrefetching = visitorWithPrefetching
         result = new DocIdSetBuilder(reader.maxDoc(), values);
         this.visitor = getIntersectVisitor(result, docCount);
         this.cost = -1;
@@ -403,11 +408,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         long st = System.currentTimeMillis();
         //preload k
         if (ENABLE_PREFETCH) {
-            intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCountWithPrefetching);
-            long travelTime = System.currentTimeMillis() - st;
-            logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
-                visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size()
-                );
+
         } else  {
             intersectLeft2(pointTree, visitor, docCount);
             long travelTime = System.currentTimeMillis() - st;
@@ -419,7 +420,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
     @Override
     public Scorer get(long leadCost) throws IOException {
         String name = pointTree.name();
-
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             st = System.currentTimeMillis();
