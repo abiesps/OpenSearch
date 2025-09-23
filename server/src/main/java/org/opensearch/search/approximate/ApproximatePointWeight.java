@@ -90,7 +90,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                         LeafReader reader = context.reader();
                         IndexReader.CacheKey key = reader.getCoreCacheHelper().getKey();
                         long[] docCountWithPrefetching = { 0 };
-                        long[] docCount = { 0 };
                         PointValues values = reader.getPointValues(query.getField());
                         PointValues.PointTree pointTreeWithPrefetching = values.getPointTree();
                         String name = pointTreeWithPrefetching.name();
@@ -117,9 +116,8 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                 Thread.currentThread().interrupt();
                 throw new RuntimeException(e);
             }
-
             long elapsed = System.currentTimeMillis() - s;
-            logger.info("Total elapsed time for creating weight {} ms pointTeeMap {}", elapsed, pointTreeMap );
+            logger.info("Total elapsed time for creating weight {} ms pointTeeMap size {}", elapsed, pointTreeMap.size() );
         }
     }
 
@@ -128,26 +126,29 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
     public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
         long s = System.currentTimeMillis();
         LeafReader reader = context.reader();
-        long[] docCountWithPrefetching = { 0 };
         long[] docCount = { 0 };
+        IndexReader.CacheKey key = reader.getCoreCacheHelper().getKey();
+        PointValues.PointTree pointTreeWithPrefetching = pointTreeMap.get(key);
+        PointValues.IntersectVisitor visitorWithPrefetching = visitorConcurrentHashMap.get(key);
+        DocIdSetBuilder resultsWithPrefetching = resultMap.get(key);
 
         PointValues values = reader.getPointValues(query.getField());
         if (checkValidPointValues(values) == false) {
+            if (1==1) throw new IllegalArgumentException("Are we here!!");
             return null;
         }
         // values.size(): total points indexed, In most cases: values.size() ≈ number of documents (assuming single-valued fields)
         if (this.size > values.size()) {
-            return pointRangeQueryWeight.scorerSupplier(context);
+            throw new IllegalArgumentException("Are we here!!");
+            //return pointRangeQueryWeight.scorerSupplier(context);
         } else {
             PointValues.PointTree pointTree = values.getPointTree();
             if (sortOrder == null || sortOrder.equals(SortOrder.ASC)) {
-                IndexReader.CacheKey key = reader.getCoreCacheHelper().getKey();
-                PointValues.PointTree pointTreeWithPrefetching = pointTreeMap.get(key);
-                PointValues.IntersectVisitor visitorWithPrefetching = visitorConcurrentHashMap.get(key);
-                DocIdSetBuilder resultsWithPrefetching = resultMap.get(key);
                 return new ApproximatePointRangeScorerSupplier(query, reader, values, size, this, scoreMode,
                     pointTreeWithPrefetching, visitorWithPrefetching, resultsWithPrefetching);
             } else {
+                if (1==1)
+                    throw new IllegalArgumentException("Are we here!!");
                 // we need to fetch size + deleted docs since the collector will prune away deleted docs resulting in fewer results
                 // than expected
                 final int deletedDocs = reader.numDeletedDocs();

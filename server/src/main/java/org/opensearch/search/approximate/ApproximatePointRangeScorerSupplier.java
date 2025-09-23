@@ -418,7 +418,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                 visitor.matchingLeafNodesfpDocIds().size() + visitor.matchingLeafNodesfpDocValues().size());
         }
         long e = System.currentTimeMillis() - s;
-        logger.info("Total time to create ApproximatePointRangeScorerSupplier is {} ms for read ordinal {} ",  e, reader.getContext().ord);
     }
 
     @Override
@@ -426,16 +425,12 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         String name = pointTree.name();
         long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
-            st = System.currentTimeMillis();
             pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
             logger.info("It took {} ms for visiting/actual scoring {} leafs with prefetching for {} ", elapsed,
                 visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchingLeafNodesfpDocIds().size()
                 , name);
-//            TreeSet<Long> allLeafs = new TreeSet<>(visitorWithPrefetching.matchingLeafNodesfpDocValues());
-//            allLeafs.addAll(visitorWithPrefetching.matchingLeafNodesfpDocIds());
-//            logger.info("All matching leaves size {} and actual fps {} for segment {} ", allLeafs.size(), allLeafs, name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         } else  {
             DocIdSetIterator iterator = result.build().iterator();

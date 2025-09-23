@@ -127,9 +127,8 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
     @Override
     public final ConstantScoreWeight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
         Weight pointRangeQueryWeight = pointRangeQuery.createWeight(searcher, scoreMode, boost);
-        ApproximatePointWeight approximatePointWeight = new ApproximatePointWeight( this, boost, size, pointRangeQueryWeight,
+        return new ApproximatePointWeight( this, boost, size, pointRangeQueryWeight,
             sortOrder, scoreMode, searcher);
-        return approximatePointWeight;
     }
 
     private byte[] computeEffectiveBound(SearchContext context, boolean isLowerBound) {
