@@ -45,7 +45,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
     private final int size;
 
     private static final Logger logger = LogManager.getLogger(ApproximatePointRangeScorerSupplier.class);
-    private final PointValues.PointTree pointTreeWithPrefetching;
+    private final  PointValues.PointTree pointTreeWithPrefetching;
     private long cost;
     private final ConstantScoreWeight constantScoreWeight;
     private final ScoreMode scoreMode;
@@ -395,6 +395,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.pointRangeQuery = pointRangeQuery;
         this.comparator = ArrayUtil.getUnsignedComparator(pointRangeQuery.getBytesPerDim());
         this.pointTree = values.getPointTree();
+        this.pointTreeWithPrefetching = pointTreeWithPrefetching;
         this.resultWithPrefetching = resultWithPrefetching;
         this.size = size;
         this.scoreMode = scoreMode;

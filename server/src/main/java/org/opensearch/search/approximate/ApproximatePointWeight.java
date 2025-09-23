@@ -90,6 +90,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                         long[] docCount = { 0 };
                         PointValues values = reader.getPointValues(query.getField());
                         PointValues.PointTree pointTreeWithPrefetching = values.getPointTree();
+                        String name = pointTreeWithPrefetching.name();
                         DocIdSetBuilder resultsWithPrefetching = new DocIdSetBuilder(reader.maxDoc(), values);
                         PointValues.IntersectVisitor visitorWithPrefetching = getPrefetchingIntersectVisitor(resultsWithPrefetching, docCountWithPrefetching);
                         resultMap.put(context.ord, resultsWithPrefetching);
