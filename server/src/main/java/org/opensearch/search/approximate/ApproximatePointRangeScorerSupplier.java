@@ -220,19 +220,17 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.cost = -1;
         String name = pointTree.name();
         /// visit without prefetch anyways
-        intersectLeft2(pointTree, visitor, docCount);
+        if (!ENABLE_PREFETCH)
+             intersectLeft2(pointTree, visitor, docCount);
     }
 
-    @Override
-    public Scorer get(long leadCost) throws IOException {
-        String name = pointTree.name();
-        long st = System.currentTimeMillis();
+    void validate(String name) {
         Set<Long> docIDLeavesWithoutPrefetching = visitor.matchingLeafNodesfpDocIds();
         Set<Long> docIDLeavesWitPrefetching = visitorWithPrefetching.matchingLeafNodesfpDocIds();
         boolean same =  docIDLeavesWitPrefetching.equals(docIDLeavesWithoutPrefetching);
         if (!same) {
             logger.info("======================================DocIDs are not matching with prefetch size {} without prefetch size {} " +
-                " with prefetch {} without prefetch {}  name withour prefetch {} name with prefetching {} ",
+                    " with prefetch {} without prefetch {}  name withour prefetch {} name with prefetching {} ",
                 docIDLeavesWitPrefetching.size(),
                 docIDLeavesWithoutPrefetching.size(),
                 docIDLeavesWitPrefetching ,
@@ -252,7 +250,12 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                 docValuesLeavesWithoutPrefetching,
                 name);
         }
-       //compareSets()
+    }
+
+    @Override
+    public Scorer get(long leadCost) throws IOException {
+        String name = pointTree.name();
+        long st = System.currentTimeMillis();
         if (ENABLE_PREFETCH) {
             pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
