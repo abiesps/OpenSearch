@@ -233,78 +233,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
             DocIdSetBuilder.BulkAdder adder;
             Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
             Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
-
-            @Override
-            public void grow(int count) {
-                adder = result.grow(count);
-            }
-
-            @Override
-            public void visit(int docID) {
-                // it is possible that size < 1024 and docCount < size but we will continue to count through all the 1024 docs
-                adder.add(docID);
-                //docCount[0]++;
-            }
-
-            @Override
-            public void visit(DocIdSetIterator iterator) throws IOException {
-                adder.add(iterator);
-            }
-
-            @Override
-            public void visit(IntsRef ref) {
-                adder.add(ref);
-                //docCount[0] += ref.length;
-            }
-
-            @Override
-            public void visit(int docID, byte[] packedValue) {
-                if (matches(packedValue)) {
-                    visit(docID);
-                }
-            }
-
-            @Override
-            public void visit(DocIdSetIterator iterator, byte[] packedValue) throws IOException {
-                if (matches(packedValue)) {
-                    adder.add(iterator);
-                }
-            }
-
-            @Override
-            public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
-                return relate(minPackedValue, maxPackedValue);
-            }
-
-            @Override
-            public void matchedLeafFpDocIds(long fp, int count) {
-                matchingLeafBlocksFPsDocIds.add(fp);
-                docCount[0] += count;
-            };
-
-            @Override
-            public  Set<Long> matchingLeafNodesfpDocIds() {
-                return matchingLeafBlocksFPsDocIds;
-            }
-
-            @Override
-            public void matchedLeafFpDocValues(long fp) {
-                matchingLeafBlocksFPsDocValues.add(fp);
-            };
-
-            @Override
-            public  Set<Long> matchingLeafNodesfpDocValues() {
-                return matchingLeafBlocksFPsDocValues;
-            }
-        };
-    }
-
-    public PointValues.IntersectVisitor getPrefetchingIntersectVisitor(DocIdSetBuilder result, long[] docCount) {
-        return new PointValues.IntersectVisitor() {
-
-            DocIdSetBuilder.BulkAdder adder;
-            Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
-            Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
             TreeMap<Integer, Long> leafOrdinalFPDocIds = new TreeMap<>();
             TreeMap<Integer, Long> leafOrdinalFPDocValues = new TreeMap<>();
             int lastMatchingLeafOrdinal = -1;
@@ -618,5 +546,77 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
             intersectRight(visitor, leftChild, docCount);
         }
         pointTree.moveToParent();
+    }
+
+    public PointValues.IntersectVisitor getIntersectVisitor(
+        DocIdSetBuilder result,
+        long[] docCount) {
+        return new PointValues.IntersectVisitor() {
+            DocIdSetBuilder.BulkAdder adder;
+            Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
+            Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
+            @Override
+            public void grow(int count) {
+                adder = result.grow(count);
+            }
+
+            @Override
+            public void visit(int docID) {
+                // it is possible that size < 1024 and docCount < size but we will continue to count through all the 1024 docs
+                adder.add(docID);
+                docCount[0]++;
+            }
+
+            @Override
+            public void visit(DocIdSetIterator iterator) throws IOException {
+                adder.add(iterator);
+            }
+
+            @Override
+            public void visit(IntsRef ref) {
+                adder.add(ref);
+                docCount[0] += ref.length;
+            }
+
+            @Override
+            public void visit(int docID, byte[] packedValue) {
+                if (matches(packedValue)) {
+                    visit(docID);
+                }
+            }
+
+            @Override
+            public void visit(DocIdSetIterator iterator, byte[] packedValue) throws IOException {
+                if (matches(packedValue)) {
+                    adder.add(iterator);
+                }
+            }
+
+            @Override
+            public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
+                return relate(minPackedValue, maxPackedValue);
+            }
+
+            @Override
+            public void matchedLeafFpDocIds(long fp, int count) {
+                matchingLeafBlocksFPsDocIds.add(fp);
+                //docCount[0] += count;
+            };
+
+            @Override
+            public  Set<Long> matchingLeafNodesfpDocIds() {
+                return matchingLeafBlocksFPsDocIds;
+            }
+
+            @Override
+            public void matchedLeafFpDocValues(long fp) {
+                matchingLeafBlocksFPsDocValues.add(fp);
+            };
+
+            @Override
+            public  Set<Long> matchingLeafNodesfpDocValues() {
+                return matchingLeafBlocksFPsDocValues;
+            }
+        };
     }
 }
