@@ -74,6 +74,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         this.comparator = ArrayUtil.getUnsignedComparator(query.getBytesPerDim());
         this.searcher = searcher;
 
+        long s = System.currentTimeMillis();
         //do lookup here
         if (ENABLE_PREFETCH) {
             //do lookup
@@ -112,12 +113,15 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                 throw new RuntimeException(e);
             }
 
+            long elapsed = System.currentTimeMillis() - s;
+            logger.info("Total elapsed time for creating weight {} ms", elapsed );
         }
     }
 
 
     @Override
     public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
+        long s = System.currentTimeMillis();
         LeafReader reader = context.reader();
         long[] docCountWithPrefetching = { 0 };
         long[] docCount = { 0 };
@@ -167,6 +171,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                 };
             }
         }
+
     }
 
     @Override

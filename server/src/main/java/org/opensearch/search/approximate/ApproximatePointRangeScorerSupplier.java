@@ -391,6 +391,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                                                PointValues.PointTree pointTreeWithPrefetching,
                                                PointValues.IntersectVisitor visitorWithPrefetching,
                                                DocIdSetBuilder resultWithPrefetching) throws IOException {
+        long s= System.currentTimeMillis();
         this.pointRangeQuery = pointRangeQuery;
         this.comparator = ArrayUtil.getUnsignedComparator(pointRangeQuery.getBytesPerDim());
         this.pointTree = values.getPointTree();
@@ -399,7 +400,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.scoreMode = scoreMode;
         this.constantScoreWeight = constantScoreWeight;
         this.values = values;
-        this.visitorWithPrefetching = visitorWithPrefetching
+        this.visitorWithPrefetching = visitorWithPrefetching;
         result = new DocIdSetBuilder(reader.maxDoc(), values);
         this.visitor = getIntersectVisitor(result, docCount);
         this.cost = -1;
@@ -415,6 +416,8 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
                 visitor.matchingLeafNodesfpDocIds().size() + visitor.matchingLeafNodesfpDocValues().size());
         }
+        long e = System.currentTimeMillis() - s;
+        logger.info("Total time to create ApproximatePointRangeScorerSupplier is {} ms for read ordinal {} ",  e, reader.getContext().ord);
     }
 
     @Override
@@ -426,7 +429,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
-            logger.info("It took {} ms for visiting {} leafs with prefetching for {} ", elapsed,
+            logger.info("It took {} ms for visiting/actual scoring {} leafs with prefetching for {} ", elapsed,
                 visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchingLeafNodesfpDocIds().size()
                 , name);
 //            TreeSet<Long> allLeafs = new TreeSet<>(visitorWithPrefetching.matchingLeafNodesfpDocValues());
