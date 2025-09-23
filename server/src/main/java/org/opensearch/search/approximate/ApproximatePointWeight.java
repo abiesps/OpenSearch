@@ -73,6 +73,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         this.scoreMode = scoreMode;
         this.comparator = ArrayUtil.getUnsignedComparator(query.getBytesPerDim());
         this.searcher = searcher;
+        logger.info("==================================================================Taking new code path or not ?======================");
 
         long s = System.currentTimeMillis();
         //do lookup here
