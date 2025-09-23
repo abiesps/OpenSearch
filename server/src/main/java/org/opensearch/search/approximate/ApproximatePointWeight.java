@@ -139,7 +139,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         // values.size(): total points indexed, In most cases: values.size() ≈ number of documents (assuming single-valued fields)
         if (this.size > values.size()) {
 
-            //return pointRangeQueryWeight.scorerSupplier(context);
+            return pointRangeQueryWeight.scorerSupplier(context);
         } else {
             PointValues.PointTree pointTree = values.getPointTree();
             if (sortOrder == null || sortOrder.equals(SortOrder.ASC)) {
