@@ -100,9 +100,9 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                         visitorConcurrentHashMap.put(key, visitorWithPrefetching);
                         intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCountWithPrefetching);
                         long travelTime = System.currentTimeMillis() - st;
-                        logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
-                            visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size()
-                        );
+                       // logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
+                        //    visitorWithPrefetching.matchingLeafNodesfpDocIds().size() + visitorWithPrefetching.matchingLeafNodesfpDocValues().size()
+                        //);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     } finally {
@@ -117,7 +117,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                 throw new RuntimeException(e);
             }
             long elapsed = System.currentTimeMillis() - s;
-            logger.info("Total elapsed time for creating weight {} ms pointTeeMap size {}", elapsed, pointTreeMap.size() );
+            //logger.info("Total elapsed time for creating weight {} ms pointTeeMap size {}", elapsed, pointTreeMap.size() );
         }
     }
 

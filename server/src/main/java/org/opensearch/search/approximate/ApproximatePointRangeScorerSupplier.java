@@ -311,7 +311,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                 pointTree.visitDocValues(visitor);
             }
             long dt = System.currentTimeMillis() - st;
-            logger.info("leaf visiting time without prefetch {} ms for {} ", dt, pointTree.name());
+           // logger.info("leaf visiting time without prefetch {} ms for {} ", dt, pointTree.name());
 //            leafVisitingTime.compute(pointTree.name(), (k,v) -> {
 //                if (v == null) {
 //                    v = 0L;
@@ -426,8 +426,8 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 //        } else  {
             intersectLeft2(pointTree, visitor, docCount);
             long travelTime = System.currentTimeMillis() - st;
-            logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
-                visitor.matchingLeafNodesfpDocIds().size() + visitor.matchingLeafNodesfpDocValues().size());
+           // logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
+           //     visitor.matchingLeafNodesfpDocIds().size() + visitor.matchingLeafNodesfpDocValues().size());
 //            totalTraversalTime.compute(pointTree.name(), (k,v) ->{
 //                if (v == null) {
 //                    v =0L;
@@ -508,14 +508,14 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
-            logger.info("It took {} ms for visiting/actual scoring {} leafs with prefetching for {} ", elapsed,
-                visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchingLeafNodesfpDocIds().size()
-                , name);
+//            logger.info("It took {} ms for visiting/actual scoring {} leafs with prefetching for {} ", elapsed,
+//                visitorWithPrefetching.matchingLeafNodesfpDocValues().size() + visitorWithPrefetching.matchingLeafNodesfpDocIds().size()
+//                , name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         } else  {
             DocIdSetIterator iterator = result.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
-            logger.info("It took {} ms for {} without prefetching", elapsed, name);
+            //logger.info("It took {} ms for {} without prefetching", elapsed, name);
             return new ConstantScoreScorer(this.constantScoreWeight.score(), scoreMode, iterator);
         }
     }
