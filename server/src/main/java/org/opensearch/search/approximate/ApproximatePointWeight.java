@@ -138,7 +138,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         }
         // values.size(): total points indexed, In most cases: values.size() ≈ number of documents (assuming single-valued fields)
         if (this.size > values.size()) {
-
             return pointRangeQueryWeight.scorerSupplier(context);
         } else {
             PointValues.PointTree pointTree = values.getPointTree();
@@ -510,35 +509,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         pointTree.moveToParent();
     }
 
-    public static void compareSets(Set<Long> set1, Set<Long> set2, String name) {
-        // Find common elements (Intersection)
-        //System.out.println("Name : " + name + " non-prefetching size " + set1.size()  + " prefetching " + set2.size());
-        Set<Long> intersection = new HashSet<>(set1);
-        intersection.retainAll(set2);
-        // System.out.println(" Name " + name + " Common elements: " + intersection);
 
-        // Find elements present in set1 but not in set2 (Difference)
-        Set<Long> difference = new HashSet<>(set1);
-        difference.removeAll(set2);
-        if (!difference.isEmpty())
-            System.out.println(" Name " + name + " elements in without prefetching but not in with prefetching: " + difference);
-
-        // Find elements present in set2 but not in set1 (Difference)
-        Set<Long> reverseDifference = new HashSet<>(set2);
-        reverseDifference.removeAll(set1);
-        if (!reverseDifference.isEmpty())
-            System.out.println(" Name " + name + " elements in with prefetching but not in without prefetching: " + reverseDifference);
-
-        // Check if both sets are equal
-        boolean areEqual = set1.equals(set2);
-        if (!areEqual)
-            System.out.println("Name" + name + " Are both sets equal? " + areEqual);
-
-        // Find union of both sets
-        Set<Long> union = new HashSet<>(set1);
-        union.addAll(set2);
-        // System.out.println("Union of both sets: " + union);
-    }
 
     // custom intersect visitor to walk the right of tree (from rightmost leaf going left)
     public void intersectRight(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
