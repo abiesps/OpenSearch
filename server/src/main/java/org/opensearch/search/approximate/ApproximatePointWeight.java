@@ -35,7 +35,9 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -297,12 +299,18 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         };
     }
 
-    public PointValues.IntersectVisitor getIntersectVisitor(DocIdSetBuilder result, long[] docCount) {
+    public PointValues.IntersectVisitor getPrefetchingIntersectVisitor(DocIdSetBuilder result, long[] docCount) {
         return new PointValues.IntersectVisitor() {
 
             DocIdSetBuilder.BulkAdder adder;
             Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
             Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
+            TreeMap<Integer, Long> leafOrdinalFPDocIds = new TreeMap<>();
+            TreeMap<Integer, Long> leafOrdinalFPDocValues = new TreeMap<>();
+            int lastMatchingLeafOrdinal = -1;
+
+            boolean firstMatchFound = false;
+            long firstMatchedFp = -1;
 
             @Override
             public void grow(int count) {
@@ -348,8 +356,12 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
 
             @Override
             public void matchedLeafFpDocIds(long fp, int count) {
+//                if (firstMatchFound == false) {
+//                    firstMatchFound = true;
+//                    firstMatchedFp = fp;
+//                }
                 matchingLeafBlocksFPsDocIds.add(fp);
-                //docCount[0] += count;
+                docCount[0] += count;
             };
 
             @Override
@@ -359,6 +371,10 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
 
             @Override
             public void matchedLeafFpDocValues(long fp) {
+//                if (firstMatchFound == false) {
+//                    firstMatchFound = true;
+//                    firstMatchedFp = fp;
+//                }
                 matchingLeafBlocksFPsDocValues.add(fp);
             };
 
@@ -366,6 +382,53 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
             public  Set<Long> matchingLeafNodesfpDocValues() {
                 return matchingLeafBlocksFPsDocValues;
             }
+
+            @Override
+            public void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
+                leafOrdinalFPDocIds.put(leafOrdinal, fp);
+            };
+
+            @Override
+            public void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
+                leafOrdinalFPDocValues.put(leafOrdinal, fp);
+            };
+
+            @Override
+            public Map<Integer,Long> matchingLeafNodesDocValues() {
+                return leafOrdinalFPDocValues;
+            }
+
+            @Override
+            public Map<Integer,Long> matchingLeafNodesDocIds() {
+                return leafOrdinalFPDocIds;
+            }
+
+            @Override
+            public int lastMatchingLeafOrdinal() {
+                return lastMatchingLeafOrdinal;
+            }
+
+            @Override
+            public  void setLastMatchingLeafOrdinal(int leafOrdinal) {
+                lastMatchingLeafOrdinal = leafOrdinal;
+            }
+
+            @Override
+            public void visitAfterPrefetch(int docID) throws IOException {
+                //in.visitAfterPrefetch(docID);
+                adder.add(docID);
+            }
+
+            @Override
+            public void visitAfterPrefetch(int docID, byte[] packedValue) throws IOException {
+                //in.visitAfterPrefetch(docID, packedValue);
+                if (matches(packedValue)) {
+                    //visit(docID);
+                    adder.add(docID);
+                }
+            };
+
+
         };
     }
 
@@ -477,7 +540,8 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
             if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
                 pointTree.prefetchDocIDs(visitor);
             } else {
-                pointTree.prefetchDocValues(visitor);
+                pointTree.visitDocValues(visitor);
+                    //prefetchDocValues(visitor);
             }
             return;
         }
