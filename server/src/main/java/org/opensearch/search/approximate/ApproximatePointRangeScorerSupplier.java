@@ -39,7 +39,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
     private final DocIdSetBuilder resultWithPrefetching;
     private final PointValues.IntersectVisitor visitorWithPrefetching;
     private final DocIdSetBuilder result;
-    private final PointRangeQuery pointRangeQuery;
+    private final ApproximatePointRangeQuery pointRangeQuery;
     final ArrayUtil.ByteArrayComparator comparator;
     private final PointValues.PointTree pointTree;
     private final int size;
@@ -384,7 +384,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
     }
 
 
-    public ApproximatePointRangeScorerSupplier(PointRangeQuery pointRangeQuery,
+    public ApproximatePointRangeScorerSupplier(ApproximatePointRangeQuery pointRangeQuery,
                                                LeafReader reader, PointValues values,
                                                int size, ConstantScoreWeight constantScoreWeight,
                                                ScoreMode scoreMode,
