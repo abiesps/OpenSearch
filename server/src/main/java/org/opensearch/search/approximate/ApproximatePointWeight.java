@@ -10,6 +10,7 @@ package org.opensearch.search.approximate;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.PointValues;
@@ -55,9 +56,9 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
     ApproximatePointRangeQuery query;
     static ExecutorService lookupExecutors = Executors.newVirtualThreadPerTaskExecutor();
     private static final Logger logger = LogManager.getLogger(ApproximatePointWeight.class);
-    ConcurrentHashMap<Integer, PointValues.PointTree> pointTreeMap = new ConcurrentHashMap<>();
-    ConcurrentHashMap<Integer, PointValues.IntersectVisitor> visitorConcurrentHashMap = new ConcurrentHashMap<>();
-    ConcurrentHashMap<Integer, DocIdSetBuilder> resultMap = new ConcurrentHashMap<>();
+    ConcurrentHashMap<IndexReader.CacheKey, PointValues.PointTree> pointTreeMap = new ConcurrentHashMap<>();
+    ConcurrentHashMap<IndexReader.CacheKey, PointValues.IntersectVisitor> visitorConcurrentHashMap = new ConcurrentHashMap<>();
+    ConcurrentHashMap<IndexReader.CacheKey, DocIdSetBuilder> resultMap = new ConcurrentHashMap<>();
 
 
     private ApproximatePointWeight(Query query, float score) {
@@ -76,8 +77,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         this.searcher = searcher;
         this.query = query;
         this.score = score;
-        logger.info("==================================================================Taking new code path or not ?======================");
-
         long s = System.currentTimeMillis();
         //do lookup here
         if (ENABLE_PREFETCH) {
@@ -89,6 +88,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                     try {
                         long st = System.currentTimeMillis();
                         LeafReader reader = context.reader();
+                        IndexReader.CacheKey key = reader.getCoreCacheHelper().getKey();
                         long[] docCountWithPrefetching = { 0 };
                         long[] docCount = { 0 };
                         PointValues values = reader.getPointValues(query.getField());
@@ -96,9 +96,9 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                         String name = pointTreeWithPrefetching.name();
                         DocIdSetBuilder resultsWithPrefetching = new DocIdSetBuilder(reader.maxDoc(), values);
                         PointValues.IntersectVisitor visitorWithPrefetching = getPrefetchingIntersectVisitor(resultsWithPrefetching, docCountWithPrefetching);
-                        resultMap.put(context.ord, resultsWithPrefetching);
-                        pointTreeMap.put(context.ord,  pointTreeWithPrefetching);
-                        visitorConcurrentHashMap.put(context.ord, visitorWithPrefetching);
+                        resultMap.put(key, resultsWithPrefetching);
+                        pointTreeMap.put(key,  pointTreeWithPrefetching);
+                        visitorConcurrentHashMap.put(key, visitorWithPrefetching);
                         intersectLeft(pointTreeWithPrefetching, visitorWithPrefetching, docCountWithPrefetching);
                         long travelTime = System.currentTimeMillis() - st;
                         logger.info("Travel time with prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
@@ -119,7 +119,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
             }
 
             long elapsed = System.currentTimeMillis() - s;
-            logger.info("Total elapsed time for creating weight {} ms", elapsed );
+            logger.info("Total elapsed time for creating weight {} ms pointTeeMap {}", elapsed, pointTreeMap );
         }
     }
 
@@ -141,9 +141,10 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         } else {
             PointValues.PointTree pointTree = values.getPointTree();
             if (sortOrder == null || sortOrder.equals(SortOrder.ASC)) {
-                PointValues.PointTree pointTreeWithPrefetching = pointTreeMap.get(context.ord);
-                PointValues.IntersectVisitor visitorWithPrefetching = visitorConcurrentHashMap.get(context.ord);
-                DocIdSetBuilder resultsWithPrefetching = resultMap.get(context.ord);
+                IndexReader.CacheKey key = reader.getCoreCacheHelper().getKey();
+                PointValues.PointTree pointTreeWithPrefetching = pointTreeMap.get(key);
+                PointValues.IntersectVisitor visitorWithPrefetching = visitorConcurrentHashMap.get(key);
+                DocIdSetBuilder resultsWithPrefetching = resultMap.get(key);
                 return new ApproximatePointRangeScorerSupplier(query, reader, values, size, this, scoreMode,
                     pointTreeWithPrefetching, visitorWithPrefetching, resultsWithPrefetching);
             } else {
