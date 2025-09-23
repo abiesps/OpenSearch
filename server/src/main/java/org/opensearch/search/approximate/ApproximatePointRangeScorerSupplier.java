@@ -53,8 +53,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
     private final ScoreMode scoreMode;
     private final PointValues values;
     private final PointValues.IntersectVisitor visitor;
-
-    long[] docCountWithPrefetching = { 0 };
     long[] docCount = { 0 };
 
 
@@ -71,139 +69,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             }
         }
         return true;
-    }
-
-    public PointValues.IntersectVisitor getPrefetchingIntersectVisitor(DocIdSetBuilder result, long[] docCount) {
-        return new PointValues.IntersectVisitor() {
-
-            DocIdSetBuilder.BulkAdder adder;
-            Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
-            Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
-            TreeMap<Integer, Long> leafOrdinalFPDocIds = new TreeMap<>();
-            TreeMap<Integer, Long> leafOrdinalFPDocValues = new TreeMap<>();
-            int lastMatchingLeafOrdinal = -1;
-
-            boolean firstMatchFound = false;
-            long firstMatchedFp = -1;
-
-            @Override
-            public void grow(int count) {
-                adder = result.grow(count);
-            }
-
-            @Override
-            public void visit(int docID) {
-                // it is possible that size < 1024 and docCount < size but we will continue to count through all the 1024 docs
-                adder.add(docID);
-                docCount[0]++;
-            }
-
-            @Override
-            public void visit(DocIdSetIterator iterator) throws IOException {
-                adder.add(iterator);
-            }
-
-            @Override
-            public void visit(IntsRef ref) {
-                adder.add(ref);
-                docCount[0] += ref.length;
-            }
-
-            @Override
-            public void visit(int docID, byte[] packedValue) {
-                if (matches(packedValue)) {
-                    visit(docID);
-                }
-            }
-
-            @Override
-            public void visit(DocIdSetIterator iterator, byte[] packedValue) throws IOException {
-                if (matches(packedValue)) {
-                    adder.add(iterator);
-                }
-            }
-
-            @Override
-            public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
-                return relate(minPackedValue, maxPackedValue);
-            }
-
-            @Override
-            public void matchedLeafFpDocIds(long fp, int count) {
-//                if (firstMatchFound == false) {
-//                    firstMatchFound = true;
-//                    firstMatchedFp = fp;
-//                }
-                matchingLeafBlocksFPsDocIds.add(fp);
-                docCount[0] += count;
-            };
-
-            @Override
-            public  Set<Long> matchingLeafNodesfpDocIds() {
-                return matchingLeafBlocksFPsDocIds;
-            }
-
-            @Override
-            public void matchedLeafFpDocValues(long fp) {
-//                if (firstMatchFound == false) {
-//                    firstMatchFound = true;
-//                    firstMatchedFp = fp;
-//                }
-                matchingLeafBlocksFPsDocValues.add(fp);
-            };
-
-            @Override
-            public  Set<Long> matchingLeafNodesfpDocValues() {
-                return matchingLeafBlocksFPsDocValues;
-            }
-
-            @Override
-            public void matchedLeafOrdinalDocIds(int leafOrdinal, long fp, int count) {
-                leafOrdinalFPDocIds.put(leafOrdinal, fp);
-            };
-
-            @Override
-            public void matchedLeafOrdinalDocValues(int leafOrdinal, long fp) {
-                leafOrdinalFPDocValues.put(leafOrdinal, fp);
-            };
-
-            @Override
-            public Map<Integer,Long> matchingLeafNodesDocValues() {
-                return leafOrdinalFPDocValues;
-            }
-
-            @Override
-            public Map<Integer,Long> matchingLeafNodesDocIds() {
-                return leafOrdinalFPDocIds;
-            }
-
-            @Override
-            public int lastMatchingLeafOrdinal() {
-                return lastMatchingLeafOrdinal;
-            }
-
-            @Override
-            public  void setLastMatchingLeafOrdinal(int leafOrdinal) {
-                lastMatchingLeafOrdinal = leafOrdinal;
-            }
-
-            @Override
-            public void visitAfterPrefetch(int docID) throws IOException {
-                //in.visitAfterPrefetch(docID);
-                adder.add(docID);
-            }
-
-            @Override
-            public void visitAfterPrefetch(int docID, byte[] packedValue) throws IOException {
-                //in.visitAfterPrefetch(docID, packedValue);
-                if (matches(packedValue)) {
-                    //visit(docID);
-                    adder.add(docID);
-                }
-            };
-
-
-        };
     }
 
     public PointValues.IntersectVisitor getIntersectVisitor(
@@ -278,20 +143,12 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         };
     }
 
-    private void intersectLeft(PointValues.PointTree pointTree, PointValues.IntersectVisitor visitor, long[] docCount)
-        throws IOException {
-        intersectLeft(visitor, pointTree, docCount);
-        assert pointTree.moveToParent() == false;
-    }
 
     private void intersectLeft2(PointValues.PointTree pointTree, PointValues.IntersectVisitor visitor, long[] docCount)
         throws IOException {
         intersectLeft2(visitor, pointTree, docCount);
         assert pointTree.moveToParent() == false;
     }
-
-    Map<String, Long> leafVisitingTime = new ConcurrentHashMap<>();
-    Map<String, Long> totalTraversalTime = new ConcurrentHashMap<>();
 
     public void intersectLeft2(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree, long[] docCount)
         throws IOException {
@@ -311,15 +168,7 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                 pointTree.visitDocValues(visitor);
             }
             long dt = System.currentTimeMillis() - st;
-           // logger.info("leaf visiting time without prefetch {} ms for {} ", dt, pointTree.name());
-//            leafVisitingTime.compute(pointTree.name(), (k,v) -> {
-//                if (v == null) {
-//                    v = 0L;
-//                }
-//                v += dt;
-//                return v;
-//            });
-//            return;
+            return;
         }
         // For CELL_INSIDE_QUERY, check if we can skip right child
         if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
@@ -341,56 +190,8 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         }
         // Process both children: left first, then right if needed
         intersectLeft2(visitor, pointTree, docCount);
-        //if (rightChild != null) {
         if (docCount[0] < size && rightChild != null) {
             intersectLeft2(visitor, rightChild, docCount);
-        }
-        pointTree.moveToParent();
-    }
-
-
-    public void intersectLeft(PointValues.IntersectVisitor visitor, PointValues.PointTree pointTree,
-                              long[] docCount)
-        throws IOException {
-        if (docCount[0] >= size) {
-            return;
-        }
-        PointValues.Relation r = visitor.compare(pointTree.getMinPackedValue(), pointTree.getMaxPackedValue());
-        if (r == PointValues.Relation.CELL_OUTSIDE_QUERY) {
-            return;
-        }
-        // Handle leaf nodes
-        if (pointTree.moveToChild() == false) {
-            if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-                pointTree.prefetchDocIDs(visitor);
-            } else {
-                pointTree.prefetchDocValues(visitor);
-            }
-            return;
-        }
-        // For CELL_INSIDE_QUERY, check if we can skip right child
-        if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
-            long leftSize = pointTree.size();
-            long needed = size - docCount[0];
-
-            if (leftSize >= needed) {
-                // Process only left child
-                intersectLeft(visitor, pointTree, docCount);
-                pointTree.moveToParent();
-                return;
-            }
-        }
-        // We need both children - now clone right
-        PointValues.PointTree rightChild = null;
-        if (pointTree.moveToSibling()) {
-            rightChild = pointTree.clone();
-            pointTree.moveToParent();
-            pointTree.moveToChild();
-        }
-        // Process both children: left first, then right if needed
-        intersectLeft(visitor, pointTree, docCount);
-        if (docCount[0] < size && rightChild != null) {
-            intersectLeft(visitor, rightChild, docCount);
         }
         pointTree.moveToParent();
     }
@@ -418,63 +219,8 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         this.visitor = getIntersectVisitor(result, docCount);
         this.cost = -1;
         String name = pointTree.name();
-
-       // logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
-        long st = System.currentTimeMillis();
-        //preload k
-//        if (ENABLE_PREFETCH) {
-//
-//        } else  {
-            intersectLeft2(pointTree, visitor, docCount);
-            long travelTime = System.currentTimeMillis() - st;
-           // logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
-           //     visitor.matchingLeafNodesfpDocIds().size() + visitor.matchingLeafNodesfpDocValues().size());
-//            totalTraversalTime.compute(pointTree.name(), (k,v) ->{
-//                if (v == null) {
-//                    v =0L;
-//                }
-//                v += travelTime;
-//                return v;
-//            });
-//            long totalLeafTraversalTIme = leafVisitingTime.get(name);
-//            long totalTraversalTimeMs = totalTraversalTime.get(name);
-//            long nonLeafTraversalTimeMs = totalTraversalTimeMs - totalLeafTraversalTIme;
-//            logger.info("Total traversal time {} leaf traversal time {} non leaf traversal time {} for pt {}",
-//                totalTraversalTimeMs, totalLeafTraversalTIme, nonLeafTraversalTimeMs, name);
-
-            //logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name);
-        //}
-       // long e = System.currentTimeMillis() - s;
-    }
-
-    public static void compareSets(Set<Long> set1, Set<Long> set2, String name) {
-        // Find common elements (Intersection)
-        //System.out.println("Name : " + name + " non-prefetching size " + set1.size()  + " prefetching " + set2.size());
-        Set<Long> intersection = new HashSet<>(set1);
-        intersection.retainAll(set2);
-        // System.out.println(" Name " + name + " Common elements: " + intersection);
-
-        // Find elements present in set1 but not in set2 (Difference)
-        Set<Long> difference = new HashSet<>(set1);
-        difference.removeAll(set2);
-        if (!difference.isEmpty())
-            System.out.println(" Name " + name + " elements in without prefetching but not in with prefetching: " + difference);
-
-        // Find elements present in set2 but not in set1 (Difference)
-        Set<Long> reverseDifference = new HashSet<>(set2);
-        reverseDifference.removeAll(set1);
-        if (!reverseDifference.isEmpty())
-            System.out.println(" Name " + name + " elements in with prefetching but not in without prefetching: " + reverseDifference);
-
-        // Check if both sets are equal
-        boolean areEqual = set1.equals(set2);
-        if (!areEqual)
-            System.out.println("Name" + name + " Are both sets equal? " + areEqual);
-
-        // Find union of both sets
-        Set<Long> union = new HashSet<>(set1);
-        union.addAll(set2);
-        // System.out.println("Union of both sets: " + union);
+        /// visit without prefetch anyways
+        intersectLeft2(pointTree, visitor, docCount);
     }
 
     @Override

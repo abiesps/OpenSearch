@@ -232,6 +232,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
     }
 
     public PointValues.IntersectVisitor getPrefetchingIntersectVisitor(DocIdSetBuilder result, long[] docCount) {
+
         return new PointValues.IntersectVisitor() {
 
             DocIdSetBuilder.BulkAdder adder;
@@ -288,10 +289,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
 
             @Override
             public void matchedLeafFpDocIds(long fp, int count) {
-//                if (firstMatchFound == false) {
-//                    firstMatchFound = true;
-//                    firstMatchedFp = fp;
-//                }
                 matchingLeafBlocksFPsDocIds.add(fp);
                 docCount[0] += count;
             };
@@ -303,10 +300,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
 
             @Override
             public void matchedLeafFpDocValues(long fp) {
-//                if (firstMatchFound == false) {
-//                    firstMatchFound = true;
-//                    firstMatchedFp = fp;
-//                }
                 matchingLeafBlocksFPsDocValues.add(fp);
             };
 
@@ -473,7 +466,6 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
                 pointTree.prefetchDocIDs(visitor);
             } else {
                 pointTree.visitDocValues(visitor);
-                    //prefetchDocValues(visitor);
             }
             return;
         }
