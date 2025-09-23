@@ -25,6 +25,7 @@ import org.apache.lucene.util.IntsRef;
 import org.apache.lucene.util.bkd.BKDConfig;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -420,9 +421,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
        // logger.info("Number of dims {} num of indexed dims {} ", bkdConfig.numDims(), bkdConfig.numIndexDims());
         long st = System.currentTimeMillis();
         //preload k
-        if (ENABLE_PREFETCH) {
-
-        } else  {
+//        if (ENABLE_PREFETCH) {
+//
+//        } else  {
             intersectLeft2(pointTree, visitor, docCount);
             long travelTime = System.currentTimeMillis() - st;
             logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
@@ -441,14 +442,55 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
 //                totalTraversalTimeMs, totalLeafTraversalTIme, nonLeafTraversalTimeMs, name);
 
             //logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name);
-        }
-        long e = System.currentTimeMillis() - s;
+        //}
+       // long e = System.currentTimeMillis() - s;
+    }
+
+    public static void compareSets(Set<Long> set1, Set<Long> set2, String name) {
+        // Find common elements (Intersection)
+        //System.out.println("Name : " + name + " non-prefetching size " + set1.size()  + " prefetching " + set2.size());
+        Set<Long> intersection = new HashSet<>(set1);
+        intersection.retainAll(set2);
+        // System.out.println(" Name " + name + " Common elements: " + intersection);
+
+        // Find elements present in set1 but not in set2 (Difference)
+        Set<Long> difference = new HashSet<>(set1);
+        difference.removeAll(set2);
+        if (!difference.isEmpty())
+            System.out.println(" Name " + name + " elements in without prefetching but not in with prefetching: " + difference);
+
+        // Find elements present in set2 but not in set1 (Difference)
+        Set<Long> reverseDifference = new HashSet<>(set2);
+        reverseDifference.removeAll(set1);
+        if (!reverseDifference.isEmpty())
+            System.out.println(" Name " + name + " elements in with prefetching but not in without prefetching: " + reverseDifference);
+
+        // Check if both sets are equal
+        boolean areEqual = set1.equals(set2);
+        if (!areEqual)
+            System.out.println("Name" + name + " Are both sets equal? " + areEqual);
+
+        // Find union of both sets
+        Set<Long> union = new HashSet<>(set1);
+        union.addAll(set2);
+        // System.out.println("Union of both sets: " + union);
     }
 
     @Override
     public Scorer get(long leadCost) throws IOException {
         String name = pointTree.name();
         long st = System.currentTimeMillis();
+        Set<Long> docIDLeavesWithoutPrefetching = visitor.matchingLeafNodesfpDocIds();
+        Set<Long> docIDLeavesWitPrefetching = visitorWithPrefetching.matchingLeafNodesfpDocIds();
+        boolean same =  docIDLeavesWitPrefetching.equals(docIDLeavesWithoutPrefetching);
+        logger.info("Are docID matching leaf fp same {} for {} ", same, name);
+
+        Set<Long> docValuesLeavesWithoutPrefetching = visitor.matchingLeafNodesfpDocValues();
+        Set<Long> docValuesLeavesWitPrefetching = visitorWithPrefetching.matchingLeafNodesfpDocValues();
+        boolean same2 =  docValuesLeavesWitPrefetching.equals(docValuesLeavesWithoutPrefetching);
+        logger.info("Are doc value matching leaf fp same {} for {} ", same2, name);
+
+       //compareSets()
         if (ENABLE_PREFETCH) {
             pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
