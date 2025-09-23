@@ -81,7 +81,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         this.score = score;
         long s = System.currentTimeMillis();
         //do lookup here
-        if (ENABLE_PREFETCH) {
+       // if (ENABLE_PREFETCH) {
             //do lookup
             List<LeafReaderContext> leafContexts = searcher.getLeafContexts();
             CountDownLatch latch = new CountDownLatch(leafContexts.size());
@@ -120,7 +120,7 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
             }
             long elapsed = System.currentTimeMillis() - s;
             //logger.info("Total elapsed time for creating weight {} ms pointTeeMap size {}", elapsed, pointTreeMap.size() );
-        }
+       // }
     }
 
 
