@@ -310,15 +310,15 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                 pointTree.visitDocValues(visitor);
             }
             long dt = System.currentTimeMillis() - st;
-            //logger.info("leaf visiting time without prefetch {} ms for {} ", dt, pointTree.name());
-            leafVisitingTime.compute(pointTree.name(), (k,v) -> {
-                if (v == null) {
-                    v = 0L;
-                }
-                v += dt;
-                return v;
-            });
-            return;
+            logger.info("leaf visiting time without prefetch {} ms for {} ", dt, pointTree.name());
+//            leafVisitingTime.compute(pointTree.name(), (k,v) -> {
+//                if (v == null) {
+//                    v = 0L;
+//                }
+//                v += dt;
+//                return v;
+//            });
+//            return;
         }
         // For CELL_INSIDE_QUERY, check if we can skip right child
         if (r == PointValues.Relation.CELL_INSIDE_QUERY) {
@@ -427,18 +427,18 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
             long travelTime = System.currentTimeMillis() - st;
             logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name,
                 visitor.matchingLeafNodesfpDocIds().size() + visitor.matchingLeafNodesfpDocValues().size());
-            totalTraversalTime.compute(pointTree.name(), (k,v) ->{
-                if (v == null) {
-                    v =0L;
-                }
-                v += travelTime;
-                return v;
-            });
-            long totalLeafTraversalTIme = leafVisitingTime.get(name);
-            long totalTraversalTimeMs = totalTraversalTime.get(name);
-            long nonLeafTraversalTimeMs = totalTraversalTimeMs - totalLeafTraversalTIme;
-            logger.info("Total traversal time {} leaf traversal time {} non leaf traversal time {} for pt {}",
-                totalTraversalTimeMs, totalLeafTraversalTIme, nonLeafTraversalTimeMs, name);
+//            totalTraversalTime.compute(pointTree.name(), (k,v) ->{
+//                if (v == null) {
+//                    v =0L;
+//                }
+//                v += travelTime;
+//                return v;
+//            });
+//            long totalLeafTraversalTIme = leafVisitingTime.get(name);
+//            long totalTraversalTimeMs = totalTraversalTime.get(name);
+//            long nonLeafTraversalTimeMs = totalTraversalTimeMs - totalLeafTraversalTIme;
+//            logger.info("Total traversal time {} leaf traversal time {} non leaf traversal time {} for pt {}",
+//                totalTraversalTimeMs, totalLeafTraversalTIme, nonLeafTraversalTimeMs, name);
 
             //logger.info("Travel time without prefetching: {} ms for {} total number of matching leaf fp {} ", travelTime, name);
         }
