@@ -75,8 +75,8 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         return new PointValues.IntersectVisitor() {
 
             DocIdSetBuilder.BulkAdder adder;
-            Set<Long> matchingLeafBlocksFPsDocIds = new TreeSet<>();
-            Set<Long> matchingLeafBlocksFPsDocValues = new TreeSet<>();
+            Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
+            Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
             TreeMap<Integer, Long> leafOrdinalFPDocIds = new TreeMap<>();
             TreeMap<Integer, Long> leafOrdinalFPDocValues = new TreeMap<>();
             int lastMatchingLeafOrdinal = -1;
@@ -208,11 +208,9 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
                                                             DocIdSetBuilder result,
                                                             long[] docCount) {
         return new PointValues.IntersectVisitor() {
-
             DocIdSetBuilder.BulkAdder adder;
             Set<Long> matchingLeafBlocksFPsDocIds = new LinkedHashSet<>();
             Set<Long> matchingLeafBlocksFPsDocValues = new LinkedHashSet<>();
-
             @Override
             public void grow(int count) {
                 adder = result.grow(count);
@@ -426,7 +424,6 @@ public class ApproximatePointRangeScorerSupplier extends ScorerSupplier {
         if (ENABLE_PREFETCH) {
             st = System.currentTimeMillis();
             pointTreeWithPrefetching.visitMatchingDocIDs(visitorWithPrefetching);
-            //pointTreeWithPrefetching.visitMatchingDocValues(visitorWithPrefetching);
             DocIdSetIterator iterator = resultWithPrefetching.build().iterator();
             long elapsed = System.currentTimeMillis() - st;
             logger.info("It took {} ms for visiting {} leafs with prefetching for {} ", elapsed,
