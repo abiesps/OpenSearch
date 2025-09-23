@@ -215,7 +215,7 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
     public static class ExitablePointTree implements PointValues.PointTree {
         private final PointValues values;
         private final PointValues.PointTree pointTree;
-        private final ExitableIntersectVisitor exitableIntersectVisitor;
+       // private final ExitableIntersectVisitor exitableIntersectVisitor;
         private final QueryCancellation queryCancellation;
         private int calls;
 
@@ -245,7 +245,7 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         public ExitablePointTree(PointValues values, PointValues.PointTree pointTree, QueryCancellation queryCancellation) {
             this.values = values;
             this.pointTree = pointTree;
-            this.exitableIntersectVisitor = new ExitableIntersectVisitor(queryCancellation);
+            //this.exitableIntersectVisitor = new ExitableIntersectVisitor(queryCancellation);
             this.queryCancellation = queryCancellation;
         }
 
@@ -293,27 +293,28 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
 
         @Override
         public void visitDocIDs(PointValues.IntersectVisitor visitor) throws IOException {
-            queryCancellation.checkCancelled();
-            if (exitableIntersectVisitor.in == null) {
-                exitableIntersectVisitor.setVisitor(visitor);
-            }
+//            queryCancellation.checkCancelled();
+//            if (exitableIntersectVisitor.in == null) {
+//                exitableIntersectVisitor.setVisitor(visitor);
+//            }
             pointTree.visitDocIDs(visitor);
         }
 
         @Override
         public void visitDocValues(PointValues.IntersectVisitor visitor) throws IOException {
-            queryCancellation.checkCancelled();
-            if (exitableIntersectVisitor.in == null) {
-                exitableIntersectVisitor.setVisitor(visitor);//Why do i set the visitor again and again here?
-            }
-            pointTree.visitDocValues(exitableIntersectVisitor);
+            //queryCancellation.checkCancelled();
+//            if (exitableIntersectVisitor.in == null) {
+//                exitableIntersectVisitor.setVisitor(visitor);//Why do i set the visitor again and again here?
+//            }
+            pointTree.visitDocValues(visitor);
+            //pointTree.visitDocValues(exitableIntersectVisitor);
         }
 
         // reuse ExitableIntersectVisitor#checkAndThrowWithSampling
         private void checkAndThrowWithSampling() {
-            if ((calls++ & ExitableIntersectVisitor.MAX_CALLS_BEFORE_QUERY_TIMEOUT_CHECK) == 0) {
-                queryCancellation.checkCancelled();
-            }
+//            if ((calls++ & ExitableIntersectVisitor.MAX_CALLS_BEFORE_QUERY_TIMEOUT_CHECK) == 0) {
+//                queryCancellation.checkCancelled();
+//            }
         }
 
         public String name() {
@@ -415,7 +416,9 @@ public class ExitableDirectoryReader extends FilterDirectoryReader {
         }
 
         private void setVisitor(PointValues.IntersectVisitor in) {
-            this.in = in;
+            if (this.in == null) {
+                this.in = in;
+            }
         }
 
         @Override
