@@ -235,4 +235,16 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
     public String getField() {
         return pointRangeQuery.getField();
     }
+
+    public int getNumDims() {
+        return pointRangeQuery.getNumDims();
+    }
+
+    public byte[] getLowerPoint() {
+        return pointRangeQuery.getLowerPoint();
+    }
+
+    public byte[] getUpperPoint() {
+        return pointRangeQuery.getUpperPoint();
+    }
 }

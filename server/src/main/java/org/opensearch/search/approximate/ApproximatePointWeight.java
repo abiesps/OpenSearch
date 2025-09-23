@@ -45,13 +45,14 @@ import static org.opensearch.search.aggregations.bucket.filterrewrite.PointTreeT
 
 public class ApproximatePointWeight extends ConstantScoreWeight {
 
+    private  float score;
     private  IndexSearcher searcher;
     private  ArrayUtil.ByteArrayComparator comparator;
     private ScoreMode scoreMode;
     private SortOrder sortOrder;
     private Weight pointRangeQueryWeight;
     private int size;
-    PointRangeQuery query;
+    ApproximatePointRangeQuery query;
     static ExecutorService lookupExecutors = Executors.newVirtualThreadPerTaskExecutor();
     private static final Logger logger = LogManager.getLogger(ApproximatePointWeight.class);
     ConcurrentHashMap<Integer, PointValues.PointTree> pointTreeMap = new ConcurrentHashMap<>();
@@ -73,6 +74,8 @@ public class ApproximatePointWeight extends ConstantScoreWeight {
         this.scoreMode = scoreMode;
         this.comparator = ArrayUtil.getUnsignedComparator(query.getBytesPerDim());
         this.searcher = searcher;
+        this.query = query;
+        this.score = score;
         logger.info("==================================================================Taking new code path or not ?======================");
 
         long s = System.currentTimeMillis();
