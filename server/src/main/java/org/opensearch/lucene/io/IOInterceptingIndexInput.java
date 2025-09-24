@@ -347,7 +347,7 @@ public class IOInterceptingIndexInput extends IndexInput implements RandomAccess
                 shardId = Integer.parseInt(shardID);
             }
             //reduce logging to avoid OOM
-            if (shardId == -1 || shardId == 1) {
+            if (shardId == -1 || shardId == 5) {
                 String phaseName = ongoingPhasePerShard.get(shardId);
                 String segmentGeneration = parseSegmentGeneration(basePathStr);
                 ReadEvent readEvent = new ReadEvent(shardId, Thread.currentThread().getName(),
