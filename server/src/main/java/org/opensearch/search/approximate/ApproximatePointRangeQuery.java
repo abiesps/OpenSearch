@@ -88,6 +88,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
         Function<byte[], String> valueToString
     ) {
         this.size = size;
+        logger.info("Value of size in query is {}", size);
         this.sortOrder = sortOrder;
         this.valueToString = valueToString;
         this.pointRangeQuery = new PointRangeQuery(field, lowerPoint, upperPoint, numDims) {
