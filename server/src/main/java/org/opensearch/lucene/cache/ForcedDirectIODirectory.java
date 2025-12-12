@@ -3,9 +3,11 @@ package org.opensearch.lucene.cache;
 import org.apache.lucene.misc.store.DirectIODirectory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.OptionalLong;
 
 public class ForcedDirectIODirectory extends DirectIODirectory {
@@ -13,6 +15,8 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
 
     public ForcedDirectIODirectory(FSDirectory delegate, int mergeBufferSize, long minBytesDirect) throws IOException {
         super(delegate, mergeBufferSize, minBytesDirect);
+        int blockSize = Math.toIntExact(Files.getFileStore(delegate.getDirectory()).getBlockSize());
+        System.out.println("====Block size returned from file system is ===" + blockSize);
     }
 
     public ForcedDirectIODirectory(FSDirectory delegate) throws IOException {
@@ -29,4 +33,13 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
         return in.createOutput(name, context);
     }
 
+    @Override
+    public IndexInput openInput(String name, IOContext context) throws IOException {
+        ensureOpen();
+        if (useDirectIO(name, context, OptionalLong.of(fileLength(name)))) {
+            return new OSDirectIOIndexInput(getDirectory().resolve(name), 4096, 4096);
+        } else {
+            return in.openInput(name, context);
+        }
+    }
 }

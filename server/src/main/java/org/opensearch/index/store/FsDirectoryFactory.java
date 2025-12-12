@@ -51,6 +51,7 @@ import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
 import org.opensearch.lucene.cache.ForcedDirectIODirectory;
 import org.opensearch.lucene.cache.IOUringDirectory;
+import org.opensearch.lucene.cache.NIOFSDirectoryWithODirect;
 import org.opensearch.plugins.IndexStorePlugin;
 
 import java.io.IOException;
@@ -122,13 +123,8 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                     System.out.println("Using IOURING !!!");
                     return new IOUringDirectory(location, lockFactory);
                 } else {
-                    final FSDirectory primaryDirectory2 = FSDirectory.open(location, lockFactory);
-                    if (primaryDirectory2 instanceof MMapDirectory mMapDirectory) {
-                        System.out.println("Using forced direct IO");
-                        return new ForcedDirectIODirectory(primaryDirectory2, 4096, 4096);
-                    } else {
-                        return primaryDirectory2;
-                    }
+                    System.out.println("Using forced direct IO with EFS non aligned buffer");
+                    return new NIOFSDirectoryWithODirect(location, lockFactory);
                 }
             case NIOFS:
                 return new NIOFSDirectory(location, lockFactory);

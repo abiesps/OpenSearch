@@ -44,7 +44,7 @@ public class IOUringDirectory extends FSDirectory {
         //FileChannel fc = FileChannel.open(path, StandardOpenOption.READ);
         //Not using read direct to get away from buffer alignment for now
         CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(path, eventExecutor,
-            OpenOption.READ_ONLY);
+            OpenOption.DIRECT);
         boolean success = false;
         try {
             AsyncFile asyncFile = asyncFileCompletableFuture.get();

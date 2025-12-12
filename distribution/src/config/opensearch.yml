@@ -15,7 +15,6 @@ path.repo: ["/opt/opensearch/opensearch-backup"]
 #,"/mnt/efs/fs1/opensearch"]
 #, "/mnt/efs/opensearch", "/fsx/opensearch-data"]
 path.logs: /opt/opensearch/logs
-plugins.security.disabled: true
 #path.repo: ["/mnt/efs/opensearch-snapshots"]
 # Disable node level caches with correct setting names
 #indices.queries.cache.enabled: false
