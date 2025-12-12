@@ -12,10 +12,11 @@ import java.util.OptionalLong;
 
 public class ForcedDirectIODirectory extends DirectIODirectory {
 
+    int blockSize;
 
     public ForcedDirectIODirectory(FSDirectory delegate, int mergeBufferSize, long minBytesDirect) throws IOException {
         super(delegate, mergeBufferSize, minBytesDirect);
-        int blockSize = Math.toIntExact(Files.getFileStore(delegate.getDirectory()).getBlockSize());
+        this.blockSize = Math.toIntExact(Files.getFileStore(delegate.getDirectory()).getBlockSize());
         System.out.println("====Block size returned from file system is ===" + blockSize);
     }
 
@@ -37,7 +38,7 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
     public IndexInput openInput(String name, IOContext context) throws IOException {
         ensureOpen();
         if (useDirectIO(name, context, OptionalLong.of(fileLength(name)))) {
-            return new OSDirectIOIndexInput(getDirectory().resolve(name), 1048576, 1048576);
+            return new OSDirectIOIndexInput(getDirectory().resolve(name), blockSize, blockSize);
         } else {
             return in.openInput(name, context);
         }
