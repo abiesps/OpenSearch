@@ -124,7 +124,9 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                     return new IOUringDirectory(location, lockFactory);
                 } else {
                     System.out.println("Using forced direct IO with EFS non aligned buffer");
-                    return new NIOFSDirectoryWithODirect(location, lockFactory);
+                    FSDirectory primaryDirectory2 = FSDirectory.open(location, lockFactory);
+                    return new ForcedDirectIODirectory(primaryDirectory2);
+                    //return new NIOFSDirectoryWithODirect(location, lockFactory);
                 }
             case NIOFS:
                 return new NIOFSDirectory(location, lockFactory);

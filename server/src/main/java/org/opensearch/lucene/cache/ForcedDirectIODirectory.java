@@ -37,7 +37,7 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
     public IndexInput openInput(String name, IOContext context) throws IOException {
         ensureOpen();
         if (useDirectIO(name, context, OptionalLong.of(fileLength(name)))) {
-            return new OSDirectIOIndexInput(getDirectory().resolve(name), 4096, 4096);
+            return new OSDirectIOIndexInput(getDirectory().resolve(name), 1048576, 1048576);
         } else {
             return in.openInput(name, context);
         }
