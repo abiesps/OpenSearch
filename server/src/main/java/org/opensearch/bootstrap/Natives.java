@@ -76,11 +76,12 @@ final class Natives {
     }
 
     static boolean definitelyRunningAsRoot() {
-        if (!JNA_AVAILABLE) {
-            logger.warn("cannot check if running as root because JNA is not available");
-            return false;
-        }
-        return JNANatives.definitelyRunningAsRoot();
+        return false;
+//        if (!JNA_AVAILABLE) {
+//            logger.warn("cannot check if running as root because JNA is not available");
+//            return false;
+//        }
+        //return JNANatives.definitelyRunningAsRoot();
     }
 
     static void tryVirtualLock() {
