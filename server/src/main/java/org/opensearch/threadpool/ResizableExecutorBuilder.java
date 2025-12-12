@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -83,12 +84,13 @@ public final class ResizableExecutorBuilder extends ExecutorBuilder<ResizableExe
 
     @Override
     ThreadPool.ExecutorHolder build(final ResizableExecutorSettings settings, final ThreadContext threadContext) {
+
         int size = settings.size;
         int queueSize = settings.queueSize;
         final ThreadFactory threadFactory = OpenSearchExecutors.daemonThreadFactory(
             OpenSearchExecutors.threadName(settings.nodeName, name())
         );
-        final ExecutorService executor = OpenSearchExecutors.newResizable(
+        ExecutorService executor = OpenSearchExecutors.newResizable(
             settings.nodeName + "/" + name(),
             size,
             queueSize,
@@ -104,6 +106,13 @@ public final class ResizableExecutorBuilder extends ExecutorBuilder<ResizableExe
             null,
             queueSize < 0 ? null : new SizeValue(queueSize)
         );
+
+        if (name().equalsIgnoreCase("SEARCH") ||
+            name().equalsIgnoreCase("INDEX_SEARCHER")) {
+            executor = Executors.newVirtualThreadPerTaskExecutor();
+            return new ThreadPool.ExecutorHolder(executor, info);
+        }
+
         return new ThreadPool.ExecutorHolder(executor, info);
     }
 

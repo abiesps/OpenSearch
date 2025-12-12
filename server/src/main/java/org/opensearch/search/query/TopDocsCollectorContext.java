@@ -87,11 +87,16 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static org.opensearch.search.profile.query.CollectorResult.REASON_SEARCH_COUNT;
 import static org.opensearch.search.profile.query.CollectorResult.REASON_SEARCH_TOP_HITS;
+import static org.opensearch.threadpool.ThreadPool.useVirtualThreads;
 
 /**
  * A {@link QueryCollectorContext} that creates top docs collector
@@ -764,6 +769,17 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
      * or a {@link TermQuery} and the <code>reader</code> has no deletions,
      * -1 otherwise.
      */
+
+    static ExecutorService virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
+    static ExecutorService regularThreads = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    static ExecutorService termThreads = null;
+    static {
+        if (useVirtualThreads) {
+            termThreads = virtualThreads;
+        } else {
+            termThreads = regularThreads;
+        }
+    }
     static int shortcutTotalHitCount(IndexReader reader, Query query) throws IOException {
         while (true) {
             // remove wrappers that don't matter for counts
@@ -784,11 +800,26 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
             return reader.numDocs();
         } else if (query.getClass() == TermQuery.class && reader.hasDeletions() == false) {
             final Term term = ((TermQuery) query).getTerm();
-            int count = 0;
+            AtomicInteger count = new AtomicInteger();
+            CountDownLatch latch = new CountDownLatch(reader.leaves().size());
             for (LeafReaderContext context : reader.leaves()) {
-                count += context.reader().docFreq(term);
+                    termThreads.execute(() -> {
+                        try {
+                            int a = context.reader().docFreq(term);
+                            count.addAndGet(a);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        } finally {
+                            latch.countDown();
+                        }
+                    }) ;
             }
-            return count;
+            try {
+                latch.await();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            return count.intValue();
         } else if (query.getClass() == FieldExistsQuery.class && reader.hasDeletions() == false) {
             final String field = ((FieldExistsQuery) query).getField();
             int count = 0;

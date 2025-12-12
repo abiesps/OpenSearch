@@ -1,3 +1,34 @@
+cluster.name: opensearch
+node.name: ${HOSTNAME}
+network.host: 0.0.0.0
+http.port: 9200
+discovery.type: single-node
+bootstrap.memory_lock: false
+path.shared_data: "/"
+#node.name: Nh7fvoeITCC1oUAXW5SmyQ
+path.data: ["/usr/bin/efs/opensearch"]
+#path.data: ["/opt/opensearch/opensearch-3.1.0-SNAPSHOT/data", "/mnt/efs/fs1/opensearch", "/mnt/fsx/opensearch-big5"]
+path.repo: ["/opt/opensearch/opensearch-backup"]
+#path.data: ["/opt/opensearch/opensearch-3.1.0-SNAPSHOT/data", "/mnt/efs/fs1/opensearch"]
+#path.data: ["/mnt/efs/fs1/opensearch"]
+#["/opt/opensearch/opensearch-3.1.0-SNAPSHOT/data"]
+#,"/mnt/efs/fs1/opensearch"]
+#, "/mnt/efs/opensearch", "/fsx/opensearch-data"]
+path.logs: /opt/opensearch/logs
+plugins.security.disabled: true
+#path.repo: ["/mnt/efs/opensearch-snapshots"]
+# Disable node level caches with correct setting names
+#indices.queries.cache.enabled: false
+#indices.requests.cache.enable: false
+search.concurrent_segment_search.enabled: true
+indices.queries.cache.size: 0
+indices.requests.cache.size: 0
+indices.fielddata.cache.size: 0
+index.store.type: simplefs
+search.concurrent.max_slice_count: 10000
+#search.concurrent.max_slice_count: 4
+thread_pool.search.size: 1
+thread_pool.index_searcher.size: 1
 # ======================== OpenSearch Configuration =========================
 #
 # NOTE: OpenSearch comes with reasonable defaults for most settings.

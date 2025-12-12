@@ -49,6 +49,8 @@ import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.shard.ShardPath;
+import org.opensearch.lucene.cache.ForcedDirectIODirectory;
+import org.opensearch.lucene.cache.IOUringDirectory;
 import org.opensearch.plugins.IndexStorePlugin;
 
 import java.io.IOException;
@@ -75,6 +77,14 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                 throw new IllegalArgumentException("unrecognized [index.store.fs.fs_lock] \"" + s + "\": must be native or simple");
         } // can we set on both - node and index level, some nodes might be running on NFS so they might need simple rather than native
     }, Property.IndexScope, Property.NodeScope);
+
+    static boolean USE_IOURING = false;
+    static {
+        String useIOuringStr = System.getenv("USE_IOURING");
+        if (useIOuringStr != null) {
+            USE_IOURING = Boolean.parseBoolean(useIOuringStr);
+        }
+    }
 
     @Override
     public Directory newDirectory(IndexSettings indexSettings, ShardPath path) throws IOException {
@@ -108,6 +118,18 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                 return setPreload(new MMapDirectory(location, lockFactory), preLoadExtensions);
             // simplefs was removed in Lucene 9; support for enum is maintained for bwc
             case SIMPLEFS:
+                if (USE_IOURING) {
+                    System.out.println("Using IOURING !!!");
+                    return new IOUringDirectory(location, lockFactory);
+                } else {
+                    final FSDirectory primaryDirectory2 = FSDirectory.open(location, lockFactory);
+                    if (primaryDirectory2 instanceof MMapDirectory mMapDirectory) {
+                        System.out.println("Using forced direct IO");
+                        return new ForcedDirectIODirectory(primaryDirectory2, 4096, 4096);
+                    } else {
+                        return primaryDirectory2;
+                    }
+                }
             case NIOFS:
                 return new NIOFSDirectory(location, lockFactory);
             default:

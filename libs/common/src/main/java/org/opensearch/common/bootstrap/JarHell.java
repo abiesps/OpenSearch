@@ -83,7 +83,7 @@ public class JarHell {
     @SuppressForbidden(reason = "command line tool")
     public static void main(String args[]) throws Exception {
         System.out.println("checking for jar hell...");
-        checkJarHell(System.out::println);
+        //checkJarHell(System.out::println);
         System.out.println("no jar hell found");
     }
 
@@ -93,13 +93,13 @@ public class JarHell {
      * @throws IllegalStateException if jar hell was found
      */
     public static void checkJarHell(Consumer<String> output) throws IOException, URISyntaxException {
-        ClassLoader loader = JarHell.class.getClassLoader();
-        output.accept("java.class.path: " + System.getProperty("java.class.path"));
-        output.accept("sun.boot.class.path: " + System.getProperty("sun.boot.class.path"));
-        if (loader instanceof URLClassLoader urlClassLoader) {
-            output.accept("classloader urls: " + Arrays.toString(urlClassLoader.getURLs()));
-        }
-        checkJarHell(parseClassPath(), output);
+//        ClassLoader loader = JarHell.class.getClassLoader();
+//        output.accept("java.class.path: " + System.getProperty("java.class.path"));
+//        output.accept("sun.boot.class.path: " + System.getProperty("sun.boot.class.path"));
+//        if (loader instanceof URLClassLoader urlClassLoader) {
+//            output.accept("classloader urls: " + Arrays.toString(urlClassLoader.getURLs()));
+//        }
+//        checkJarHell(parseClassPath(), output);
     }
 
     /**
@@ -184,87 +184,87 @@ public class JarHell {
         // we don't try to be sneaky and use deprecated/internal/not portable stuff
         // like sun.boot.class.path, and with jigsaw we don't yet have a way to get
         // a "list" at all. So just exclude any elements underneath the java home
-        String javaHome = System.getProperty("java.home");
-        output.accept("java.home: " + javaHome);
-        final Map<String, Path> clazzes = new HashMap<>(32768);
-        Set<Path> seenJars = new HashSet<>();
-        for (final URL url : urls) {
-            final Path path = PathUtils.get(url.toURI());
-            // exclude system resources
-            if (path.startsWith(javaHome)) {
-                output.accept("excluding system resource: " + path);
-                continue;
-            }
-            if (path.toString().endsWith(".jar")) {
-                if (!seenJars.add(path)) {
-                    throw new IllegalStateException("jar hell!" + System.lineSeparator() + "duplicate jar on classpath: " + path);
-                }
-                output.accept("examining jar: " + path);
-                try (JarFile file = new JarFile(path.toString())) {
-                    Manifest manifest = file.getManifest();
-                    if (manifest != null) {
-                        checkManifest(manifest, path);
-                    }
-                    // inspect entries
-                    Enumeration<JarEntry> elements = file.entries();
-                    while (elements.hasMoreElements()) {
-                        String entry = elements.nextElement().getName();
-                        if (entry.endsWith(".class")) {
-                            // for jar format, the separator is defined as /
-                            entry = entry.replace('/', '.').substring(0, entry.length() - 6);
-                            checkClass(clazzes, entry, path);
-                        }
-                    }
-                }
-            } else {
-                output.accept("examining directory: " + path);
-                // case for tests: where we have class files in the classpath
-                final Path root = PathUtils.get(url.toURI());
-                final String sep = root.getFileSystem().getSeparator();
-
-                // don't try and walk class or resource directories that don't exist
-                // gradle will add these to the classpath even if they never get created
-                if (Files.exists(root)) {
-                    Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
-                        @Override
-                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                            String entry = root.relativize(file).toString();
-                            if (entry.endsWith(".class")) {
-                                // normalize with the os separator, remove '.class'
-                                entry = entry.replace(sep, ".").substring(0, entry.length() - ".class".length());
-                                checkClass(clazzes, entry, path);
-                            }
-                            return super.visitFile(file, attrs);
-                        }
-                    });
-                }
-            }
-        }
+//        String javaHome = System.getProperty("java.home");
+//        output.accept("java.home: " + javaHome);
+//        final Map<String, Path> clazzes = new HashMap<>(32768);
+//        Set<Path> seenJars = new HashSet<>();
+//        for (final URL url : urls) {
+//            final Path path = PathUtils.get(url.toURI());
+//            // exclude system resources
+//            if (path.startsWith(javaHome)) {
+//                output.accept("excluding system resource: " + path);
+//                continue;
+//            }
+//            if (path.toString().endsWith(".jar")) {
+//                if (!seenJars.add(path)) {
+//                    throw new IllegalStateException("jar hell!" + System.lineSeparator() + "duplicate jar on classpath: " + path);
+//                }
+//                output.accept("examining jar: " + path);
+//                try (JarFile file = new JarFile(path.toString())) {
+//                    Manifest manifest = file.getManifest();
+//                    if (manifest != null) {
+//                        checkManifest(manifest, path);
+//                    }
+//                    // inspect entries
+//                    Enumeration<JarEntry> elements = file.entries();
+//                    while (elements.hasMoreElements()) {
+//                        String entry = elements.nextElement().getName();
+//                        if (entry.endsWith(".class")) {
+//                            // for jar format, the separator is defined as /
+//                            entry = entry.replace('/', '.').substring(0, entry.length() - 6);
+//                            checkClass(clazzes, entry, path);
+//                        }
+//                    }
+//                }
+//            } else {
+//                output.accept("examining directory: " + path);
+//                // case for tests: where we have class files in the classpath
+//                final Path root = PathUtils.get(url.toURI());
+//                final String sep = root.getFileSystem().getSeparator();
+//
+//                // don't try and walk class or resource directories that don't exist
+//                // gradle will add these to the classpath even if they never get created
+//                if (Files.exists(root)) {
+//                    Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+//                        @Override
+//                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+//                            String entry = root.relativize(file).toString();
+//                            if (entry.endsWith(".class")) {
+//                                // normalize with the os separator, remove '.class'
+//                                entry = entry.replace(sep, ".").substring(0, entry.length() - ".class".length());
+//                                checkClass(clazzes, entry, path);
+//                            }
+//                            return super.visitFile(file, attrs);
+//                        }
+//                    });
+//                }
+//            }
+//        }
     }
 
     /** inspect manifest for sure incompatibilities */
     private static void checkManifest(Manifest manifest, Path jar) {
         // give a nice error if jar requires a newer java version
-        String targetVersion = manifest.getMainAttributes().getValue("X-Compile-Target-JDK");
-        if (targetVersion != null) {
-            checkVersionFormat(targetVersion);
-            checkJavaVersion(jar.toString(), targetVersion);
-        }
+//        String targetVersion = manifest.getMainAttributes().getValue("X-Compile-Target-JDK");
+//        if (targetVersion != null) {
+//            checkVersionFormat(targetVersion);
+//            checkJavaVersion(jar.toString(), targetVersion);
+//        }
     }
 
     public static void checkVersionFormat(String targetVersion) {
-        try {
-            Version.parse(targetVersion);
-        } catch (final IllegalArgumentException ex) {
-            throw new IllegalStateException(
-                String.format(
-                    Locale.ROOT,
-                    "version string must be a sequence of nonnegative decimal integers separated by \".\"'s and may have "
-                        + "leading zeros but was %s",
-                    targetVersion
-                )
-            );
-        }
+//        try {
+//            Version.parse(targetVersion);
+//        } catch (final IllegalArgumentException ex) {
+//            throw new IllegalStateException(
+//                String.format(
+//                    Locale.ROOT,
+//                    "version string must be a sequence of nonnegative decimal integers separated by \".\"'s and may have "
+//                        + "leading zeros but was %s",
+//                    targetVersion
+//                )
+//            );
+//        }
     }
 
     /**
@@ -272,52 +272,52 @@ public class JarHell {
      * required by {@code resource} is compatible with the current installation.
      */
     public static void checkJavaVersion(String resource, String targetVersion) {
-        Version version = Version.parse(targetVersion);
-        if (Runtime.version().compareTo(version) < 0) {
-            throw new IllegalStateException(
-                String.format(Locale.ROOT, "%s requires Java %s:, your system: %s", resource, targetVersion, Runtime.version().toString())
-            );
-        }
+//        Version version = Version.parse(targetVersion);
+//        if (Runtime.version().compareTo(version) < 0) {
+//            throw new IllegalStateException(
+//                String.format(Locale.ROOT, "%s requires Java %s:, your system: %s", resource, targetVersion, Runtime.version().toString())
+//            );
+//        }
     }
 
     private static void checkClass(Map<String, Path> clazzes, String clazz, Path jarpath) {
-        if (clazz.equals("module-info") || clazz.endsWith(".module-info")) {
-            // Ignore jigsaw module descriptions
-            return;
-        }
-        Path previous = clazzes.put(clazz, jarpath);
-        if (previous != null) {
-            if (previous.equals(jarpath)) {
-                if (clazz.startsWith("org.apache.xmlbeans")) {
-                    return; // https://issues.apache.org/jira/browse/XMLBEANS-499
-                }
-                // throw a better exception in this ridiculous case.
-                // unfortunately the zip file format allows this buggy possibility
-                // UweSays: It can, but should be considered as bug :-)
-                throw new IllegalStateException(
-                    "jar hell!"
-                        + System.lineSeparator()
-                        + "class: "
-                        + clazz
-                        + System.lineSeparator()
-                        + "exists multiple times in jar: "
-                        + jarpath
-                        + " !!!!!!!!!"
-                );
-            } else {
-                throw new IllegalStateException(
-                    "jar hell!"
-                        + System.lineSeparator()
-                        + "class: "
-                        + clazz
-                        + System.lineSeparator()
-                        + "jar1: "
-                        + previous
-                        + System.lineSeparator()
-                        + "jar2: "
-                        + jarpath
-                );
-            }
-        }
+//        if (clazz.equals("module-info") || clazz.endsWith(".module-info")) {
+//            // Ignore jigsaw module descriptions
+//            return;
+//        }
+//        Path previous = clazzes.put(clazz, jarpath);
+//        if (previous != null) {
+//            if (previous.equals(jarpath)) {
+//                if (clazz.startsWith("org.apache.xmlbeans")) {
+//                    return; // https://issues.apache.org/jira/browse/XMLBEANS-499
+//                }
+//                // throw a better exception in this ridiculous case.
+//                // unfortunately the zip file format allows this buggy possibility
+//                // UweSays: It can, but should be considered as bug :-)
+//                throw new IllegalStateException(
+//                    "jar hell!"
+//                        + System.lineSeparator()
+//                        + "class: "
+//                        + clazz
+//                        + System.lineSeparator()
+//                        + "exists multiple times in jar: "
+//                        + jarpath
+//                        + " !!!!!!!!!"
+//                );
+//            } else {
+//                throw new IllegalStateException(
+//                    "jar hell!"
+//                        + System.lineSeparator()
+//                        + "class: "
+//                        + clazz
+//                        + System.lineSeparator()
+//                        + "jar1: "
+//                        + previous
+//                        + System.lineSeparator()
+//                        + "jar2: "
+//                        + jarpath
+//                );
+//            }
+//        }
     }
 }

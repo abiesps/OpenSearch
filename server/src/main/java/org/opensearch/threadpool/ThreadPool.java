@@ -69,6 +69,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
@@ -243,6 +244,13 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         this(settings, null, customBuilders);
     }
 
+    public static boolean useVirtualThreads = false;
+    static {
+        String useVirtualThreadsStr = System.getenv("USE_VIRTUAL_THREADS");
+        if (useVirtualThreadsStr != null) {
+            useVirtualThreads = Boolean.parseBoolean(useVirtualThreadsStr);
+        }
+    }
     public ThreadPool(
         final Settings settings,
         final AtomicReference<RunnableTaskExecutionListener> runnableTaskListener,
@@ -263,8 +271,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         builders.put(Names.ANALYZE, new FixedExecutorBuilder(settings, Names.ANALYZE, 1, 16));
         builders.put(
             Names.SEARCH,
-            new ResizableExecutorBuilder(settings, Names.SEARCH, searchThreadPoolSize(allocatedProcessors), 1000, runnableTaskListener)
-        );
+            new ResizableExecutorBuilder(settings, Names.SEARCH, searchThreadPoolSize(allocatedProcessors), 1000, runnableTaskListener));
+
+
         // TODO: configure the appropriate size and explore use of virtual threads
         builders.put(
             Names.STREAM_SEARCH,

@@ -32,6 +32,7 @@
 
 package org.opensearch.node;
 
+import one.jasyncfio.EventExecutor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.util.Constants;
@@ -478,6 +479,7 @@ public class Node implements Closeable {
     private FileCache fileCache;
     private final RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory;
     private final MergedSegmentWarmerFactory mergedSegmentWarmerFactory;
+    public static EventExecutor eventExecutor = EventExecutor.initDefault();
 
     public Node(Environment environment) {
         this(environment, Collections.emptyList(), true);

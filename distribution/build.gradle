@@ -559,11 +559,12 @@ configure(subprojects.findAll { ['archives', 'packages'].contains(it.name) }) {
  */
 subprojects {
   ext.expansionsForDistribution = { distributionType, jdk ->
-    final String defaultHeapSize = "1g"
+    final String defaultHeapSize = "4g"
     final String packagingPathData = "path.data: /var/lib/opensearch"
     final String pathLogs = "/var/log/opensearch"
     final String packagingPathLogs = "path.logs: ${pathLogs}"
     final String packagingLoggc = "${pathLogs}/gc.log"
+
 
     String licenseText = rootProject.file('licenses/APACHE-LICENSE-2.0.txt').getText('UTF-8')
     // license text needs to be indented with a single space
