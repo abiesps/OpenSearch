@@ -28,11 +28,11 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
     }
 
     protected boolean useDirectIO(String name, IOContext context, OptionalLong fileLength) {
-        if (fileLength.orElse(minBytesDirect) >= minBytesDirect) {
-            System.out.println("Using directIO for " + name + " size (mb) " + fileLength.orElse(minBytesDirect)/(1024*1024) );
+       // if (fileLength.orElse(minBytesDirect) >= minBytesDirect) {
+           // System.out.println("Using directIO for " + name + " size (mb) " + fileLength.orElse(minBytesDirect)/(1024*1024) );
             return true;
-        }
-       return false;
+       // }
+       //return false;
     }
 
     @Override
