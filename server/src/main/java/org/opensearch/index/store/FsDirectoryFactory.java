@@ -121,7 +121,8 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
             case SIMPLEFS:
                 if (USE_IOURING) {
                     System.out.println("Using IOURING !!!");
-                    return new IOUringDirectory(location, lockFactory);
+                    FSDirectory primaryDirectory2 = FSDirectory.open(location, lockFactory);
+                    return new IOUringDirectory(location, lockFactory, primaryDirectory2);
                 } else {
                     System.out.println("Using forced direct IO with EFS and aligned buffer");
                     FSDirectory primaryDirectory2 = FSDirectory.open(location, lockFactory);
