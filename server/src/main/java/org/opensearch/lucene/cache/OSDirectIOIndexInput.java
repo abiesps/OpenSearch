@@ -244,8 +244,13 @@ public class OSDirectIOIndexInput extends IndexInput {
             // read may return -1 here iff filePos == channel.size(), but that's ok as it just reaches
             // EOF
             // when filePos > channel.size(), an EOFException will be thrown from above
-            channel.read(buffer, filePos);
-        } catch (IOException ioe) {
+            if (channel != null) {
+                channel.read(buffer, filePos);
+            } else {
+                CompletableFuture<Integer> read = fc.read(buffer, filePos);
+                read.get();
+            }
+        } catch (Exception ioe) {
             throw new IOException(ioe.getMessage() + ": " + this, ioe);
         }
 
