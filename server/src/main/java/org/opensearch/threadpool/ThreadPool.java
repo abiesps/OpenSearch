@@ -250,6 +250,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         if (useVirtualThreadsStr != null) {
             useVirtualThreads = Boolean.parseBoolean(useVirtualThreadsStr);
         }
+        System.out.println("use virtual threads: " + useVirtualThreads);
     }
     public ThreadPool(
         final Settings settings,
