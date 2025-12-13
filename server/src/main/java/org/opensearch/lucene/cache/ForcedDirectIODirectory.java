@@ -22,6 +22,8 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
 
     public ForcedDirectIODirectory(FSDirectory delegate) throws IOException {
         super(delegate);
+        this.blockSize = Math.toIntExact(Files.getFileStore(delegate.getDirectory()).getBlockSize());
+        System.out.println("====Block size returned from file system is ===" + blockSize);
     }
 
     protected boolean useDirectIO(String name, IOContext context, OptionalLong fileLength) {
