@@ -41,7 +41,8 @@ public class IOUringDirectory extends FSDirectory {
     }
 
     protected boolean useDirectIO(long fileLength, int blockSize) throws IOException {
-        return false;
+
+        return true;
 //        if (fileLength <= blockSize) return false;
 //        return true;
     }
