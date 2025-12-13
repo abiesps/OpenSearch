@@ -13,6 +13,7 @@ import java.util.OptionalLong;
 public class ForcedDirectIODirectory extends DirectIODirectory {
 
     int blockSize;
+    private long minBytesDirect=10 * 1024 * 1024;
 
     public ForcedDirectIODirectory(FSDirectory delegate, int mergeBufferSize, long minBytesDirect) throws IOException {
         super(delegate, mergeBufferSize, minBytesDirect);
@@ -27,7 +28,10 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
     }
 
     protected boolean useDirectIO(String name, IOContext context, OptionalLong fileLength) {
-        return true;
+        if (fileLength.orElse(minBytesDirect) >= minBytesDirect) {
+            return true;
+        }
+       return false;
     }
 
     @Override
