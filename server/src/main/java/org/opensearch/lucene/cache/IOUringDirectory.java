@@ -40,8 +40,9 @@ public class IOUringDirectory extends FSDirectory {
     }
 
     protected boolean useDirectIO(long fileLength, int blockSize) throws IOException {
-        if (fileLength <= blockSize) return false;
-        return true;
+        return false;
+//        if (fileLength <= blockSize) return false;
+//        return true;
     }
 
     @Override
@@ -53,6 +54,7 @@ public class IOUringDirectory extends FSDirectory {
         //FileChannel fc = FileChannel.open(path, StandardOpenOption.READ);
         //Not using read direct to get away from buffer alignment for now
         CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(path, eventExecutor,
+           // OpenOption.READ_ONLY);
             OpenOption.DIRECT);
         boolean success = false;
         try {
