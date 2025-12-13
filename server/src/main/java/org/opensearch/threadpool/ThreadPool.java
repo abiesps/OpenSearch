@@ -270,9 +270,11 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         builders.put(Names.WRITE, new FixedExecutorBuilder(settings, Names.WRITE, allocatedProcessors, 10000));
         builders.put(Names.GET, new FixedExecutorBuilder(settings, Names.GET, allocatedProcessors, 1000));
         builders.put(Names.ANALYZE, new FixedExecutorBuilder(settings, Names.ANALYZE, 1, 16));
+        //13
         builders.put(
             Names.SEARCH,
-            new ResizableExecutorBuilder(settings, Names.SEARCH, searchThreadPoolSize(allocatedProcessors), 1000, runnableTaskListener));
+            new FixedExecutorBuilder(settings, Names.SEARCH, allocatedProcessors, 1000));
+            //new ResizableExecutorBuilder(settings, Names.SEARCH, searchThreadPoolSize(allocatedProcessors), 1000, runnableTaskListener));
 
 
         // TODO: configure the appropriate size and explore use of virtual threads
@@ -338,14 +340,15 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         );
         builders.put(
             Names.INDEX_SEARCHER,
-            new ResizableExecutorBuilder(
-                settings,
-                Names.INDEX_SEARCHER,
-                twiceAllocatedProcessors(allocatedProcessors),
-                1000,
-                runnableTaskListener
-            )
-        );
+            new FixedExecutorBuilder(settings, Names.INDEX_SEARCHER, allocatedProcessors, 1000));
+//            new ResizableExecutorBuilder(
+//                settings,
+//                Names.INDEX_SEARCHER,
+//                twiceAllocatedProcessors(allocatedProcessors),
+//                1000,
+//                runnableTaskListener
+//            )
+//        );
         builders.put(
             Names.REMOTE_STATE_CHECKSUM,
             new FixedExecutorBuilder(settings, Names.REMOTE_STATE_CHECKSUM, ClusterStateChecksum.COMPONENT_SIZE, 1000)
