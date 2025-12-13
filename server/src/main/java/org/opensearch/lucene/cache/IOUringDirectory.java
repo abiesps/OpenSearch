@@ -69,8 +69,8 @@ public class IOUringDirectory extends FSDirectory {
                 asyncFile = asyncFileCompletableFuture.get();
                 usingDirectIO = false;
             }
-            logger.info("Opening file [{}] in path [{}] fd {} file len {} using direct IO {} ", name, basePath,
-                asyncFile, fileLength, usingDirectIO);
+//            logger.info("Opening file [{}] in path [{}] fd {} file len {} using direct IO {} ", name, basePath,
+//                asyncFile, fileLength, usingDirectIO);
             //String resourceDesc, AsyncFile fc, IOContext context
             final IOuringIndexInputV4 indexInput =
                 new IOuringIndexInputV4(path, blockSize, blockSize, asyncFile);
