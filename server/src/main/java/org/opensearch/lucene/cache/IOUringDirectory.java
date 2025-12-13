@@ -30,6 +30,7 @@ public class IOUringDirectory extends FSDirectory {
     private final int blockSize;
     private final FSDirectory delegate;
 
+
     /**
      */
     public IOUringDirectory(Path path, LockFactory lockFactory, FSDirectory primaryDirectory2) throws IOException {
@@ -71,8 +72,8 @@ public class IOUringDirectory extends FSDirectory {
                 asyncFile, fileLength, usingDirectIO);
             //String resourceDesc, AsyncFile fc, IOContext context
             final IOuringIndexInputV4 indexInput =
-                new IOuringIndexInputV4("IOuringIndexInputV3(path=\"" + path + "\")",
-                    asyncFile, context);
+                new IOuringIndexInputV4(path, blockSize, blockSize, asyncFile);
+
             success = true;
             return indexInput;
         } catch (ExecutionException e) {

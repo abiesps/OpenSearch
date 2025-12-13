@@ -1,5 +1,6 @@
 package org.opensearch.lucene.cache;
 
+import one.jasyncfio.AsyncFile;
 import org.apache.lucene.store.IndexInput;
 
 import java.io.EOFException;
@@ -16,19 +17,16 @@ import java.util.Objects;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 public class OSDirectIOIndexInput extends IndexInput {
-    private  ByteBuffer buffer;
+    protected ByteBuffer buffer;
     private  FileChannel channel;
+    protected AsyncFile fc;
     private  int blockSize;
-    private  long offset;
-    private  long length;
+    protected long offset;
+    protected long length;
     private  boolean isClosable; // clones and slices are not closable
     private boolean isOpen;
-    private long filePos;
+    protected long filePos;
 
-    public OSDirectIOIndexInput() {
-        super("res");
-
-    }
 
     static final OpenOption ExtendedOpenOption_DIRECT; // visible for test
 
@@ -66,6 +64,31 @@ public class OSDirectIOIndexInput extends IndexInput {
      * @throws IOException if the operating system or filesystem does not support support Direct I/O
      *     or a sufficient equivalent.
      */
+    //Path path, int blockSize, int bufferSize,
+    //                                AsyncFile fc
+    public OSDirectIOIndexInput(Path path, int blockSize, int bufferSize,
+                                AsyncFile fc) throws IOException {
+        super("DirectIOIndexInput(path=\"" + path + "\")");
+        this.fc = fc;
+        this.blockSize = blockSize;
+        this.buffer = allocateBuffer(bufferSize, blockSize);
+        this.isOpen = true;
+        this.isClosable = true;
+        this.length = channel.size();
+        this.offset = 0L;
+        this.filePos = -bufferSize;
+        this.buffer.limit(0);
+    }
+
+
+    /**
+     * Creates a new instance of DirectIOIndexInput for reading index input with direct IO bypassing
+     * OS buffer
+     *
+     * @throws UnsupportedOperationException if the JDK does not support Direct I/O
+     * @throws IOException if the operating system or filesystem does not support support Direct I/O
+     *     or a sufficient equivalent.
+     */
     public OSDirectIOIndexInput(Path path, int blockSize, int bufferSize) throws IOException {
         super("DirectIOIndexInput(path=\"" + path + "\")");
         this.channel = FileChannel.open(path, StandardOpenOption.READ, getDirectOpenOption());
@@ -83,11 +106,12 @@ public class OSDirectIOIndexInput extends IndexInput {
     private OSDirectIOIndexInput(
         String description, OSDirectIOIndexInput other, long offset, long length) throws IOException {
         super(description);
-        Objects.checkFromIndexSize(offset, length, other.channel.size());
+        //Objects.checkFromIndexSize(offset, length, other.channel.size());
         final int bufferSize = other.buffer.capacity();
         this.buffer = allocateBuffer(bufferSize, other.blockSize);
         this.blockSize = other.blockSize;
         this.channel = other.channel;
+        this.fc = other.fc;
         this.isOpen = true;
         this.isClosable = false;
         this.length = length;
@@ -105,8 +129,13 @@ public class OSDirectIOIndexInput extends IndexInput {
     @Override
     public void close() throws IOException {
         if (isOpen && isClosable) {
-            channel.close();
-            isOpen = false;
+            if (channel != null) {
+                channel.close();
+                isOpen = false;
+            } if (fc != null) {
+                fc.close();
+                isOpen = false;
+            }
         }
     }
 
