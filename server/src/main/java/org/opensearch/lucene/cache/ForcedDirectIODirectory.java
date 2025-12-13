@@ -32,7 +32,8 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
            // System.out.println("Using directIO for " + name + " size (mb) " + fileLength.orElse(minBytesDirect)/(1024*1024) );
             return true;
         }
-       return false;
+       return true;
+        //return false;
     }
 
     @Override
