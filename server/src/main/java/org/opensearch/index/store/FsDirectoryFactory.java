@@ -123,7 +123,7 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                     System.out.println("Using IOURING !!!");
                     return new IOUringDirectory(location, lockFactory);
                 } else {
-                    System.out.println("Using forced direct IO with EFS non aligned buffer");
+                    System.out.println("Using forced direct IO with EFS and aligned buffer");
                     FSDirectory primaryDirectory2 = FSDirectory.open(location, lockFactory);
                     return new ForcedDirectIODirectory(primaryDirectory2);
                     //return new NIOFSDirectoryWithODirect(location, lockFactory);

@@ -34,13 +34,13 @@ public class ForcedDirectIODirectory extends DirectIODirectory {
         return in.createOutput(name, context);
     }
 
-    @Override
-    public IndexInput openInput(String name, IOContext context) throws IOException {
-        ensureOpen();
-        if (useDirectIO(name, context, OptionalLong.of(fileLength(name)))) {
-            return new OSDirectIOIndexInput(getDirectory().resolve(name), blockSize, blockSize);
-        } else {
-            return in.openInput(name, context);
-        }
-    }
+//    @Override
+//    public IndexInput openInput(String name, IOContext context) throws IOException {
+//        ensureOpen();
+//        if (useDirectIO(name, context, OptionalLong.of(fileLength(name)))) {
+//            return new OSDirectIOIndexInput(getDirectory().resolve(name), blockSize, blockSize);
+//        } else {
+//            return in.openInput(name, context);
+//        }
+//    }
 }
