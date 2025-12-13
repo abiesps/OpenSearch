@@ -13,6 +13,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
@@ -74,7 +76,18 @@ public class OSDirectIOIndexInput extends IndexInput {
         this.buffer = allocateBuffer(bufferSize, blockSize);
         this.isOpen = true;
         this.isClosable = true;
-        this.length = channel.size();
+        if (channel != null) {
+            this.length = channel.size();
+        } else {
+            CompletableFuture<Long> size = fc.size();
+            try {
+                this.length = size.get();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            } catch (ExecutionException e) {
+                throw new RuntimeException(e);
+            }
+        }
         this.offset = 0L;
         this.filePos = -bufferSize;
         this.buffer.limit(0);
