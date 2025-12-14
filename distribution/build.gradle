@@ -559,7 +559,7 @@ configure(subprojects.findAll { ['archives', 'packages'].contains(it.name) }) {
  */
 subprojects {
   ext.expansionsForDistribution = { distributionType, jdk ->
-    final String defaultHeapSize = "4g"
+    final String defaultHeapSize = "32g"
     final String packagingPathData = "path.data: /var/lib/opensearch"
     final String pathLogs = "/var/log/opensearch"
     final String packagingPathLogs = "path.logs: ${pathLogs}"

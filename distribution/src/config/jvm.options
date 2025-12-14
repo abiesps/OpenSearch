@@ -32,6 +32,8 @@
 ##
 ################################################################
 
+-Djdk.virtualThreadScheduler.parallelism=45
+-Djdk.virtualThreadScheduler.maxPoolSize=45
 ## GC configuration
 8-10:-XX:+UseConcMarkSweepGC
 8-10:-XX:CMSInitiatingOccupancyFraction=75
