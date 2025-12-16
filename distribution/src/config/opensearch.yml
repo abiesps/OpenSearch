@@ -28,8 +28,8 @@ indices.fielddata.cache.size: 0
 index.store.type: simplefs
 search.concurrent.max_slice_count: 10000
 #search.concurrent.max_slice_count: 4
-thread_pool.search.size: 8
-thread_pool.index_searcher.size: 8
+#thread_pool.search.size: 8
+#thread_pool.index_searcher.size: 8
 # ======================== OpenSearch Configuration =========================
 #
 # NOTE: OpenSearch comes with reasonable defaults for most settings.
