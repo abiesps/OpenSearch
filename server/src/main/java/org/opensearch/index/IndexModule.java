@@ -155,6 +155,13 @@ public final class IndexModule {
         Property.NodeScope
     );
 
+    public static final Setting<Double> INDEX_STORE_MIN_CACHE_MISS_PERCENT_SETTING = Setting.doubleSetting(
+        "index.store.min.cache.miss.percent",
+        0.0,
+        Property.IndexScope,
+        Property.NodeScope
+    );
+
     public static final Setting<String> INDEX_COMPOSITE_STORE_TYPE_SETTING = new Setting<>(
         "index.composite_store.type",
         "default",
@@ -526,7 +533,8 @@ public final class IndexModule {
         MMAPFS("mmapfs"),
         SIMPLEFS("simplefs"),
         FS("fs"),
-        REMOTE_SNAPSHOT("remote_snapshot");
+        REMOTE_SNAPSHOT("remote_snapshot"),
+        IOURING_BUFFERPOOL("iouring_bufferpool");
 
         private final String settingsKey;
         private final boolean deprecated;
@@ -998,6 +1006,8 @@ public final class IndexModule {
                 case FS:
                 case MMAPFS:
                 case SIMPLEFS:
+                case IOURING_BUFFERPOOL:
+                case IOURING_BUFFERPOOL_HIT_RATE:
                     factories.put(type.getSettingsKey(), DEFAULT_DIRECTORY_FACTORY);
                     break;
                 case REMOTE_SNAPSHOT:

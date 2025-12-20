@@ -76,6 +76,7 @@ dependencies {
   compileOnly project(":libs:agent-sm:bootstrap")
   compileOnly project(':libs:opensearch-plugin-classloader')
   testRuntimeOnly project(':libs:opensearch-plugin-classloader')
+  api ("com.github.ben-manes.caffeine:caffeine:3.0.0")
   api("one.jasyncfio:jasyncfio:0.0.8:linux-amd64")
   api libs.bundles.lucene
 

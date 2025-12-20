@@ -53,14 +53,12 @@ public class IOUringDirectory extends FSDirectory {
         ensureCanRead(name);
         Path basePath = getDirectory();
         Path path = basePath.resolve(name);
-        //FileChannel fc = FileChannel.open(path, StandardOpenOption.READ);
-        //Not using read direct to get away from buffer alignment for now
         CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(path, eventExecutor,
-           // OpenOption.READ_ONLY);
             OpenOption.DIRECT);
         boolean success = false;
+        AsyncFile asyncFile = null;
         try {
-            AsyncFile asyncFile = asyncFileCompletableFuture.get();
+            asyncFile = asyncFileCompletableFuture.get();
             long fileLength = asyncFile.size().get();
             boolean usingDirectIO = true;
             if (!useDirectIO(fileLength, blockSize)) {
@@ -83,8 +81,9 @@ public class IOUringDirectory extends FSDirectory {
             throw new RuntimeException(e);
         } finally {
             if (success == false) {
-                //asyncFile.close();
-                //org.opensearch.core.internal.io.IOUtils.closeWhileHandlingException(fc);
+                if (asyncFile != null) {
+                    asyncFile.close();
+                }
             }
         }
     }
