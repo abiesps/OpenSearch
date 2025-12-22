@@ -202,7 +202,7 @@ public final class BufferIOWithCaching extends OutputStreamIndexOutput {
             buffer[bufferPosition++] = (byte) b;
         }
 
-        /** Flush only whole CHUNK_SIZE blocks; keep any <CHUNK_SIZE tail in the buffer (no mid-file partials). */
+        /** Flush only whole CHUNK_SIZE blocks; keep any CHUNK_SIZE tail in the buffer (no mid-file partials). */
         private void flushBuffer() throws IOException {
             if (bufferPosition == 0)
                 return;
@@ -221,7 +221,7 @@ public final class BufferIOWithCaching extends OutputStreamIndexOutput {
             bufferPosition = tail;
         }
 
-        /** Force flush ALL buffered data including any tail < CHUNK_SIZE */
+        /** Force flush ALL buffered data including any tail  CHUNK_SIZE */
         private void forceFlushBuffer() throws IOException {
             if (bufferPosition > 0) {
                 processAndWrite(buffer, 0, bufferPosition);

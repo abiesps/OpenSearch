@@ -65,8 +65,8 @@ public class AesCipherFactory {
         try {
             // todo we can make provider comfigirable but for now with AES/CTR, SunJCE works best
             // in terms of performance.
-            return Cipher.getInstance("AES/CTR/NoPadding", CryptoDirectoryFactory.DEFAULT_CRYPTO_PROVIDER);
-        } catch (NoSuchAlgorithmException | NoSuchProviderException | NoSuchPaddingException e) {
+            return Cipher.getInstance("AES/CTR/NoPadding");
+        } catch (NoSuchAlgorithmException |  NoSuchPaddingException e) {
             throw new RuntimeException(e);
         }
     });

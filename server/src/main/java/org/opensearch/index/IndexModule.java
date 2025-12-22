@@ -1007,7 +1007,6 @@ public final class IndexModule {
                 case MMAPFS:
                 case SIMPLEFS:
                 case IOURING_BUFFERPOOL:
-                case IOURING_BUFFERPOOL_HIT_RATE:
                     factories.put(type.getSettingsKey(), DEFAULT_DIRECTORY_FACTORY);
                     break;
                 case REMOTE_SNAPSHOT:
