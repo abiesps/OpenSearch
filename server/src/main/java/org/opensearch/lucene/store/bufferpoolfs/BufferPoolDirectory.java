@@ -137,6 +137,7 @@ public class BufferPoolDirectory extends FSDirectory {
                 }
             }
         }
+        return null;
     }
 
     @Override
