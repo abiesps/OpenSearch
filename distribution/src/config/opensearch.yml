@@ -6,8 +6,8 @@ discovery.type: single-node
 bootstrap.memory_lock: false
 path.shared_data: "/"
 #node.name: Nh7fvoeITCC1oUAXW5SmyQ
-path.data: ["/opt/opensearch/data"]
-#path.data: ["/usr/bin/efs/opensearch"]
+#path.data: ["/opt/opensearch/data"]
+path.data: ["/usr/bin/efs/nonblockiopoc"]
 #path.data: ["/opt/opensearch/opensearch-nonblockingio-bench-12122025"]
 #path.data: ["/opt/opensearch/opensearch-3.1.0-SNAPSHOT/data", "/mnt/efs/fs1/opensearch", "/mnt/fsx/opensearch-big5"]
 path.repo: ["/opt/opensearch/opensearch-backup"]
@@ -25,7 +25,8 @@ search.concurrent_segment_search.enabled: true
 indices.queries.cache.size: 0
 indices.requests.cache.size: 0
 indices.fielddata.cache.size: 0
-index.store.type: simplefs
+#index.store.type: simplefs
+#index.store.type: iouring_bufferpool
 search.concurrent.max_slice_count: 10000
 #search.concurrent.max_slice_count: 4
 #thread_pool.search.size: 8
