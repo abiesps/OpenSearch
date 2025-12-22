@@ -5,7 +5,6 @@
 package org.opensearch.lucene.store.cipher;
 
 import org.opensearch.lucene.store.footer.EncryptionFooter;
-
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.Key;

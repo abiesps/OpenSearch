@@ -7,6 +7,7 @@ package org.opensearch.lucene.store.key;
 import java.security.Key;
 import java.util.Objects;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -16,7 +17,6 @@ import org.opensearch.common.unit.TimeValue;
 import com.github.benmanes.caffeine.cache.CacheLoader;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
-import org.opensearch.lucene.store.CryptoDirectoryFactory;
 
 /**
  * Node-level cache for encryption keys used across all shards.
@@ -55,7 +55,8 @@ public class NodeLevelKeyCache {
      */
     public static synchronized void initialize(Settings nodeSettings, MasterKeyHealthMonitor healthMonitor) {
         if (INSTANCE == null) {
-            TimeValue expiryInterval = CryptoDirectoryFactory.NODE_KEY_EXPIRY_INTERVAL_SETTING.get(nodeSettings);
+            TimeValue expiryInterval = new TimeValue(1, TimeUnit.DAYS);
+                //CryptoDirectoryFactory.NODE_KEY_EXPIRY_INTERVAL_SETTING.get(nodeSettings);
             long keyExpiryDuration = expiryInterval.getSeconds();
 
             INSTANCE = new NodeLevelKeyCache(keyExpiryDuration, healthMonitor);

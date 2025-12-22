@@ -4,7 +4,6 @@
  */
 package org.opensearch.lucene.store.cipher;
 
-import org.opensearch.lucene.store.CryptoDirectoryFactory;
 import org.opensearch.lucene.store.footer.EncryptionMetadataTrailer;
 import org.opensearch.lucene.store.key.HkdfKeyDerivation;
 

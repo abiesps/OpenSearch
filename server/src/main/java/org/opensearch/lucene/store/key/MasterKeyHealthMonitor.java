@@ -24,7 +24,6 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
-import org.opensearch.lucene.store.CryptoDirectoryFactory;
 import org.opensearch.transport.client.Client;
 
 /**
