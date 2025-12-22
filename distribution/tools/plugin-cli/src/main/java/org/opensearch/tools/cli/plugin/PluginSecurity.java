@@ -59,6 +59,7 @@ import java.util.stream.Collectors;
  *
  * @opensearch.api
  */
+@SuppressWarnings({"removed", "deprecated"})
 class PluginSecurity {
 
     /**

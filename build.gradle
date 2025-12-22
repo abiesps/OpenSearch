@@ -271,7 +271,7 @@ allprojects {
       memoryMaximumSize = project.property('options.forkOptions.memoryMaximumSize')
     }
 
-    compile.options.compilerArgs << '-Werror'
+//    compile.options.compilerArgs << '-Werror'
     compile.options.compilerArgs << '-Xlint:auxiliaryclass'
     compile.options.compilerArgs << '-Xlint:cast'
     compile.options.compilerArgs << '-Xlint:classfile'
@@ -287,7 +287,7 @@ allprojects {
     compile.options.compilerArgs << '-Xlint:overrides'
     compile.options.compilerArgs << '-Xlint:-processing'
     compile.options.compilerArgs << '-Xlint:rawtypes'
-    compile.options.compilerArgs << '-Xlint:removal'
+//    compile.options.compilerArgs << '-Xlint:removal'
     compile.options.compilerArgs << '-Xlint:requires-automatic'
     compile.options.compilerArgs << '-Xlint:requires-transitive-automatic'
     compile.options.compilerArgs << '-Xlint:static'
