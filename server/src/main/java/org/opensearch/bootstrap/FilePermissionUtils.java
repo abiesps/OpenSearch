@@ -45,6 +45,7 @@ import java.security.Permissions;
  *
  * @opensearch.internal
  */
+@SuppressWarnings("deprecation")
 public class FilePermissionUtils {
 
     /** no instantiation */
