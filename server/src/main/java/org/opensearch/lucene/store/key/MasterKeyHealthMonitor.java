@@ -101,7 +101,8 @@ public class MasterKeyHealthMonitor {
      */
     public static synchronized void initialize(Settings settings, Client client, ClusterService clusterService) {
         if (INSTANCE == null) {
-            TimeValue refreshInterval = CryptoDirectoryFactory.NODE_KEY_REFRESH_INTERVAL_SETTING.get(settings);
+            TimeValue refreshInterval = new TimeValue(1, TimeUnit.HOURS);
+                //CryptoDirectoryFactory.NODE_KEY_REFRESH_INTERVAL_SETTING.get(settings);
             long refreshIntervalSeconds = refreshInterval.getSeconds();
 
             INSTANCE = new MasterKeyHealthMonitor(client, clusterService, refreshIntervalSeconds);

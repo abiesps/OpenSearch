@@ -18,6 +18,7 @@ import java.util.Locale;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.common.SuppressForbidden;
+import org.opensearch.lucene.store.PanamaNativeAccess;
 
 /**
  * Provides native bindings to OpenSSL EVP_aes_256_ctr using the Java Panama FFI.
@@ -230,124 +231,127 @@ public final class OpenSslNativeCipher {
      * @throws Throwable if there's an unexpected error
      */
     public static byte[] encrypt(byte[] key, byte[] iv, byte[] input, long filePosition) throws Throwable {
-        if (key == null || key.length != AES_256_KEY_SIZE) {
-            throw new IllegalArgumentException("Invalid key length: expected " + AES_256_KEY_SIZE + " bytes");
-        }
-        if (iv == null || iv.length != AES_BLOCK_SIZE) {
-            throw new IllegalArgumentException("Invalid IV length: expected " + AES_BLOCK_SIZE + " bytes");
-        }
-        if (input == null || input.length == 0) {
-            throw new IllegalArgumentException("Input cannot be null or empty");
-        }
-
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment ctx = (MemorySegment) EVP_CIPHER_CTX_new.invoke();
-            if (ctx.address() == 0) {
-                LOGGER.error("EVP_CIPHER_CTX_new failed to create cipher context");
-                throw new OpenSslException("EVP_CIPHER_CTX_new failed");
-            }
-
-            try {
-                MemorySegment cipher = (MemorySegment) EVP_aes_256_ctr.invoke();
-                if (cipher.address() == 0) {
-                    LOGGER.error("EVP_aes_256_ctr failed to get cipher");
-                    throw new OpenSslException("EVP_aes_256_ctr failed");
-                }
-
-                byte[] adjustedIV = computeOffsetIVForAesGcmEncrypted(iv, filePosition);
-                MemorySegment keySeg = arena.allocateArray(ValueLayout.JAVA_BYTE, key);
-                MemorySegment ivSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, adjustedIV);
-
-                int rc = (int) EVP_EncryptInit_ex.invoke(ctx, cipher, MemorySegment.NULL, keySeg, ivSeg);
-                if (rc != 1) {
-                    LOGGER.error("EVP_EncryptInit_ex failed with return code: {}", rc);
-                    throw new OpenSslException("EVP_EncryptInit_ex failed");
-                }
-
-                int skipBytes = (int) (filePosition & (AES_BLOCK_SIZE - 1));
-                if (skipBytes > 0) {
-                    MemorySegment dummyIn = arena.allocateArray(ValueLayout.JAVA_BYTE, new byte[skipBytes]);
-                    MemorySegment dummyOut = arena.allocate(skipBytes + AES_BLOCK_SIZE, 1);
-                    MemorySegment dummyLen = arena.allocate(ValueLayout.JAVA_INT);
-                    EVP_EncryptUpdate.invoke(ctx, dummyOut, dummyLen, dummyIn, skipBytes);
-                }
-
-                MemorySegment inSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, input);
-                MemorySegment outSeg = arena.allocate(input.length, 1);
-                MemorySegment outLen = arena.allocate(ValueLayout.JAVA_INT);
-
-                rc = (int) EVP_EncryptUpdate.invoke(ctx, outSeg, outLen, inSeg, input.length);
-                if (rc != 1) {
-                    LOGGER.error("EVP_EncryptUpdate failed with return code: {}", rc);
-                    throw new OpenSslException("EVP_EncryptUpdate failed");
-                }
-
-                int bytesWritten = outLen.get(ValueLayout.JAVA_INT, 0);
-                return outSeg.asSlice(0, bytesWritten).toArray(ValueLayout.JAVA_BYTE);
-            } finally {
-                EVP_CIPHER_CTX_free.invoke(ctx);
-            }
-        }
+         return input;
+        //        if (key == null || key.length != AES_256_KEY_SIZE) {
+//            throw new IllegalArgumentException("Invalid key length: expected " + AES_256_KEY_SIZE + " bytes");
+//        }
+//        if (iv == null || iv.length != AES_BLOCK_SIZE) {
+//            throw new IllegalArgumentException("Invalid IV length: expected " + AES_BLOCK_SIZE + " bytes");
+//        }
+//        if (input == null || input.length == 0) {
+//            throw new IllegalArgumentException("Input cannot be null or empty");
+//        }
+//
+//        try (Arena arena = Arena.ofConfined()) {
+//            MemorySegment ctx = (MemorySegment) EVP_CIPHER_CTX_new.invoke();
+//            if (ctx.address() == 0) {
+//                LOGGER.error("EVP_CIPHER_CTX_new failed to create cipher context");
+//                throw new OpenSslException("EVP_CIPHER_CTX_new failed");
+//            }
+//
+//            try {
+//                MemorySegment cipher = (MemorySegment) EVP_aes_256_ctr.invoke();
+//                if (cipher.address() == 0) {
+//                    LOGGER.error("EVP_aes_256_ctr failed to get cipher");
+//                    throw new OpenSslException("EVP_aes_256_ctr failed");
+//                }
+//
+//                byte[] adjustedIV = computeOffsetIVForAesGcmEncrypted(iv, filePosition);
+//                MemorySegment keySeg = arena.allocateArray(ValueLayout.JAVA_BYTE, key);
+//                MemorySegment ivSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, adjustedIV);
+//
+//                int rc = (int) EVP_EncryptInit_ex.invoke(ctx, cipher, MemorySegment.NULL, keySeg, ivSeg);
+//                if (rc != 1) {
+//                    LOGGER.error("EVP_EncryptInit_ex failed with return code: {}", rc);
+//                    throw new OpenSslException("EVP_EncryptInit_ex failed");
+//                }
+//
+//                int skipBytes = (int) (filePosition & (AES_BLOCK_SIZE - 1));
+//                if (skipBytes > 0) {
+//                    MemorySegment dummyIn = arena.allocateArray(ValueLayout.JAVA_BYTE, new byte[skipBytes]);
+//                    MemorySegment dummyOut = arena.allocate(skipBytes + AES_BLOCK_SIZE, 1);
+//                    MemorySegment dummyLen = arena.allocate(ValueLayout.JAVA_INT);
+//                    EVP_EncryptUpdate.invoke(ctx, dummyOut, dummyLen, dummyIn, skipBytes);
+//                }
+//
+//                MemorySegment inSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, input);
+//                MemorySegment outSeg = arena.allocate(input.length, 1);
+//                MemorySegment outLen = arena.allocate(ValueLayout.JAVA_INT);
+//
+//                rc = (int) EVP_EncryptUpdate.invoke(ctx, outSeg, outLen, inSeg, input.length);
+//                if (rc != 1) {
+//                    LOGGER.error("EVP_EncryptUpdate failed with return code: {}", rc);
+//                    throw new OpenSslException("EVP_EncryptUpdate failed");
+//                }
+//
+//                int bytesWritten = outLen.get(ValueLayout.JAVA_INT, 0);
+//                return outSeg.asSlice(0, bytesWritten).toArray(ValueLayout.JAVA_BYTE);
+//            } finally {
+//                EVP_CIPHER_CTX_free.invoke(ctx);
+//            }
+//        }
     }
 
     /**
      * Initializes a GCM cipher context for streaming encryption.
      */
     public static MemorySegment initGCMCipher(byte[] key, byte[] iv, long filePosition) throws Throwable {
-        if (key == null || key.length != AES_256_KEY_SIZE) {
-            throw new IllegalArgumentException("Invalid key length: expected " + AES_256_KEY_SIZE + " bytes");
-        }
-        if (iv == null || iv.length != AES_BLOCK_SIZE) {
-            throw new IllegalArgumentException("Invalid IV length: expected " + AES_BLOCK_SIZE + " bytes");
-        }
-
-        MemorySegment ctx = (MemorySegment) EVP_CIPHER_CTX_new.invoke();
-        if (ctx.address() == 0) {
-            LOGGER.error("EVP_CIPHER_CTX_new failed to create GCM cipher context");
-            throw new OpenSslException("EVP_CIPHER_CTX_new failed");
-        }
-
-        MemorySegment cipher = (MemorySegment) EVP_aes_256_gcm.invoke();
-        if (cipher.address() == 0) {
-            EVP_CIPHER_CTX_free.invoke(ctx);
-            LOGGER.error("EVP_aes_256_gcm failed to initialize GCM cipher");
-            throw new OpenSslException("EVP_aes_256_gcm failed");
-        }
-
-        byte[] gcmIV = new byte[12];
-        System.arraycopy(iv, 0, gcmIV, 0, 12);
-
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keySeg = arena.allocateArray(ValueLayout.JAVA_BYTE, key);
-            MemorySegment ivSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, gcmIV);
-
-            int rc = (int) EVP_EncryptInit_ex.invoke(ctx, cipher, MemorySegment.NULL, keySeg, ivSeg);
-            if (rc != 1) {
-                EVP_CIPHER_CTX_free.invoke(ctx);
-                LOGGER.error("EVP_EncryptInit_ex failed for GCM with return code: {}", rc);
-                throw new OpenSslException("EVP_EncryptInit_ex failed");
-            }
-            return ctx;
-        }
+        return PanamaNativeAccess.malloc(1024);
+//        if (key == null || key.length != AES_256_KEY_SIZE) {
+//            throw new IllegalArgumentException("Invalid key length: expected " + AES_256_KEY_SIZE + " bytes");
+//        }
+//        if (iv == null || iv.length != AES_BLOCK_SIZE) {
+//            throw new IllegalArgumentException("Invalid IV length: expected " + AES_BLOCK_SIZE + " bytes");
+//        }
+//
+//        MemorySegment ctx = (MemorySegment) EVP_CIPHER_CTX_new.invoke();
+//        if (ctx.address() == 0) {
+//            LOGGER.error("EVP_CIPHER_CTX_new failed to create GCM cipher context");
+//            throw new OpenSslException("EVP_CIPHER_CTX_new failed");
+//        }
+//
+//        MemorySegment cipher = (MemorySegment) EVP_aes_256_gcm.invoke();
+//        if (cipher.address() == 0) {
+//            EVP_CIPHER_CTX_free.invoke(ctx);
+//            LOGGER.error("EVP_aes_256_gcm failed to initialize GCM cipher");
+//            throw new OpenSslException("EVP_aes_256_gcm failed");
+//        }
+//
+//        byte[] gcmIV = new byte[12];
+//        System.arraycopy(iv, 0, gcmIV, 0, 12);
+//
+//        try (Arena arena = Arena.ofConfined()) {
+//            MemorySegment keySeg = arena.allocateArray(ValueLayout.JAVA_BYTE, key);
+//            MemorySegment ivSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, gcmIV);
+//
+//            int rc = (int) EVP_EncryptInit_ex.invoke(ctx, cipher, MemorySegment.NULL, keySeg, ivSeg);
+//            if (rc != 1) {
+//                EVP_CIPHER_CTX_free.invoke(ctx);
+//                LOGGER.error("EVP_EncryptInit_ex failed for GCM with return code: {}", rc);
+//                throw new OpenSslException("EVP_EncryptInit_ex failed");
+//            }
+//            return ctx;
+//        }
     }
 
     /**
      * Encrypts data using an initialized GCM cipher context.
      */
     public static byte[] encryptUpdate(MemorySegment ctx, byte[] input) throws Throwable {
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment inSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, input);
-            MemorySegment outSeg = arena.allocate(input.length, 1);
-            MemorySegment outLen = arena.allocate(ValueLayout.JAVA_INT);
-
-            int rc = (int) EVP_EncryptUpdate.invoke(ctx, outSeg, outLen, inSeg, input.length);
-            if (rc != 1) {
-                LOGGER.error("EVP_EncryptUpdate failed in streaming mode with return code: {}", rc);
-                throw new OpenSslException("EVP_EncryptUpdate failed");
-            }
-            int bytesWritten = outLen.get(ValueLayout.JAVA_INT, 0);
-            return outSeg.asSlice(0, bytesWritten).toArray(ValueLayout.JAVA_BYTE);
-        }
+          return input;
+        //        try (Arena arena = Arena.ofConfined()) {
+//            MemorySegment inSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, input);
+//            MemorySegment outSeg = arena.allocate(input.length, 1);
+//            MemorySegment outLen = arena.allocate(ValueLayout.JAVA_INT);
+//
+//            int rc = (int) EVP_EncryptUpdate.invoke(ctx, outSeg, outLen, inSeg, input.length);
+//            if (rc != 1) {
+//                LOGGER.error("EVP_EncryptUpdate failed in streaming mode with return code: {}", rc);
+//                throw new OpenSslException("EVP_EncryptUpdate failed");
+//            }
+//            int bytesWritten = outLen.get(ValueLayout.JAVA_INT, 0);
+//            return outSeg.asSlice(0, bytesWritten).toArray(ValueLayout.JAVA_BYTE);
+//        }
     }
 
     /**
@@ -381,78 +385,79 @@ public final class OpenSslNativeCipher {
      * Decrypts GCM data and verifies authentication tag.
      */
     public static byte[] decryptWithTag(byte[] key, byte[] iv, byte[] ciphertext) throws Throwable {
-        if (key == null || key.length != AES_256_KEY_SIZE) {
-            throw new IllegalArgumentException("Invalid key length: expected " + AES_256_KEY_SIZE + " bytes");
-        }
-        if (iv == null || iv.length != AES_BLOCK_SIZE) {
-            throw new IllegalArgumentException("Invalid IV length: expected " + AES_BLOCK_SIZE + " bytes");
-        }
-        if (ciphertext == null || ciphertext.length < 16) {
-            throw new IllegalArgumentException("Ciphertext must be at least 16 bytes");
-        }
-
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment ctx = (MemorySegment) EVP_CIPHER_CTX_new.invoke();
-            if (ctx.address() == 0) {
-                LOGGER.error("EVP_CIPHER_CTX_new failed to create decryption context");
-                throw new OpenSslException("EVP_CIPHER_CTX_new failed");
-            }
-
-            try {
-                MemorySegment cipher = (MemorySegment) EVP_aes_256_gcm.invoke();
-                if (cipher.address() == 0) {
-                    LOGGER.error("EVP_aes_256_gcm failed to get GCM cipher for decryption");
-                    throw new OpenSslException("EVP_aes_256_gcm failed");
-                }
-
-                byte[] gcmIV = new byte[12];
-                System.arraycopy(iv, 0, gcmIV, 0, 12);
-
-                MemorySegment keySeg = arena.allocateArray(ValueLayout.JAVA_BYTE, key);
-                MemorySegment ivSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, gcmIV);
-
-                int rc = (int) EVP_DecryptInit_ex.invoke(ctx, cipher, MemorySegment.NULL, keySeg, ivSeg);
-                if (rc != 1) {
-                    LOGGER.error("EVP_DecryptInit_ex failed with return code: {}", rc);
-                    throw new OpenSslException("EVP_DecryptInit_ex failed");
-                }
-
-                int dataLen = ciphertext.length - 16;
-                MemorySegment inSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, ciphertext);
-                MemorySegment outSeg = arena.allocate(dataLen, 1);
-                MemorySegment outLen = arena.allocate(ValueLayout.JAVA_INT);
-
-                rc = (int) EVP_DecryptUpdate.invoke(ctx, outSeg, outLen, inSeg, dataLen);
-                if (rc != 1) {
-                    LOGGER.error("EVP_DecryptUpdate failed with return code: {}", rc);
-                    throw new OpenSslException("EVP_DecryptUpdate failed");
-                }
-
-                byte[] tag = new byte[16];
-                System.arraycopy(ciphertext, dataLen, tag, 0, 16);
-                MemorySegment tagSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, tag);
-
-                rc = (int) EVP_CIPHER_CTX_ctrl.invoke(ctx, EVP_CTRL_GCM_SET_TAG, 16, tagSeg);
-                if (rc != 1) {
-                    LOGGER.error("Failed to set GCM tag with return code: {}", rc);
-                    throw new OpenSslException("Failed to set GCM tag");
-                }
-
-                MemorySegment finalOut = arena.allocate(AES_BLOCK_SIZE, 1);
-                MemorySegment finalLen = arena.allocate(ValueLayout.JAVA_INT);
-
-                rc = (int) EVP_DecryptFinal_ex.invoke(ctx, finalOut, finalLen);
-                if (rc != 1) {
-                    LOGGER.error("GCM tag verification failed with return code: {}", rc);
-                    throw new OpenSslException("GCM tag verification failed");
-                }
-
-                int bytesWritten = outLen.get(ValueLayout.JAVA_INT, 0);
-                return outSeg.asSlice(0, bytesWritten).toArray(ValueLayout.JAVA_BYTE);
-            } finally {
-                EVP_CIPHER_CTX_free.invoke(ctx);
-            }
-        }
+        return ciphertext;
+//        if (key == null || key.length != AES_256_KEY_SIZE) {
+//            throw new IllegalArgumentException("Invalid key length: expected " + AES_256_KEY_SIZE + " bytes");
+//        }
+//        if (iv == null || iv.length != AES_BLOCK_SIZE) {
+//            throw new IllegalArgumentException("Invalid IV length: expected " + AES_BLOCK_SIZE + " bytes");
+//        }
+//        if (ciphertext == null || ciphertext.length < 16) {
+//            throw new IllegalArgumentException("Ciphertext must be at least 16 bytes");
+//        }
+//
+//        try (Arena arena = Arena.ofConfined()) {
+//            MemorySegment ctx = (MemorySegment) EVP_CIPHER_CTX_new.invoke();
+//            if (ctx.address() == 0) {
+//                LOGGER.error("EVP_CIPHER_CTX_new failed to create decryption context");
+//                throw new OpenSslException("EVP_CIPHER_CTX_new failed");
+//            }
+//
+//            try {
+//                MemorySegment cipher = (MemorySegment) EVP_aes_256_gcm.invoke();
+//                if (cipher.address() == 0) {
+//                    LOGGER.error("EVP_aes_256_gcm failed to get GCM cipher for decryption");
+//                    throw new OpenSslException("EVP_aes_256_gcm failed");
+//                }
+//
+//                byte[] gcmIV = new byte[12];
+//                System.arraycopy(iv, 0, gcmIV, 0, 12);
+//
+//                MemorySegment keySeg = arena.allocateArray(ValueLayout.JAVA_BYTE, key);
+//                MemorySegment ivSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, gcmIV);
+//
+//                int rc = (int) EVP_DecryptInit_ex.invoke(ctx, cipher, MemorySegment.NULL, keySeg, ivSeg);
+//                if (rc != 1) {
+//                    LOGGER.error("EVP_DecryptInit_ex failed with return code: {}", rc);
+//                    throw new OpenSslException("EVP_DecryptInit_ex failed");
+//                }
+//
+//                int dataLen = ciphertext.length - 16;
+//                MemorySegment inSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, ciphertext);
+//                MemorySegment outSeg = arena.allocate(dataLen, 1);
+//                MemorySegment outLen = arena.allocate(ValueLayout.JAVA_INT);
+//
+//                rc = (int) EVP_DecryptUpdate.invoke(ctx, outSeg, outLen, inSeg, dataLen);
+//                if (rc != 1) {
+//                    LOGGER.error("EVP_DecryptUpdate failed with return code: {}", rc);
+//                    throw new OpenSslException("EVP_DecryptUpdate failed");
+//                }
+//
+//                byte[] tag = new byte[16];
+//                System.arraycopy(ciphertext, dataLen, tag, 0, 16);
+//                MemorySegment tagSeg = arena.allocateArray(ValueLayout.JAVA_BYTE, tag);
+//
+//                rc = (int) EVP_CIPHER_CTX_ctrl.invoke(ctx, EVP_CTRL_GCM_SET_TAG, 16, tagSeg);
+//                if (rc != 1) {
+//                    LOGGER.error("Failed to set GCM tag with return code: {}", rc);
+//                    throw new OpenSslException("Failed to set GCM tag");
+//                }
+//
+//                MemorySegment finalOut = arena.allocate(AES_BLOCK_SIZE, 1);
+//                MemorySegment finalLen = arena.allocate(ValueLayout.JAVA_INT);
+//
+//                rc = (int) EVP_DecryptFinal_ex.invoke(ctx, finalOut, finalLen);
+//                if (rc != 1) {
+//                    LOGGER.error("GCM tag verification failed with return code: {}", rc);
+//                    throw new OpenSslException("GCM tag verification failed");
+//                }
+//
+//                int bytesWritten = outLen.get(ValueLayout.JAVA_INT, 0);
+//                return outSeg.asSlice(0, bytesWritten).toArray(ValueLayout.JAVA_BYTE);
+//            } finally {
+//                EVP_CIPHER_CTX_free.invoke(ctx);
+//            }
+//        }
     }
 
     public static void freeCipherContext(MemorySegment ctx) {
