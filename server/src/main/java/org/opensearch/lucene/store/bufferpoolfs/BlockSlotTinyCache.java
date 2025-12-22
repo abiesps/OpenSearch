@@ -176,7 +176,10 @@ public class BlockSlotTinyCache {
      * @return the pinned block cache value
      * @throws IOException if unable to acquire the block
      */
-    public BlockCacheValue<RefCountedMemorySegment> acquireRefCountedValue(long blockOff, CacheHitHolder hitHolder, double minCacheMiss) throws IOException {
+    public BlockCacheValue<RefCountedMemorySegment> acquireRefCountedValue(long blockOff,
+                                                                           CacheHitHolder hitHolder,
+                                                                           double minCacheMiss,
+                                                                           boolean useIoUring) throws IOException {
 
         boolean shouldForceMiss = ThreadLocalRandom.current().nextDouble() < minCacheMiss;
         final long blockIdx = blockOff >>> CACHE_BLOCK_SIZE_POWER;
@@ -247,7 +250,7 @@ public class BlockSlotTinyCache {
             if (val == null || shouldForceMiss) {
                 // Not in cache at all - load from disk (decrypt, decompress if needed)
                 if (val == null) wasInCache = false;//Do not set readaheads based on forced misses.
-                val = cache.getOrLoad(key, shouldForceMiss);
+                val = cache.getOrLoad(key, shouldForceMiss, useIoUring);
                 // Had to load from disk
 
             } else {

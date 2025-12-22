@@ -58,25 +58,27 @@ public final class CaffeineBlockCache<T, V> implements BlockCache<T> {
     }
 
     /**
-    * Retrieves the cached block associated with the given key, or loads it if not present.
-    * <p>
-    * If the block is present in the cache, it is returned immediately.
-    * If the block is absent, the {@link BlockLoader} is invoked to load it. If loading succeeds,
-    * the loaded block is inserted into the cache and returned. If loading fails, an exception is thrown.
-    * <p>
-    * Any {@link IOException} thrown by the loader is propagated, while other exceptions are wrapped
-    * in {@link IOException}.
-    *
-    * @param key  The key identifying the block to retrieve or load.
-    * @return The cached or newly loaded block (never null).
-    * @throws IOException if the block loading fails with an IO-related error.
-    */
+     * Retrieves the cached block associated with the given key, or loads it if not present.
+     * <p>
+     * If the block is present in the cache, it is returned immediately.
+     * If the block is absent, the {@link BlockLoader} is invoked to load it. If loading succeeds,
+     * the loaded block is inserted into the cache and returned. If loading fails, an exception is thrown.
+     * <p>
+     * Any {@link IOException} thrown by the loader is propagated, while other exceptions are wrapped
+     * in {@link IOException}.
+     *
+     * @param key        The key identifying the block to retrieve or load.
+     * @param useIoUring
+     * @return The cached or newly loaded block (never null).
+     * @throws IOException if the block loading fails with an IO-related error.
+     */
     @Override
-    public BlockCacheValue<T> getOrLoad(BlockCacheKey key, boolean shouldForceCacheMiss) throws IOException {
+    public BlockCacheValue<T> getOrLoad(BlockCacheKey key, boolean shouldForceCacheMiss,
+                                        boolean useIoUring) throws IOException {
         try {
             BlockCacheValue<T> value = cache.get(key, k -> {
                 try {
-                    V segment = blockLoader.load(k);
+                    V segment = blockLoader.load(k, useIoUring);
                     @SuppressWarnings("unchecked")
                     BlockCacheValue<T> result = (BlockCacheValue<T>) segment;
                     return result;
@@ -91,7 +93,7 @@ public final class CaffeineBlockCache<T, V> implements BlockCache<T> {
             }
             //Only do IO don't touchCache
             if (shouldForceCacheMiss) {
-               blockLoader.forceIO(key);
+               blockLoader.forceIO(key, useIoUring);
             }
 
             return value;
@@ -109,7 +111,7 @@ public final class CaffeineBlockCache<T, V> implements BlockCache<T> {
         try {
             cache.get(key, k -> {
                 try {
-                    V segment = blockLoader.load(k);
+                    V segment = blockLoader.load(k, useIoUring);
                     // Direct cast - BlockLoader contract guarantees V is BlockCacheValue<T>
                     @SuppressWarnings("unchecked")
                     BlockCacheValue<T> result = (BlockCacheValue<T>) segment;

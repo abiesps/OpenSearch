@@ -534,7 +534,8 @@ public final class IndexModule {
         SIMPLEFS("simplefs"),
         FS("fs"),
         REMOTE_SNAPSHOT("remote_snapshot"),
-        IOURING_BUFFERPOOL("iouring_bufferpool");
+        IOURING_BUFFERPOOL("iouring_bufferpool"),
+        BUFFERPOOL("bufferpool");
 
         private final String settingsKey;
         private final boolean deprecated;
@@ -1007,6 +1008,7 @@ public final class IndexModule {
                 case MMAPFS:
                 case SIMPLEFS:
                 case IOURING_BUFFERPOOL:
+                case BUFFERPOOL:
                     factories.put(type.getSettingsKey(), DEFAULT_DIRECTORY_FACTORY);
                     break;
                 case REMOTE_SNAPSHOT:

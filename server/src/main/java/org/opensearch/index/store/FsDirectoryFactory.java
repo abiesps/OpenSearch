@@ -184,7 +184,37 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                     resources.getSegmentPool(),
                     directoryCache,
                     readaheadWorker,
-                    minCacheMiss
+                    minCacheMiss,
+                    true
+                );
+            case BUFFERPOOL:
+                PoolBuilder.PoolResources resources2 = ensurePoolInitialized(indexSettings);
+                BlockLoader<RefCountedMemorySegment> loader2 = new CryptoDirectIOBlockLoader(
+                    resources2.getSegmentPool()
+                );
+                CaffeineBlockCache<RefCountedMemorySegment, RefCountedMemorySegment> sharedCaffeineCache2 =
+                    (CaffeineBlockCache<RefCountedMemorySegment, RefCountedMemorySegment>) resources2.getBlockCache();
+
+                BlockCache<RefCountedMemorySegment> directoryCache2 = new CaffeineBlockCache<>(
+                    sharedCaffeineCache2.getCache(),
+                    loader2,
+                    resources2.getMaxCacheBlocks()
+                );
+                // Create per-shard worker with isolated queue but shared executor threads
+                // Limit concurrent drainers per shard to prevent overwhelming the shared pool
+                int maxRunners2 = Math.max(2, Runtime.getRuntime().availableProcessors() / 8);
+                Worker readaheadWorker2 = new QueuingWorker(READ_AHEAD_QUEUE_SIZE, maxRunners2, poolResources.getReadAheadExecutor(), directoryCache2);
+
+                double minCacheMiss2 = indexSettings.getSettings().getAsDouble("index.store.min.cache.miss.percent",0.0);
+                LOGGER.info("Simulating minCache miss percent of [{}]", minCacheMiss2);
+                return new BufferPoolDirectory(
+                    location,
+                    lockFactory,
+                    resources2.getSegmentPool(),
+                    directoryCache2,
+                    readaheadWorker2,
+                    minCacheMiss2,
+                    false
                 );
             case NIOFS:
                 return new NIOFSDirectory(location, lockFactory);

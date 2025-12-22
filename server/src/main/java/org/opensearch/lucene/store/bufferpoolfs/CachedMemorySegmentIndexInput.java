@@ -61,6 +61,7 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
     final long absoluteBaseOffset; // absolute position in original file where this input starts
     final boolean isSlice; // true for slices, false for main instances
     private final double minCacheMiss;
+    private final boolean useIOUring;
 
     long curPosition = 0L; // absolute position within this input (0-based)
     volatile boolean isOpen = true;
@@ -82,12 +83,12 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
      * Creates a new CachedMemorySegmentIndexInput instance.
      *
      * @param resourceDescription description of the resource for debugging
-     * @param path the file path being accessed
-     * @param length the length of the file in bytes
-     * @param blockCache the main block cache for storing memory segments
-     * @param readaheadManager manager for read-ahead operations
-     * @param readaheadContext context for read-ahead policy decisions
-     * @param blockSlotTinyCache L1 cache for recently accessed blocks
+     * @param path                the file path being accessed
+     * @param length              the length of the file in bytes
+     * @param blockCache          the main block cache for storing memory segments
+     * @param readaheadManager    manager for read-ahead operations
+     * @param readaheadContext    context for read-ahead policy decisions
+     * @param blockSlotTinyCache  L1 cache for recently accessed blocks
      * @return a new CachedMemorySegmentIndexInput instance
      */
     public static CachedMemorySegmentIndexInput newInstance(
@@ -98,8 +99,8 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
         ReadaheadManager readaheadManager,
         ReadaheadContext readaheadContext,
         BlockSlotTinyCache blockSlotTinyCache,
-        double minCacheMiss
-    ) {
+        double minCacheMiss,
+        boolean useIOUring) {
         CachedMemorySegmentIndexInput input = new CachedMemorySegmentIndexInput(
             resourceDescription,
             path,
@@ -110,7 +111,8 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
             readaheadContext,
             false,
             blockSlotTinyCache,
-            minCacheMiss
+            minCacheMiss,
+            useIOUring
         );
         try {
             input.seek(0L);
@@ -130,7 +132,8 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
         ReadaheadContext readaheadContext,
         boolean isSlice,
         BlockSlotTinyCache blockSlotTinyCache,
-        double minCacheMiss
+        double minCacheMiss,
+        boolean useIOUring
     ) {
         super(resourceDescription);
         this.path = path;
@@ -142,6 +145,7 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
         this.isSlice = isSlice;
         this.blockSlotTinyCache = blockSlotTinyCache;
         this.minCacheMiss = minCacheMiss;
+        this.useIOUring = useIOUring;
     }
 
     void ensureOpen() {
@@ -190,7 +194,7 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
 
         // BlockSlotTinyCache returns already-pinned values
         final BlockCacheValue<RefCountedMemorySegment> cacheValue = blockSlotTinyCache.acquireRefCountedValue(blockOffset, cacheHitHolder,
-            minCacheMiss);
+            minCacheMiss, useIOUring);
 
         if (cacheValue == null) {
             throw new IOException("Failed to acquire cache value for block at offset " + blockOffset);
@@ -762,7 +766,8 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
             readaheadContext,
             true,
             blockSlotTinyCache,
-            minCacheMiss
+            minCacheMiss,
+            useIOUring
         );
 
         try {

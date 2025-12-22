@@ -138,6 +138,40 @@ public class DirectIOReaderUtil {
         return alignedSegment.asSlice(offsetDelta, toCopy);
     }
 
+
+    public static MemorySegment directIOReadAligned(FileChannel channel, long offset, long length, Arena arena) throws IOException {
+        int alignment = Math.max(DIRECT_IO_ALIGNMENT, PanamaNativeAccess.getPageSize());
+
+        // Require alignment to be a power of 2
+        if ((alignment & (alignment - 1)) != 0) {
+            throw new IllegalArgumentException("Alignment must be a power of 2: " + alignment);
+        }
+
+        long alignedOffset = offset & ~(alignment - 1);        // Align down
+        long offsetDelta = offset - alignedOffset;
+        long adjustedLength = offsetDelta + length;
+        long alignedLength = (adjustedLength + alignment - 1) & ~(alignment - 1); // Align up
+
+        if (alignedLength > Integer.MAX_VALUE) {
+            throw new IOException("Aligned read size too large: " + alignedLength);
+        }
+
+        MemorySegment alignedSegment = arena.allocate(alignedLength, alignment);
+        ByteBuffer directBuffer = alignedSegment.asByteBuffer();
+
+        int  bytesRead = channel.read(directBuffer, alignedOffset);
+        if (bytesRead < 0) {
+            // EOF, return empty segment
+            return arena.allocate(0);
+        }
+
+        // Clamp to available
+        int available = Math.max(0, bytesRead - (int) offsetDelta);
+        int toCopy = (int) Math.min(length, available);
+
+        return alignedSegment.asSlice(offsetDelta, toCopy);
+    }
+
     /**
      * Reads data using standard buffered I/O (not Direct I/O).
      *

@@ -21,18 +21,14 @@ import one.jasyncfio.OpenOption;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.common.Randomness;
-import org.opensearch.lucene.store.DummyKeyProvider;
 import org.opensearch.lucene.store.block.RefCountedMemorySegment;
 import org.opensearch.lucene.store.block_cache.BlockCacheKey;
 import org.opensearch.lucene.store.cipher.EncryptionMetadataCache;
-import org.opensearch.lucene.store.cipher.MemorySegmentDecryptor;
 import org.opensearch.lucene.store.footer.EncryptionFooter;
 import org.opensearch.lucene.store.footer.EncryptionMetadataTrailer;
 import org.opensearch.lucene.store.key.HkdfKeyDerivation;
 import org.opensearch.lucene.store.key.KeyResolver;
 import org.opensearch.lucene.store.pool.Pool;
-
-import javax.crypto.spec.SecretKeySpec;
 
 import static org.opensearch.lucene.store.block_loader.DirectIOReaderUtil.directIOReadAligned;
 import static org.opensearch.lucene.store.bufferpoolfs.StaticConfigs.CACHE_BLOCK_MASK;
@@ -103,7 +99,7 @@ public class CryptoDirectIOBlockLoader implements BlockLoader<RefCountedMemorySe
     }
 
     @Override
-    public void forceIO(BlockCacheKey key) throws Exception {
+    public void forceIO(BlockCacheKey key, boolean useIoUring) throws Exception {
         Path filePath = key.filePath();
         long startOffset = key.offset();
         int blockCount = 1;
@@ -125,11 +121,18 @@ public class CryptoDirectIOBlockLoader implements BlockLoader<RefCountedMemorySe
         ) {
             RefCountedMemorySegment[] result = new RefCountedMemorySegment[(int) blockCount];
             long readLength = blockCount << CACHE_BLOCK_SIZE_POWER;
-            CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(filePath, eventExecutor,
-                OpenOption.DIRECT);
-            AsyncFile asyncFile = asyncFileCompletableFuture.get();
-            MemorySegment readBytes = directIOReadAligned(asyncFile, startOffset, readLength, arena);
-            asyncFile.close().get();//aggressively close file descriptor.
+            MemorySegment readBytes = null;
+            if (useIoUring) {
+                CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(filePath, eventExecutor,
+                    OpenOption.DIRECT);
+                AsyncFile asyncFile = asyncFileCompletableFuture.get();
+                readBytes = directIOReadAligned(asyncFile, startOffset, readLength, arena);
+                asyncFile.close().get();//aggressively close file descriptor.
+            } else {
+                FileChannel channel = FileChannel.open(filePath, StandardOpenOption.READ, DirectIOReaderUtil.getDirectOpenOption());
+                readBytes = directIOReadAligned(channel, startOffset, readLength, arena);
+                channel.close();
+            }
             long bytesRead = readBytes.byteSize();
             if (bytesRead == 0) {
                 throw new java.io.EOFException("Unexpected EOF or empty read at offset " + startOffset + " for file " + filePath);
@@ -139,7 +142,8 @@ public class CryptoDirectIOBlockLoader implements BlockLoader<RefCountedMemorySe
     }
 
     @Override
-    public RefCountedMemorySegment[] load(Path filePath, long startOffset, long blockCount, long poolTimeoutMs) throws Exception {
+    public RefCountedMemorySegment[] load(Path filePath, long startOffset, long blockCount, long poolTimeoutMs,
+                                          boolean useIOuring) throws Exception {
         if (!Files.exists(filePath)) {
             throw new NoSuchFileException(filePath.toString());
         }
@@ -158,11 +162,18 @@ public class CryptoDirectIOBlockLoader implements BlockLoader<RefCountedMemorySe
         try (
             Arena arena = Arena.ofConfined();
         ) {
-            CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(filePath, eventExecutor,
-                OpenOption.DIRECT);
-            AsyncFile asyncFile = asyncFileCompletableFuture.get();
-            MemorySegment readBytes = directIOReadAligned(asyncFile, startOffset, readLength, arena);
-            asyncFile.close().get();//aggressively close file descriptor.
+            MemorySegment readBytes = null;
+            if (useIOuring) {
+                CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(filePath, eventExecutor,
+                    OpenOption.DIRECT);
+                AsyncFile asyncFile = asyncFileCompletableFuture.get();
+                readBytes = directIOReadAligned(asyncFile, startOffset, readLength, arena);
+                asyncFile.close().get();//aggressively close file descriptor.
+            } else {
+                FileChannel channel = FileChannel.open(filePath, StandardOpenOption.READ, DirectIOReaderUtil.getDirectOpenOption());
+                readBytes = directIOReadAligned(channel, startOffset, readLength, arena);
+                channel.close();
+            }
             long bytesRead = readBytes.byteSize();
 
             if (bytesRead == 0) {

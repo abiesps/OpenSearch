@@ -33,11 +33,12 @@ public interface BlockCache<T> {
     /**
      * Returns the block, loading it via {@code BlockLoader} if absent.
      *
-     * @param key the cache key identifying the block
+     * @param key        the cache key identifying the block
+     * @param useIoUring
      * @return the block value, either from cache or newly loaded
      * @throws IOException if the block cannot be loaded
      */
-    BlockCacheValue<T> getOrLoad(BlockCacheKey key, boolean shouldForceCacheMiss) throws IOException;
+    BlockCacheValue<T> getOrLoad(BlockCacheKey key, boolean shouldForceCacheMiss, boolean useIoUring) throws IOException;
 
     /**
      * Asynchronously load the block into the cache if not present.

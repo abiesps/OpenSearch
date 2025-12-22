@@ -77,6 +77,7 @@ public class BufferPoolDirectory extends FSDirectory {
     private final Worker readAheadworker;
     private final Path dirPath;
     private final double minCacheMiss;
+    private final boolean iouring;
 
     public BufferPoolDirectory(
         Path path,
@@ -84,7 +85,8 @@ public class BufferPoolDirectory extends FSDirectory {
         Pool<RefCountedMemorySegment> memorySegmentPool,
         BlockCache<RefCountedMemorySegment> blockCache,
         Worker worker,
-        double minCacheMiss
+        double minCacheMiss,
+        boolean iouring
     )
         throws IOException {
         super(path, lockFactory);
@@ -93,6 +95,7 @@ public class BufferPoolDirectory extends FSDirectory {
         this.readAheadworker = worker;
         this.dirPath = getDirectory();
         this.minCacheMiss = minCacheMiss;
+        this.iouring = iouring;
     }
 
     @Override
@@ -101,16 +104,54 @@ public class BufferPoolDirectory extends FSDirectory {
         ensureCanRead(name);
 
         Path file = dirPath.resolve(name);
-        CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(file, eventExecutor,
-            OpenOption.DIRECT);
-        AsyncFile asyncFile = null;
-        try {
-             asyncFile = asyncFileCompletableFuture.get();
+        if (iouring) {
+            CompletableFuture<AsyncFile> asyncFileCompletableFuture = AsyncFile.open(file, eventExecutor,
+                OpenOption.DIRECT);
+            AsyncFile asyncFile = null;
+            try {
+                asyncFile = asyncFileCompletableFuture.get();
+                // Calculate content length with OSEF validation
+                //virtual threads will block here
+                long contentLength = asyncFile.size().get();
+                asyncFile.close().get();//close file after getting size
+                //Disable read aheads
+                ReadaheadManager readAheadManager = new ReadaheadManagerImpl(readAheadworker);
+                ReadaheadContext readAheadContext = readAheadManager.register(file, contentLength);
+                BlockSlotTinyCache pinRegistry = new BlockSlotTinyCache(blockCache, file);
+
+                return CachedMemorySegmentIndexInput
+                    .newInstance(
+                        "CachedMemorySegmentIndexInput(path=\"" + file + "\")",
+                        file,
+                        contentLength,
+                        blockCache,
+                        readAheadManager,
+                        readAheadContext,
+                        pinRegistry,
+                        minCacheMiss,
+                        iouring
+                    );
+            } catch (Exception e) {
+                if (asyncFile != null) {
+                    try {
+                        asyncFile.close().get();
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    } catch (ExecutionException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                }
+            }
+            return null;
+        } else {
+            long rawFileSize = Files.size(file);
+            if (rawFileSize == 0) {
+                throw new IOException("Cannot open empty file with DirectIO: " + file);
+            }
+
             // Calculate content length with OSEF validation
-            //virtual threads will block here
-             long contentLength = asyncFile.size().get();
-             asyncFile.close().get();//close file after getting size
-            //Disable read aheads
+            long contentLength = rawFileSize;
+
             ReadaheadManager readAheadManager = new ReadaheadManagerImpl(readAheadworker);
             ReadaheadContext readAheadContext = readAheadManager.register(file, contentLength);
             BlockSlotTinyCache pinRegistry = new BlockSlotTinyCache(blockCache, file);
@@ -119,25 +160,15 @@ public class BufferPoolDirectory extends FSDirectory {
                 .newInstance(
                     "CachedMemorySegmentIndexInput(path=\"" + file + "\")",
                     file,
-                contentLength,
+                    contentLength,
                     blockCache,
-                readAheadManager,
-                readAheadContext,
+                    readAheadManager,
+                    readAheadContext,
                     pinRegistry,
-                    minCacheMiss
+                    minCacheMiss,
+                    iouring
                 );
-        } catch (Exception e) {
-            if (asyncFile != null) {
-                try {
-                    asyncFile.close().get();
-                } catch (InterruptedException ex) {
-                    throw new RuntimeException(ex);
-                } catch (ExecutionException ex) {
-                    throw new RuntimeException(ex);
-                }
-            }
         }
-        return null;
     }
 
     @Override

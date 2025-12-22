@@ -105,7 +105,7 @@ public interface BlockLoader<T> {
      * @return array of loaded memory segments (length equals blockCount)
      * @throws Exception if loading fails due to I/O errors, pool pressure, or other issues
      */
-    T[] load(Path filePath, long startOffset, long blockCount, long poolTimeoutMs) throws Exception;
+    T[] load(Path filePath, long startOffset, long blockCount, long poolTimeoutMs, boolean useIOuring) throws Exception;
 
     /**
      * Load one or more blocks efficiently with default timeout (5 seconds for critical loads).
@@ -116,25 +116,26 @@ public interface BlockLoader<T> {
      * @return array of loaded memory segments (length equals blockCount)
      * @throws Exception if loading fails due to I/O errors, pool pressure, or other issues
      */
-    default T[] load(Path filePath, long startOffset, long blockCount) throws Exception {
-        return load(filePath, startOffset, blockCount, 5000); // 5 seconds for critical on-demand loads
+    default T[] load(Path filePath, long startOffset, long blockCount, boolean useIOuring) throws Exception {
+        return load(filePath, startOffset, blockCount, 5000, useIOuring); // 5 seconds for critical on-demand loads
     }
 
     /**
      * Loads a single block using the provided cache key.
      *
-     * @param key the cache key identifying the block to load
+     * @param key        the cache key identifying the block to load
+     * @param useIoUring
      * @return the loaded block data
      * @throws Exception if loading fails due to I/O errors, pool pressure, or other issues
      */
-    default T load(BlockCacheKey key) throws Exception {
-        T[] result = load(key.filePath(), key.offset(), 1);  // Load 1 block
+    default T load(BlockCacheKey key, boolean useIoUring) throws Exception {
+        T[] result = load(key.filePath(), key.offset(), 1, useIoUring);  // Load 1 block
         if (result.length == 0 || result[0] == null) {
             throw new IOException("Failed to load block for key: " + key);
         }
         return result[0];
     }
 
-    void forceIO(BlockCacheKey key) throws Exception;
+    void forceIO(BlockCacheKey key, boolean useIoUring) throws Exception;
 
 }
