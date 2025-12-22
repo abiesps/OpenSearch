@@ -96,10 +96,10 @@ public class WindowedReadAheadContext implements ReadaheadContext {
         final long currBlock = blockOffset >>> CACHE_BLOCK_SIZE_POWER;
 
         if (wasHit) {
-            handleCacheHit(currBlock);
+            //handleCacheHit(currBlock);
             return;
         }
-        handleCacheMiss(currBlock);
+        //handleCacheMiss(currBlock);
     }
 
     private void handleCacheHit(long currBlock) {
