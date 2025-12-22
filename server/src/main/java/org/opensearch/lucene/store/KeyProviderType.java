@@ -1,0 +1,32 @@
+/*
+ * Copyright OpenSearch Contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.opensearch.lucene.store;
+
+/**
+ * Enum representing key provider types for encryption.
+ *
+ * @opensearch.internal
+ */
+public enum KeyProviderType {
+    /**
+     * Dummy key provider for testing purposes.
+     */
+    DUMMY("dummy");
+
+    private final String value;
+
+    KeyProviderType(String value) {
+        this.value = value;
+    }
+
+    /**
+     * Returns the string value of this key provider type.
+     *
+     * @return the string value
+     */
+    public String getValue() {
+        return value;
+    }
+}
