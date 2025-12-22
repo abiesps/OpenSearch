@@ -143,6 +143,11 @@ public final class RefCountedMemorySegment implements BlockCacheValue<RefCounted
         }
     }
 
+//    @Override
+//    public int ref() {
+//        return (int) REFCOUNT.get(this);
+//    }
+
     /**
      * Returns the current reference count (for diagnostics/metrics only).
      *

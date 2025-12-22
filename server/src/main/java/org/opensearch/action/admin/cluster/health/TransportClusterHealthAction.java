@@ -64,6 +64,9 @@ import org.opensearch.core.common.util.CollectionUtils;
 import org.opensearch.discovery.ClusterManagerNotDiscoveredException;
 import org.opensearch.discovery.Discovery;
 import org.opensearch.index.IndexNotFoundException;
+import org.opensearch.index.store.FsDirectoryFactory;
+import org.opensearch.lucene.store.block.RefCountedMemorySegment;
+import org.opensearch.lucene.store.block_cache.BlockCache;
 import org.opensearch.node.NodeClosedException;
 import org.opensearch.tasks.Task;
 import org.opensearch.threadpool.ThreadPool;
@@ -271,6 +274,14 @@ public class TransportClusterHealthAction extends TransportClusterManagerNodeRea
         final Consumer<ClusterState> onNewClusterStateAfterDelay
     ) {
 
+        logger.info("Clearing bufferpool now");
+        if (FsDirectoryFactory.poolResources == null) {
+            logger.info("FsDirectoryFactory.poolResources is null ignoring bufferpool clearing");
+        } else {
+            BlockCache<RefCountedMemorySegment> blockCache =
+                FsDirectoryFactory.poolResources.getBlockCache();
+            blockCache.clearSafely();
+        }
         if (request.timeout().millis() == 0) {
             listener.onResponse(getResponse(request, currentState, waitCount, TimeoutState.ZERO_TIMEOUT));
             return;

@@ -111,7 +111,7 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
      * Lazily initialized on first cryptofs shard creation and shared across all CryptoBufferPoolFSDirectory instances.
      * This prevents resource allocation on dedicated master nodes which never create shards.
      */
-    private static volatile PoolBuilder.PoolResources poolResources;
+    public static volatile PoolBuilder.PoolResources poolResources;
 
     private static final Logger LOGGER = LogManager.getLogger(FsDirectoryFactory.class);
 

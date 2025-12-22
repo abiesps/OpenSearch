@@ -89,4 +89,7 @@ public interface BlockCacheValue<T> extends AutoCloseable {
      * When the reference count reaches zero, the underlying resource is freed/returned to pool.
      */
     void decRef();
+
+
+    int getRefCount();
 }

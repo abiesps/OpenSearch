@@ -105,4 +105,6 @@ public interface BlockCache<T> {
      * record cache stats
      */
     void recordStats();
+
+    void clearSafely();
 }

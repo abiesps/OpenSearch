@@ -26,7 +26,7 @@ indices.queries.cache.size: 0
 indices.requests.cache.size: 0
 indices.fielddata.cache.size: 0
 #index.store.type: simplefs
-#index.store.type: iouring_bufferpool
+index.store.type: iouring_bufferpool
 search.concurrent.max_slice_count: 10000
 #search.concurrent.max_slice_count: 4
 #thread_pool.search.size: 8

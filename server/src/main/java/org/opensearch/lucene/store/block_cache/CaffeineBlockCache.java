@@ -7,11 +7,15 @@ package org.opensearch.lucene.store.block_cache;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.opensearch.action.admin.cluster.health.TransportClusterHealthAction;
 import org.opensearch.common.SuppressForbidden;
 
 import com.github.benmanes.caffeine.cache.Cache;
@@ -39,6 +43,8 @@ public final class CaffeineBlockCache<T, V> implements BlockCache<T> {
 
     private final Cache<BlockCacheKey, BlockCacheValue<T>> cache;
     private final BlockLoader<V> blockLoader;
+
+    private static final Logger logger = LogManager.getLogger(CaffeineBlockCache.class);
 
     /**
      * Constructs a new CaffeineBlockCache with the specified cache and block loader.
@@ -111,7 +117,7 @@ public final class CaffeineBlockCache<T, V> implements BlockCache<T> {
         try {
             cache.get(key, k -> {
                 try {
-                    V segment = blockLoader.load(k, useIoUring);
+                    V segment = blockLoader.load(k, true);
                     // Direct cast - BlockLoader contract guarantees V is BlockCacheValue<T>
                     @SuppressWarnings("unchecked")
                     BlockCacheValue<T> result = (BlockCacheValue<T>) segment;
@@ -172,6 +178,26 @@ public final class CaffeineBlockCache<T, V> implements BlockCache<T> {
     }
 
     @Override
+    public void clearSafely() {
+        long initialSize = cache.estimatedSize();
+        ConcurrentMap<BlockCacheKey, BlockCacheValue<T>> map =
+            cache.asMap();
+        Set<BlockCacheKey> keys = new HashSet<>();
+        map.forEach((k, v) -> {
+            if (v.getRefCount() == 1) {
+                keys.add(k);
+            }
+        });
+        for (BlockCacheKey key : keys) {
+            cache.invalidate(key);
+        }
+        long newSize = initialSize - cache.estimatedSize();
+        logger.info("Total values removed from buffer cache: {} expected to be removed {}", newSize,
+            keys.size());
+        //
+    }
+
+    @Override
     public void clear() {
         // note: invalidateAll doesn't effect eviction count.
         cache.invalidateAll();
@@ -194,7 +220,7 @@ public final class CaffeineBlockCache<T, V> implements BlockCache<T> {
 
         try {
             // Use 50ms timeout for prefetch - fail fast when pool is under pressure
-            loadedBlocks = blockLoader.load(filePath, startOffset, blockCount, 50);
+            loadedBlocks = blockLoader.load(filePath, startOffset, blockCount, 50, true);
 
             for (int i = 0; i < loadedBlocks.length; i++) {
                 V block = loadedBlocks[i];
