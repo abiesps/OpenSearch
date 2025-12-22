@@ -183,7 +183,8 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                     lockFactory,
                     resources.getSegmentPool(),
                     directoryCache,
-                    readaheadWorker
+                    readaheadWorker,
+                    minCacheMiss
                 );
             case NIOFS:
                 return new NIOFSDirectory(location, lockFactory);
