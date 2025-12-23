@@ -112,7 +112,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
 
     private int batchedReduceSize = DEFAULT_BATCHED_REDUCE_SIZE;
 
-    private int maxConcurrentShardRequests = 0;
+    private int maxConcurrentShardRequests = 120;
 
     private Integer preFilterShardSize;
 
@@ -646,7 +646,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
      * cluster can be throttled with this number to reduce the cluster load. The default is {@code 5}
      */
     public int getMaxConcurrentShardRequests() {
-        return maxConcurrentShardRequests == 0 ? 5 : maxConcurrentShardRequests;
+        return maxConcurrentShardRequests == 0 ? 120 : maxConcurrentShardRequests;
     }
 
     /**
