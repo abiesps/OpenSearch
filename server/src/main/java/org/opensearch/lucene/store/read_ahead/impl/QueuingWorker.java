@@ -171,15 +171,15 @@ public final class QueuingWorker implements Worker {
         final boolean accepted = queue.offerLast(task);
         if (!accepted) {
             inFlight.remove(task);
-            LOGGER
-                .warn(
-                    "Readahead queue full, dropping task path={} off={} blocks={} qsz={}/{}",
-                    path,
-                    offset,
-                    blockCount,
-                    queue.size(),
-                    capacity
-                );
+//            LOGGER
+//                .warn(
+//                    "Readahead queue full, dropping task path={} off={} blocks={} qsz={}/{}",
+//                    path,
+//                    offset,
+//                    blockCount,
+//                    queue.size(),
+//                    capacity
+//                );
             return false;
         }
 
