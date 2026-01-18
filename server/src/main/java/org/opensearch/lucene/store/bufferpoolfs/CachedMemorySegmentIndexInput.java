@@ -211,7 +211,8 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
         currentBlock = cacheValue;
 
         // Notify readahead manager of access pattern
-        if (readaheadContext != null) {
+        if (readaheadContext != null && isSlice) {
+            //only do read aheads for clones and slices.
             readaheadContext.onAccess(blockOffset, cacheHitHolder.wasCacheHit());
         }
 
