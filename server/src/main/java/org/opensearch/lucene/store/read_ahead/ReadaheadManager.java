@@ -4,6 +4,8 @@
  */
 package org.opensearch.lucene.store.read_ahead;
 
+import org.apache.lucene.store.IOContext;
+
 import java.io.Closeable;
 import java.nio.file.Path;
 
@@ -28,11 +30,12 @@ public interface ReadaheadManager extends Closeable {
      * for the specified file. The context maintains state needed for readahead decision making
      * such as access history, current position, and readahead policy state.
      *
-     * @param path the file path to register for readahead monitoring
+     * @param path       the file path to register for readahead monitoring
      * @param fileLength the total length of the file in bytes for boundary checking
+     * @param context
      * @return a readahead context for tracking access patterns and triggering readahead operations
      */
-    ReadaheadContext register(Path path, long fileLength);
+    ReadaheadContext register(Path path, long fileLength, IOContext context);
 
     /**
      * Cancel all readahead for a given stream context.

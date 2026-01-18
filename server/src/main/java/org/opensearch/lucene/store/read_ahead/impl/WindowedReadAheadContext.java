@@ -8,10 +8,15 @@ package org.opensearch.lucene.store.read_ahead.impl;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.file.Path;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.store.DataAccessHint;
+import org.apache.lucene.store.FileTypeHint;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.PreloadHint;
 import org.opensearch.lucene.store.read_ahead.ReadaheadContext;
 import org.opensearch.lucene.store.read_ahead.ReadaheadPolicy;
 import org.opensearch.lucene.store.read_ahead.Worker;
@@ -51,6 +56,7 @@ public class WindowedReadAheadContext implements ReadaheadContext {
     private volatile long lastSignalNanos = 0;
     private volatile boolean signalPending = false;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final IOContext ioContext;
 
     private static final VarHandle DESIRED_END_VH;
     static {
@@ -61,22 +67,26 @@ public class WindowedReadAheadContext implements ReadaheadContext {
         }
     }
 
-    private WindowedReadAheadContext(Path path, long fileLength, Worker worker, WindowedReadaheadPolicy policy, Runnable signalCallback) {
+    private WindowedReadAheadContext(Path path, long fileLength, Worker worker,
+                                     WindowedReadaheadPolicy policy,
+                                     Runnable signalCallback, IOContext context) {
         this.path = path;
         this.worker = worker;
         this.policy = policy;
         this.signalCallback = signalCallback;
         this.lastFileSeg = Math.max(0L, (fileLength - 1) >>> CACHE_BLOCK_SIZE_POWER);
+        this.ioContext = context;
     }
 
     /**
      * Factory method to create a new WindowedReadAheadContext.
      *
-     * @param path the file path for this context
-     * @param fileLength the length of the file
-     * @param worker the worker thread pool for scheduling readahead tasks
-     * @param config the readahead configuration
+     * @param path           the file path for this context
+     * @param fileLength     the length of the file
+     * @param worker         the worker thread pool for scheduling readahead tasks
+     * @param config         the readahead configuration
      * @param signalCallback callback to invoke when readahead work is available
+     * @param context
      * @return a new WindowedReadAheadContext instance
      */
     public static WindowedReadAheadContext build(
@@ -84,16 +94,24 @@ public class WindowedReadAheadContext implements ReadaheadContext {
         long fileLength,
         Worker worker,
         WindowedReadAheadConfig config,
-        Runnable signalCallback
-    ) {
+        Runnable signalCallback,
+        IOContext context) {
+        //256kb minimum read ahead IO
         var policy = new WindowedReadaheadPolicy(path, config.initialWindow(), config.maxWindowSegments(), config.randomAccessThreshold());
-        return new WindowedReadAheadContext(path, fileLength, worker, policy, signalCallback);
+        return new WindowedReadAheadContext(path, fileLength, worker, policy, signalCallback, context);
     }
 
+    ///context.withHints(FileTypeHint.DATA, DataAccessHint.RANDOM)
     // hot path. keep it always optimized and fast
     @Override
     public void onAccess(long blockOffset, boolean wasHit) {
         final long currBlock = blockOffset >>> CACHE_BLOCK_SIZE_POWER;
+        Set<IOContext.FileOpenHint> hints = ioContext.hints();
+        if (hints.contains(DataAccessHint.RANDOM) || hints.contains(FileTypeHint.INDEX)
+         || hints.contains(PreloadHint.INSTANCE) ) {
+            //Don't do read aheads for random and index files and files with preload hints.
+            return;
+        }
 
         if (wasHit) {
             handleCacheHit(currBlock);

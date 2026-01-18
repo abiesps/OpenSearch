@@ -4,6 +4,8 @@
  */
 package org.opensearch.lucene.store.read_ahead;
 
+import org.apache.lucene.store.IOContext;
+
 import java.io.Closeable;
 
 /**
@@ -135,6 +137,8 @@ public interface ReadaheadContext extends Closeable {
     default boolean hasQueuedWork() {
         return false;
     }
+
+    default IOContext applicationIOContext() { return IOContext.DEFAULT; }
 
     @Override
     void close();

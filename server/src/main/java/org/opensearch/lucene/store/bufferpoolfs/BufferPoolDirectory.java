@@ -5,16 +5,11 @@
 package org.opensearch.lucene.store.bufferpoolfs;
 
 import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.security.Provider;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicLong;
 
 import one.jasyncfio.AsyncFile;
 import one.jasyncfio.OpenOption;
@@ -30,12 +25,6 @@ import org.opensearch.lucene.store.block.RefCountedMemorySegment;
 import org.opensearch.lucene.store.block_cache.BlockCache;
 import org.opensearch.lucene.store.block_cache.CaffeineBlockCache;
 import org.opensearch.lucene.store.block_cache.FileBlockCacheKey;
-import org.opensearch.lucene.store.block_loader.BlockLoader;
-import org.opensearch.lucene.store.block_loader.CryptoDirectIOBlockLoader;
-import org.opensearch.lucene.store.cipher.EncryptionMetadataCache;
-import org.opensearch.lucene.store.footer.EncryptionFooter;
-import org.opensearch.lucene.store.footer.EncryptionMetadataTrailer;
-import org.opensearch.lucene.store.key.KeyResolver;
 import org.opensearch.lucene.store.pool.Pool;
 import org.opensearch.lucene.store.read_ahead.ReadaheadContext;
 import org.opensearch.lucene.store.read_ahead.ReadaheadManager;
@@ -115,10 +104,9 @@ public class BufferPoolDirectory extends FSDirectory {
                 long contentLength = asyncFile.size().get();
                 asyncFile.close().get();//close file after getting size
                 //Disable read aheads
-                ReadaheadManager readAheadManager = new ReadaheadManagerImpl(readAheadworker);
-                ReadaheadContext readAheadContext = readAheadManager.register(file, contentLength);
+                ReadaheadManager readAheadManager = new ReadaheadManagerImpl(readAheadworker, context);
+                ReadaheadContext readAheadContext = readAheadManager.register(file, contentLength, context);
                 BlockSlotTinyCache pinRegistry = new BlockSlotTinyCache(blockCache, file);
-
                 return CachedMemorySegmentIndexInput
                     .newInstance(
                         "CachedMemorySegmentIndexInput(path=\"" + file + "\")",
@@ -153,7 +141,7 @@ public class BufferPoolDirectory extends FSDirectory {
             long contentLength = rawFileSize;
 
             ReadaheadManager readAheadManager = new ReadaheadManagerImpl(readAheadworker);
-            ReadaheadContext readAheadContext = readAheadManager.register(file, contentLength);
+            ReadaheadContext readAheadContext = readAheadManager.register(file, contentLength, context);
             BlockSlotTinyCache pinRegistry = new BlockSlotTinyCache(blockCache, file);
 
             return CachedMemorySegmentIndexInput

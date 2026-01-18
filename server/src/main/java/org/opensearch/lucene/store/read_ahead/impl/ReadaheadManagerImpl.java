@@ -11,6 +11,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.store.IOContext;
 import org.opensearch.lucene.store.read_ahead.ReadaheadContext;
 import org.opensearch.lucene.store.read_ahead.ReadaheadManager;
 import org.opensearch.lucene.store.read_ahead.Worker;
@@ -47,6 +48,7 @@ public class ReadaheadManagerImpl implements ReadaheadManager {
 
     private final Worker worker;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private  IOContext ioContext;
     private ReadaheadContext context;
 
     // Lock to ensure atomicity of signal + processWork
@@ -63,6 +65,11 @@ public class ReadaheadManagerImpl implements ReadaheadManager {
      */
     public ReadaheadManagerImpl(Worker worker) {
         this.worker = worker;
+    }
+
+    public ReadaheadManagerImpl(Worker worker, IOContext context) {
+        this.worker = worker;
+        this.ioContext = context;
     }
 
     /**
@@ -84,14 +91,14 @@ public class ReadaheadManagerImpl implements ReadaheadManager {
     }
 
     @Override
-    public synchronized ReadaheadContext register(Path path, long fileLength) {
+    public synchronized ReadaheadContext register(Path path, long fileLength, IOContext context) {
         if (closed.get())
             throw new IllegalStateException("ReadaheadManager is closed");
-        if (context != null)
+        if (this.context != null)
             throw new IllegalStateException("ReadaheadContext already registered");
 
         WindowedReadAheadConfig config = WindowedReadAheadConfig.defaultConfig();
-        this.context = WindowedReadAheadContext.build(path, fileLength, worker, config, this::signal);
+        this.context = WindowedReadAheadContext.build(path, fileLength, worker, config, this::signal, context);
 
         return this.context;
     }
