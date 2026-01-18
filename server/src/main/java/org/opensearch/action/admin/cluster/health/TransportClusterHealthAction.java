@@ -280,6 +280,7 @@ public class TransportClusterHealthAction extends TransportClusterManagerNodeRea
         final int waitCount,
         final Consumer<ClusterState> onNewClusterStateAfterDelay
     ) {
+
         if (COLD_PATH) {
             logger.info("Clearing bufferpool now");
             if (FsDirectoryFactory.poolResources == null) {
