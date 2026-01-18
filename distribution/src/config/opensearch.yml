@@ -28,6 +28,7 @@ indices.fielddata.cache.size: 0
 #index.store.type: simplefs
 index.store.type: iouring_bufferpool
 search.concurrent.max_slice_count: 10000
+index.store.min.cache.miss.percent: 0.20
 #search.concurrent.max_slice_count: 4
 #thread_pool.search.size: 8
 #thread_pool.index_searcher.size: 8
