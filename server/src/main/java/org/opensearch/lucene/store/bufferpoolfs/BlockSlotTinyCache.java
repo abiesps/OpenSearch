@@ -186,14 +186,18 @@ public class BlockSlotTinyCache {
 
         // TIER 1: Thread-local MRU check (fastest path - zero synchronization)
         LastAccessed last = lastAccessed.get();
-        if (last.blockIdx == blockIdx && !shouldForceMiss) {
+        boolean actualCacheHit = false;
+        if (last.blockIdx == blockIdx) {
             BlockCacheValue<RefCountedMemorySegment> v = last.val;
             // Generation check ensures the pooled segment wasn't recycled and reused.
             if (v != null && v.value().getGeneration() == last.generation && v.tryPin()) {
                 if (hitHolder != null) {
                     hitHolder.setWasCacheHit(true); // L1 hit
+                    actualCacheHit = true;//cache hit
                 }
-                return v;
+                if (!shouldForceMiss) {
+                    return v;
+                }
             }
         }
 

@@ -21,6 +21,7 @@ import org.opensearch.lucene.store.block_cache.BlockCache;
 import org.opensearch.lucene.store.block_cache.BlockCacheValue;
 import org.opensearch.lucene.store.read_ahead.ReadaheadContext;
 import org.opensearch.lucene.store.read_ahead.ReadaheadManager;
+import org.opensearch.transport.TcpHeader;
 
 import static org.opensearch.lucene.store.bufferpoolfs.StaticConfigs.CACHE_BLOCK_MASK;
 import static org.opensearch.lucene.store.bufferpoolfs.StaticConfigs.CACHE_BLOCK_SIZE;
@@ -213,7 +214,10 @@ public class CachedMemorySegmentIndexInput extends IndexInput implements RandomA
         // Notify readahead manager of access pattern
         if (readaheadContext != null && isSlice) {
             //only do read aheads for clones and slices.
-            readaheadContext.onAccess(blockOffset, cacheHitHolder.wasCacheHit());
+            if (Thread.currentThread().isVirtual()) {
+                ///Indirect way to not do any read aheads on anything other than queries.
+                readaheadContext.onAccess(blockOffset, cacheHitHolder.wasCacheHit());
+            }
         }
 
         lastOffsetInBlock = offsetInBlock;

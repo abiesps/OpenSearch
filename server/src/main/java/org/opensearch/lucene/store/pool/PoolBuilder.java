@@ -233,7 +233,8 @@ public final class PoolBuilder {
 
         // Create shared read-ahead executor service
         // Each per-shard worker will have its own queue but share these threads
-        int threads = Math.max(8, Runtime.getRuntime().availableProcessors() / 4);
+        int threads = 2*Runtime.getRuntime().availableProcessors();//Increase read ahead threads count
+            //Math.max(8, Runtime.getRuntime().availableProcessors() / 4);
         AtomicInteger threadId = new AtomicInteger();
         ExecutorService readAheadExecutor = Executors.newFixedThreadPool(threads, r -> {
             Thread t = new Thread(r, "readahead-worker-" + threadId.incrementAndGet());

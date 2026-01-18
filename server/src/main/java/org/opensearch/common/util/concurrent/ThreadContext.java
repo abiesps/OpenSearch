@@ -119,6 +119,7 @@ public final class ThreadContext implements Writeable {
     private final int maxWarningHeaderCount;
     private final long maxWarningHeaderSize;
     private final List<ThreadContextStatePropagator> propagators;
+    private static final String EXECUTION_CONTEXT_STRING = "execution.context";
 
     /**
      * Creates a new ThreadContext instance
