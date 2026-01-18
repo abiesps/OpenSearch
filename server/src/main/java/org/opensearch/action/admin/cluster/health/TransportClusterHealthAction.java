@@ -266,6 +266,13 @@ public class TransportClusterHealthAction extends TransportClusterManagerNodeRea
         }
     }
 
+    static boolean COLD_PATH = false;
+    static {
+        String coldPathStr = System.getProperty("COLD_PATH");
+        if (coldPathStr != null) {
+            COLD_PATH = Boolean.parseBoolean(coldPathStr);//default is false;
+        }
+    }
     private void executeHealth(
         final ClusterHealthRequest request,
         final ClusterState currentState,
@@ -274,13 +281,15 @@ public class TransportClusterHealthAction extends TransportClusterManagerNodeRea
         final Consumer<ClusterState> onNewClusterStateAfterDelay
     ) {
 
-        logger.info("Clearing bufferpool now");
-        if (FsDirectoryFactory.poolResources == null) {
-            logger.info("FsDirectoryFactory.poolResources is null ignoring bufferpool clearing");
-        } else {
-            BlockCache<RefCountedMemorySegment> blockCache =
-                FsDirectoryFactory.poolResources.getBlockCache();
-            blockCache.clearSafely();
+        if (COLD_PATH) {
+            logger.info("Clearing bufferpool now");
+            if (FsDirectoryFactory.poolResources == null) {
+                logger.info("FsDirectoryFactory.poolResources is null ignoring bufferpool clearing");
+            } else {
+                BlockCache<RefCountedMemorySegment> blockCache =
+                    FsDirectoryFactory.poolResources.getBlockCache();
+                blockCache.clearSafely();
+            }
         }
         if (request.timeout().millis() == 0) {
             listener.onResponse(getResponse(request, currentState, waitCount, TimeoutState.ZERO_TIMEOUT));
