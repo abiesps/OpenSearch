@@ -98,7 +98,7 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
         } // can we set on both - node and index level, some nodes might be running on NFS so they might need simple rather than native
     }, Property.IndexScope, Property.NodeScope);
 
-    static boolean USE_IOURING = false;
+    static boolean USE_IOURING = true;
     static {
         String useIOuringStr = System.getenv("USE_IOURING");
         if (useIOuringStr != null) {

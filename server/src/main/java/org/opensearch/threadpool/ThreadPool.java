@@ -244,7 +244,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         this(settings, null, customBuilders);
     }
 
-    public static boolean useVirtualThreads = false;
+    public static boolean useVirtualThreads = true;
     static {
         String useVirtualThreadsStr = System.getenv("USE_VIRTUAL_THREADS");
         if (useVirtualThreadsStr != null) {
