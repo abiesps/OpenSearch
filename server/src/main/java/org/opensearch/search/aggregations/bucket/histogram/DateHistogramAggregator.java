@@ -241,6 +241,9 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
             // Optimized path for single-valued fields
             singleValuedCollectorsUsed++;
             return new LeafBucketCollectorBase(sub, values) {
+                final int[] docBuffer = new int[4096];
+                final long[] valueBuffer = new long[4096];
+
                 @Override
                 public void collect(int doc, long owningBucketOrd) throws IOException {
                     if (singleton.advanceExact(doc)) {
@@ -251,7 +254,25 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
 
                 @Override
                 public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                    super.collect(stream, owningBucketOrd);
+                    for (int count = stream.intoArray(docBuffer);
+                         count != 0;
+                         count = stream.intoArray(docBuffer)) {
+                        if (singleton.advanceExact(docBuffer[0])
+                                && singleton.docIDRunEnd() > docBuffer[count - 1]) {
+                            singleton.longValues(count, docBuffer, valueBuffer, 0L);
+                            for (int i = 0; i < count; i++) {
+                                long rounded = preparedRounding.round(valueBuffer[i]);
+                                collectValue(sub, docBuffer[i], owningBucketOrd, rounded);
+                            }
+                        } else {
+                            for (int i = 0; i < count; i++) {
+                                if (singleton.advanceExact(docBuffer[i])) {
+                                    long rounded = preparedRounding.round(singleton.longValue());
+                                    collectValue(sub, docBuffer[i], owningBucketOrd, rounded);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 @Override
