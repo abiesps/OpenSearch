@@ -10,6 +10,7 @@ package org.opensearch.search.aggregations.bucket.terms;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.search.DocIdStream;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.NumericUtils;
 import org.apache.lucene.util.PriorityQueue;
@@ -238,6 +239,13 @@ public class MultiTermsAggregator extends DeferableBucketAggregator implements S
             @Override
             public void collect(int doc, long owningBucketOrd) throws IOException {
                 collector.apply(doc, owningBucketOrd);
+            }
+
+            @Override
+            public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                // Drain DocIdStream via forEach and call per-doc apply() for each doc.
+                // This enables the DocIdStream infrastructure path even without ordinal prefetch.
+                stream.forEach((doc) -> collector.apply(doc, owningBucketOrd));
             }
         };
     }
