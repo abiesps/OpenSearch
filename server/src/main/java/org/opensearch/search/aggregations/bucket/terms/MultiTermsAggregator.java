@@ -10,6 +10,7 @@ package org.opensearch.search.aggregations.bucket.terms;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.search.DocIdStream;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.NumericUtils;
 import org.apache.lucene.util.PriorityQueue;
@@ -234,10 +235,31 @@ public class MultiTermsAggregator extends DeferableBucketAggregator implements S
     @Override
     protected LeafBucketCollector getLeafCollector(LeafReaderContext ctx, LeafBucketCollector sub) throws IOException {
         MultiTermsValuesSourceCollector collector = multiTermsValue.getValues(ctx, bucketOrds, this, sub);
+        // TODO [Task 11.1]: For keyword fields, add an ordinal-based InternalValuesSource factory
+        // that returns ordinals as TermValue<Long> instead of BytesRef values. This would eliminate
+        // per-doc lookupOrd calls during collection, deferring them to result building.
+        // The key benefit for MultiTermsAggregator comes from the ordinal prefetch on the individual
+        // keyword fields (which is already handled by the SortedDocValues.ordValues prefetch in the
+        // per-doc path).
         return new LeafBucketCollector() {
+            private final int[] docBuffer = new int[4096];
+
             @Override
             public void collect(int doc, long owningBucketOrd) throws IOException {
                 collector.apply(doc, owningBucketOrd);
+            }
+
+            @Override
+            public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                // Drain DocIdStream into buffer and call per-doc apply() for each doc.
+                // This enables the DocIdStream infrastructure path even without ordinal prefetch.
+                // TODO [Task 11.2]: For keyword fields with ordinal-based InternalValuesSource,
+                // bulk-read ordinals via ordValues() before encoding composite keys.
+                for (int count = stream.intoArray(docBuffer); count != 0; count = stream.intoArray(docBuffer)) {
+                    for (int i = 0; i < count; i++) {
+                        collector.apply(docBuffer[i], owningBucketOrd);
+                    }
+                }
             }
         };
     }
@@ -384,6 +406,11 @@ public class MultiTermsAggregator extends DeferableBucketAggregator implements S
     }
 
     private static List<Object> decode(BytesRef bytesRef) {
+        // TODO [Task 11.3]: For the ordinal-based collection path (Task 11.1), composite keys
+        // would contain ordinals (Long values) for keyword fields instead of BytesRef values.
+        // This decode method would need to detect ordinal-encoded keyword fields and resolve
+        // them to BytesRef via lookupOrd. The bulk lookupOrd prefetch (via prefetchOrdinals)
+        // should be called before the decode loop to pre-warm the cache for all top-N ordinals.
         try (StreamInput input = new BytesArray(bytesRef).streamInput()) {
             return input.readList(StreamInput::readGenericValue);
         } catch (IOException e) {
@@ -591,6 +618,32 @@ public class MultiTermsAggregator extends DeferableBucketAggregator implements S
      * @opensearch.internal
      */
     static class InternalValuesSourceFactory {
+        // TODO [Task 11.1]: Add ordinalValuesSource factory method for keyword fields that returns
+        // ordinals as TermValue<Long> instead of BytesRef values. This would eliminate per-doc
+        // lookupOrd calls during collection:
+        //
+        // static InternalValuesSource ordinalValuesSource(ValuesSource.Bytes.WithOrdinals valuesSource) {
+        //     return ctx -> {
+        //         SortedDocValues singleValues = DocValues.unwrapSingleton(valuesSource.ordinalsValues(ctx));
+        //         if (singleValues != null) {
+        //             return doc -> {
+        //                 if (!singleValues.advanceExact(doc)) return Collections.emptyList();
+        //                 return List.of(TermValue.of((long) singleValues.ordValue()));
+        //             };
+        //         }
+        //         SortedSetDocValues setValues = valuesSource.ordinalsValues(ctx);
+        //         return doc -> {
+        //             if (!setValues.advanceExact(doc)) return Collections.emptyList();
+        //             int c = setValues.docValueCount();
+        //             List<TermValue<?>> result = new ArrayList<>(c);
+        //             for (int i = 0; i < c; i++) {
+        //                 result.add(TermValue.of(setValues.nextOrd()));
+        //             }
+        //             return result;
+        //         };
+        //     };
+        // }
+
         static InternalValuesSource bytesValuesSource(ValuesSource valuesSource, IncludeExclude.StringFilter includeExclude) {
             return ctx -> {
                 SortedBinaryDocValues values = valuesSource.bytesValues(ctx);

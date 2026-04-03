@@ -264,6 +264,9 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                  * common and marginally faster.
                  */
                 return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, globalOrds) {
+                    private final int[] docBuffer = new int[4096];
+                    private final int[] ordBuffer = new int[4096];
+
                     @Override
                     public void collect(int doc, long owningBucketOrd) throws IOException {
                         if (false == singleValues.advanceExact(doc)) {
@@ -275,7 +278,16 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
                     @Override
                     public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                        super.collect(stream, owningBucketOrd);
+                        for (int count = stream.intoArray(docBuffer);
+                             count != 0;
+                             count = stream.intoArray(docBuffer)) {
+                            singleValues.ordValues(count, docBuffer, ordBuffer, -1);
+                            for (int i = 0; i < count; i++) {
+                                if (ordBuffer[i] != -1) {
+                                    collectionStrategy.collectGlobalOrd(owningBucketOrd, docBuffer[i], ordBuffer[i], sub);
+                                }
+                            }
+                        }
                     }
 
                     @Override
@@ -285,6 +297,9 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                 });
             }
             return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, globalOrds) {
+                private final int[] docBuffer = new int[4096];
+                private final int[] ordBuffer = new int[4096];
+
                 @Override
                 public void collect(int doc, long owningBucketOrd) throws IOException {
                     if (false == singleValues.advanceExact(doc)) {
@@ -299,7 +314,16 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
                 @Override
                 public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                    super.collect(stream, owningBucketOrd);
+                    for (int count = stream.intoArray(docBuffer);
+                         count != 0;
+                         count = stream.intoArray(docBuffer)) {
+                        singleValues.ordValues(count, docBuffer, ordBuffer, -1);
+                        for (int i = 0; i < count; i++) {
+                            if (ordBuffer[i] != -1 && acceptedGlobalOrdinals.test(ordBuffer[i])) {
+                                collectionStrategy.collectGlobalOrd(owningBucketOrd, docBuffer[i], ordBuffer[i], sub);
+                            }
+                        }
+                    }
                 }
 
                 @Override
@@ -315,6 +339,10 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
              * common and marginally faster.
              */
             return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, globalOrds) {
+                private final int[] docBuffer = new int[4096];
+                private final long[] ordOutputBuffer = new long[16384];
+                private final int[] ordCountBuffer = new int[4096];
+
                 @Override
                 public void collect(int doc, long owningBucketOrd) throws IOException {
                     if (false == globalOrds.advanceExact(doc)) {
@@ -329,7 +357,18 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
                 @Override
                 public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                    super.collect(stream, owningBucketOrd);
+                    for (int count = stream.intoArray(docBuffer);
+                         count != 0;
+                         count = stream.intoArray(docBuffer)) {
+                        int totalOrds = globalOrds.ordValues(count, docBuffer, ordOutputBuffer, ordCountBuffer);
+                        int ordIdx = 0;
+                        for (int i = 0; i < count; i++) {
+                            for (int j = 0; j < ordCountBuffer[i]; j++) {
+                                long globalOrd = ordOutputBuffer[ordIdx++];
+                                collectionStrategy.collectGlobalOrd(owningBucketOrd, docBuffer[i], globalOrd, sub);
+                            }
+                        }
+                    }
                 }
 
                 @Override
@@ -339,6 +378,10 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
             });
         }
         return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, globalOrds) {
+            private final int[] docBuffer = new int[4096];
+            private final long[] ordOutputBuffer = new long[16384];
+            private final int[] ordCountBuffer = new int[4096];
+
             @Override
             public void collect(int doc, long owningBucketOrd) throws IOException {
                 if (false == globalOrds.advanceExact(doc)) {
@@ -356,7 +399,20 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
             @Override
             public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                super.collect(stream, owningBucketOrd);
+                for (int count = stream.intoArray(docBuffer);
+                     count != 0;
+                     count = stream.intoArray(docBuffer)) {
+                    int totalOrds = globalOrds.ordValues(count, docBuffer, ordOutputBuffer, ordCountBuffer);
+                    int ordIdx = 0;
+                    for (int i = 0; i < count; i++) {
+                        for (int j = 0; j < ordCountBuffer[i]; j++) {
+                            long globalOrd = ordOutputBuffer[ordIdx++];
+                            if (acceptedGlobalOrdinals.test(globalOrd)) {
+                                collectionStrategy.collectGlobalOrd(owningBucketOrd, docBuffer[i], globalOrd, sub);
+                            }
+                        }
+                    }
+                }
             }
 
             @Override
@@ -580,6 +636,9 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
             if (singleValues != null) {
                 segmentsWithSingleValuedOrds++;
                 return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, segmentOrds) {
+                    private final int[] docBuffer = new int[4096];
+                    private final int[] ordBuffer = new int[4096];
+
                     @Override
                     public void collect(int doc, long owningBucketOrd) throws IOException {
                         assert owningBucketOrd == 0;
@@ -593,7 +652,18 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
                     @Override
                     public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                        super.collect(stream, owningBucketOrd);
+                        assert owningBucketOrd == 0;
+                        for (int count = stream.intoArray(docBuffer);
+                             count != 0;
+                             count = stream.intoArray(docBuffer)) {
+                            singleValues.ordValues(count, docBuffer, ordBuffer, -1);
+                            for (int i = 0; i < count; i++) {
+                                if (ordBuffer[i] != -1) {
+                                    long docCount = docCountProvider.getDocCount(docBuffer[i]);
+                                    segmentDocCounts.increment(ordBuffer[i] + 1, docCount);
+                                }
+                            }
+                        }
                     }
 
                     @Override
@@ -604,6 +674,10 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
             }
             segmentsWithMultiValuedOrds++;
             return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, segmentOrds) {
+                private final int[] docBuffer = new int[4096];
+                private final long[] ordOutputBuffer = new long[16384];
+                private final int[] ordCountBuffer = new int[4096];
+
                 @Override
                 public void collect(int doc, long owningBucketOrd) throws IOException {
                     assert owningBucketOrd == 0;
@@ -620,7 +694,20 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
                 @Override
                 public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                    super.collect(stream, owningBucketOrd);
+                    assert owningBucketOrd == 0;
+                    for (int count = stream.intoArray(docBuffer);
+                         count != 0;
+                         count = stream.intoArray(docBuffer)) {
+                        int totalOrds = segmentOrds.ordValues(count, docBuffer, ordOutputBuffer, ordCountBuffer);
+                        int ordIdx = 0;
+                        for (int i = 0; i < count; i++) {
+                            for (int j = 0; j < ordCountBuffer[i]; j++) {
+                                long segmentOrd = ordOutputBuffer[ordIdx++];
+                                long docCount = docCountProvider.getDocCount(docBuffer[i]);
+                                segmentDocCounts.increment(segmentOrd + 1, docCount);
+                            }
+                        }
+                    }
                 }
 
                 @Override
@@ -936,6 +1023,8 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                     PriorityQueue<TB> ordered = buildPriorityQueue(size);
                     final int finalOrdIdx = ordIdx;
                     BucketUpdater<TB> updater = bucketUpdater(owningBucketOrds[ordIdx]);
+                    // Prefetch term dictionary data before forEach if needed (e.g., for significant_terms)
+                    prefetchBeforeForEach(owningBucketOrds[ordIdx]);
                     // for each provides the bucket ord and key value for the owning bucket
                     collectionStrategy.forEach(owningBucketOrds[ordIdx], new BucketInfoConsumer() {
                         TB spare = null;
@@ -955,6 +1044,8 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
                     // Get the top buckets
                     topBucketsPerOwningOrd[ordIdx] = buildBuckets(ordered.size());
+                    // Prefetch term dictionary data for the top-N ordinals before lookupOrd calls
+                    prefetchBeforeConversion(ordered);
                     if (isKeyOrder(order)) {
                         for (int i = ordered.size() - 1; i >= 0; --i) {
                             topBucketsPerOwningOrd[ordIdx][i] = convertTempBucketToRealBucket(ordered.pop());
@@ -975,6 +1066,8 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                     Object[] bucketsForOrdArr = new Object[(int) valueCount];
                     int[] tot = { 0 };
                     BucketUpdater<TB> updater = bucketUpdater(owningBucketOrds[ordIdx]);
+                    // Prefetch term dictionary data before forEach if needed (e.g., for significant_terms)
+                    prefetchBeforeForEach(owningBucketOrds[ordIdx]);
                     collectionStrategy.forEach(owningBucketOrds[ordIdx], new BucketInfoConsumer() {
                         TB spare = null;
 
@@ -999,6 +1092,8 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                         );
                         // Get the top buckets and update the otherDocCount
                         topBucketsPerOwningOrd[ordIdx] = buildBuckets(size);
+                        // Prefetch term dictionary data for the top-N ordinals before lookupOrd calls
+                        prefetchBeforeConversion(bucketsForOrdArr, size);
                         for (int i = 0; i < size; i++) {
                             topBucketsPerOwningOrd[ordIdx][i] = convertTempBucketToRealBucket((TB) bucketsForOrdArr[i]);
                             otherDocCount[ordIdx] -= topBucketsPerOwningOrd[ordIdx][i].getDocCount();
@@ -1007,6 +1102,8 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                     } else {
                         // All buckets fit within the required size, no selection needed
                         topBucketsPerOwningOrd[ordIdx] = buildBuckets(tot[0]);
+                        // Prefetch term dictionary data for all ordinals before lookupOrd calls
+                        prefetchBeforeConversion(bucketsForOrdArr, tot[0]);
                         for (int i = 0; i < tot[0]; i++) {
                             topBucketsPerOwningOrd[ordIdx][i] = convertTempBucketToRealBucket((TB) bucketsForOrdArr[i]);
                         }
@@ -1069,6 +1166,34 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
          * Convert a temporary bucket into a real bucket.
          */
         abstract B convertTempBucketToRealBucket(TB temp) throws IOException;
+
+        /**
+         * Hook to prefetch term dictionary data before converting temp buckets to real buckets.
+         * Called before the priority_queue path's conversion loop.
+         * Default implementation is a no-op. Subclasses can override to prefetch ordinals.
+         */
+        void prefetchBeforeConversion(PriorityQueue<TB> ordered) throws IOException {
+            // no-op by default
+        }
+
+        /**
+         * Hook to prefetch term dictionary data before converting temp buckets to real buckets.
+         * Called before the quick_select and select_all paths' conversion loops.
+         * Default implementation is a no-op. Subclasses can override to prefetch ordinals.
+         */
+        void prefetchBeforeConversion(Object[] buckets, int count) throws IOException {
+            // no-op by default
+        }
+
+        /**
+         * Hook to prefetch term dictionary data before the forEach loop that calls bucketUpdater.
+         * This is useful for result strategies like significant_terms where lookupOrd happens
+         * inside the bucketUpdater callback during forEach, not during convertTempBucketToRealBucket.
+         * Default implementation is a no-op.
+         */
+        void prefetchBeforeForEach(long owningBucketOrd) throws IOException {
+            // no-op by default
+        }
 
         /**
          * Build the sub-aggregations into the buckets. This will usually
@@ -1150,6 +1275,25 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
             result.bucketOrd = temp.bucketOrd;
             result.docCountError = 0;
             return result;
+        }
+
+        @Override
+        void prefetchBeforeConversion(PriorityQueue<OrdBucket> ordered) throws IOException {
+            long[] topOrds = new long[ordered.size()];
+            int idx = 0;
+            for (Iterator<OrdBucket> itr = ordered.iterator(); itr.hasNext();) {
+                topOrds[idx++] = itr.next().globalOrd;
+            }
+            getDocValues().prefetchOrdinals(topOrds, topOrds.length);
+        }
+
+        @Override
+        void prefetchBeforeConversion(Object[] buckets, int count) throws IOException {
+            long[] topOrds = new long[count];
+            for (int i = 0; i < count; i++) {
+                topOrds[i] = ((OrdBucket) buckets[i]).globalOrd;
+            }
+            getDocValues().prefetchOrdinals(topOrds, count);
         }
 
         @Override
@@ -1295,6 +1439,26 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
         @Override
         SignificantStringTerms.Bucket convertTempBucketToRealBucket(SignificantStringTerms.Bucket temp) throws IOException {
             return temp;
+        }
+
+        @Override
+        void prefetchBeforeForEach(long owningBucketOrd) throws IOException {
+            // Collect all global ordinals that will be visited during forEach,
+            // then prefetch term dictionary data so lookupOrd calls in bucketUpdater hit warm cache.
+            java.util.ArrayList<Long> ordinalsList = new java.util.ArrayList<>();
+            collectionStrategy.forEach(owningBucketOrd, new BucketInfoConsumer() {
+                @Override
+                public void accept(long globalOrd, long bucketOrd, long docCount) {
+                    ordinalsList.add(globalOrd);
+                }
+            });
+            if (!ordinalsList.isEmpty()) {
+                long[] ordinals = new long[ordinalsList.size()];
+                for (int i = 0; i < ordinalsList.size(); i++) {
+                    ordinals[i] = ordinalsList.get(i);
+                }
+                getDocValues().prefetchOrdinals(ordinals, ordinals.length);
+            }
         }
 
         @Override
