@@ -176,4 +176,28 @@ final class GlobalOrdinalMapping extends SortedSetDocValues {
             }
         }
     }
+
+    /**
+     * Prefetches the term dictionary block for the given global ordinal.
+     * Maps the global ordinal to a segment ordinal and calls prepareSeekExact
+     * on the per-segment TermsEnum (which is a TermsDict instance from Lucene90DocValuesProducer).
+     *
+     * <p>This is the ordinal-based equivalent of TermsEnum.prepareSeekExact(BytesRef):
+     * phase 1 issues async IO for the target LZ4 block, phase 2 (lookupOrd) reads warm data.
+     */
+    public void prepareLookupOrd(long globalOrd) throws IOException {
+        final long segmentOrd = ordinalMap.getFirstSegmentOrd(globalOrd);
+        int readerIndex = ordinalMap.getFirstSegmentNumber(globalOrd);
+        // The lookups[] TermsEnum instances support prefetch via IndexInput.prefetch()
+        // when they are TermsDict instances from Lucene90DocValuesProducer.
+        // We call seekExact which will find the block warm if prepareLookupOrd was called
+        // on the underlying segment doc values. For now, prefetch via the segment doc values.
+        if (segmentDocValues != null
+            && readerIndex < segmentDocValues.length
+            && segmentDocValues[readerIndex] != null) {
+            // Delegate to segment-level prefetch using prefetchOrdinals with a single ordinal
+            long[] singleOrd = new long[] { segmentOrd };
+            segmentDocValues[readerIndex].prefetchOrdinals(singleOrd, 1);
+        }
+    }
 }
