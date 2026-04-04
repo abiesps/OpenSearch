@@ -206,7 +206,7 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
         TermsEnum indexTermsEnum = segmentTerms.iterator();
         BytesRef indexTerm = indexTermsEnum.next();
         final SortedSetDocValues globalOrds = this.getGlobalOrds(ctx);
-        TermsEnum globalOrdinalTermsEnum = globalOrds.termsEnum();
+        TermsEnum globalOrdinalTermsEnum = globalOrds.sequentialTermsEnum();
         BytesRef ordinalTerm = globalOrdinalTermsEnum.next();
 
         // Iterate over the terms in the segment, look for matches in the global ordinal terms,
