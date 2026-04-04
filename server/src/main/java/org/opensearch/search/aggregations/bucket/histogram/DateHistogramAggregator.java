@@ -39,6 +39,7 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.search.DocIdStream;
+import org.apache.lucene.search.PrefetchConfig;
 import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.util.CollectionUtil;
@@ -244,6 +245,11 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
             // Optimized path for single-valued fields
             singleValuedCollectorsUsed++;
             return new LeafBucketCollectorBase(sub, values) {
+                // Bulk prefetch buffers — reused across collect(DocIdStream) calls
+                private final int batchSize = PrefetchConfig.getBatchSize();
+                private final int[] bulkDocs = new int[batchSize];
+                private final long[] bulkValues = new long[batchSize];
+
                 @Override
                 public void collect(int doc, long owningBucketOrd) throws IOException {
                     if (singleton.advanceExact(doc)) {
@@ -254,12 +260,15 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
 
                 @Override
                 public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                    stream.forEach((doc) -> {
-                        if (singleton.advanceExact(doc)) {
-                            long value = singleton.longValue();
-                            collectValue(sub, doc, owningBucketOrd, preparedRounding.round(value));
+                    int size = stream.intoArray(bulkDocs);
+                    // Bulk fetch all values with prefetch (triggers IndexInput.prefetch in DocValuesProducer)
+                    singleton.longValues(size, bulkDocs, bulkValues, Long.MIN_VALUE);
+                    for (int i = 0; i < size; i++) {
+                        long v = bulkValues[i];
+                        if (v != Long.MIN_VALUE) {
+                            collectValue(sub, bulkDocs[i], owningBucketOrd, preparedRounding.round(v));
                         }
-                    });
+                    }
                 }
 
                 @Override
