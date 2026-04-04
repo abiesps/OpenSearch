@@ -1275,23 +1275,21 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
         @Override
         void prefetchBeforeConversion(PriorityQueue<OrdBucket> ordered) throws IOException {
-            // TODO: Enable when custom Lucene JARs with prefetchOrdinals are available
-            // long[] topOrds = new long[ordered.size()];
-            // int idx = 0;
-            // for (Iterator<OrdBucket> itr = ordered.iterator(); itr.hasNext();) {
-            //     topOrds[idx++] = itr.next().globalOrd;
-            // }
-            // getDocValues().prefetchOrdinals(topOrds, topOrds.length);
+            long[] topOrds = new long[ordered.size()];
+            int idx = 0;
+            for (Iterator<OrdBucket> itr = ordered.iterator(); itr.hasNext();) {
+                topOrds[idx++] = itr.next().globalOrd;
+            }
+            getDocValues().prefetchOrdinals(topOrds, topOrds.length);
         }
 
         @Override
         void prefetchBeforeConversion(Object[] buckets, int count) throws IOException {
-            // TODO: Enable when custom Lucene JARs with prefetchOrdinals are available
-            // long[] topOrds = new long[count];
-            // for (int i = 0; i < count; i++) {
-            //     topOrds[i] = ((OrdBucket) buckets[i]).globalOrd;
-            // }
-            // getDocValues().prefetchOrdinals(topOrds, count);
+            long[] topOrds = new long[count];
+            for (int i = 0; i < count; i++) {
+                topOrds[i] = ((OrdBucket) buckets[i]).globalOrd;
+            }
+            getDocValues().prefetchOrdinals(topOrds, count);
         }
 
         @Override
@@ -1441,23 +1439,22 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
         @Override
         void prefetchBeforeForEach(long owningBucketOrd) throws IOException {
-            // TODO: Enable when custom Lucene JARs with prefetchOrdinals are available
             // Collect all global ordinals that will be visited during forEach,
             // then prefetch term dictionary data so lookupOrd calls in bucketUpdater hit warm cache.
-            // java.util.ArrayList<Long> ordinalsList = new java.util.ArrayList<>();
-            // collectionStrategy.forEach(owningBucketOrd, new BucketInfoConsumer() {
-            //     @Override
-            //     public void accept(long globalOrd, long bucketOrd, long docCount) {
-            //         ordinalsList.add(globalOrd);
-            //     }
-            // });
-            // if (!ordinalsList.isEmpty()) {
-            //     long[] ordinals = new long[ordinalsList.size()];
-            //     for (int i = 0; i < ordinalsList.size(); i++) {
-            //         ordinals[i] = ordinalsList.get(i);
-            //     }
-            //     getDocValues().prefetchOrdinals(ordinals, ordinals.length);
-            // }
+            java.util.ArrayList<Long> ordinalsList = new java.util.ArrayList<>();
+            collectionStrategy.forEach(owningBucketOrd, new BucketInfoConsumer() {
+                @Override
+                public void accept(long globalOrd, long bucketOrd, long docCount) {
+                    ordinalsList.add(globalOrd);
+                }
+            });
+            if (!ordinalsList.isEmpty()) {
+                long[] ordinals = new long[ordinalsList.size()];
+                for (int i = 0; i < ordinalsList.size(); i++) {
+                    ordinals[i] = ordinalsList.get(i);
+                }
+                getDocValues().prefetchOrdinals(ordinals, ordinals.length);
+            }
         }
 
         @Override
