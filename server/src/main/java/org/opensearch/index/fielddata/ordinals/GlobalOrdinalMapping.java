@@ -39,6 +39,10 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LongValues;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * A {@link SortedSetDocValues} implementation that returns ordinals that are global.
@@ -51,13 +55,25 @@ final class GlobalOrdinalMapping extends SortedSetDocValues {
     private final OrdinalMap ordinalMap;
     private final LongValues mapping;
     private final TermsEnum[] lookups;
+    private final SortedSetDocValues[] segmentDocValues;
     private int docValueCount = 0;
     private int nextOrd = 0;
 
     GlobalOrdinalMapping(OrdinalMap ordinalMap, SortedSetDocValues values, TermsEnum[] lookups, int segmentIndex) {
+        this(ordinalMap, values, lookups, null, segmentIndex);
+    }
+
+    GlobalOrdinalMapping(
+        OrdinalMap ordinalMap,
+        SortedSetDocValues values,
+        TermsEnum[] lookups,
+        SortedSetDocValues[] segmentDocValues,
+        int segmentIndex
+    ) {
         super();
         this.values = values;
         this.lookups = lookups;
+        this.segmentDocValues = segmentDocValues;
         this.ordinalMap = ordinalMap;
         this.mapping = ordinalMap.getGlobalOrds(segmentIndex);
     }
@@ -130,5 +146,34 @@ final class GlobalOrdinalMapping extends SortedSetDocValues {
     @Override
     public int docValueCount() {
         return values.docValueCount();
+    }
+
+    @Override
+    public void prefetchOrdinals(long[] globalOrds, int count) throws IOException {
+        if (segmentDocValues == null || count == 0) {
+            return;
+        }
+
+        // Group global ordinals by segment
+        Map<Integer, List<Long>> segmentOrdinals = new HashMap<>();
+        for (int i = 0; i < count; i++) {
+            long globalOrd = globalOrds[i];
+            int segmentIndex = ordinalMap.getFirstSegmentNumber(globalOrd);
+            long segmentOrd = ordinalMap.getFirstSegmentOrd(globalOrd);
+            segmentOrdinals.computeIfAbsent(segmentIndex, k -> new ArrayList<>()).add(segmentOrd);
+        }
+
+        // Call prefetchOrdinals on each segment's SortedSetDocValues
+        for (Map.Entry<Integer, List<Long>> entry : segmentOrdinals.entrySet()) {
+            int segIdx = entry.getKey();
+            List<Long> ords = entry.getValue();
+            if (segIdx < segmentDocValues.length && segmentDocValues[segIdx] != null) {
+                long[] ordArray = new long[ords.size()];
+                for (int i = 0; i < ords.size(); i++) {
+                    ordArray[i] = ords.get(i);
+                }
+                segmentDocValues[segIdx].prefetchOrdinals(ordArray, ordArray.length);
+            }
+        }
     }
 }

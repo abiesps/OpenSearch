@@ -263,7 +263,12 @@ public final class GlobalOrdinalsIndexFieldData implements IndexOrdinalsFieldDat
                         return values;
                     }
                     final TermsEnum[] atomicLookups = getOrLoadTermsEnums();
-                    return new GlobalOrdinalMapping(ordinalMap, values, atomicLookups, context.ord);
+                    // Build per-segment SortedSetDocValues for prefetchOrdinals delegation
+                    SortedSetDocValues[] segDvs = new SortedSetDocValues[segmentAfd.length];
+                    for (int i = 0; i < segmentAfd.length; i++) {
+                        segDvs[i] = segmentAfd[i].getOrdinalsValues();
+                    }
+                    return new GlobalOrdinalMapping(ordinalMap, values, atomicLookups, segDvs, context.ord);
                 }
 
                 @Override
