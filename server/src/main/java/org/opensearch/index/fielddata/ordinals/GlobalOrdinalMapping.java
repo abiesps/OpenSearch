@@ -71,6 +71,15 @@ final class GlobalOrdinalMapping extends SortedSetDocValues {
         return mapping.get(segmentOrd);
     }
 
+    /**
+     * Returns the underlying segment-level SortedSetDocValues.
+     * Used by composite aggregation bulk collection to access segment ordinals
+     * for prefetch-aware ordValues() calls.
+     */
+    public SortedSetDocValues getSegmentValues() {
+        return values;
+    }
+
     @Override
     public boolean advanceExact(int target) throws IOException {
         nextOrd = 0; /* reset next ordinal */

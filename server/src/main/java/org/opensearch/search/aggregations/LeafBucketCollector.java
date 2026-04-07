@@ -34,6 +34,7 @@ package org.opensearch.search.aggregations;
 
 import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.Scorable;
+import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.search.aggregations.bucket.terms.LongKeyedBucketOrds;
 
 import java.io.IOException;
@@ -121,6 +122,21 @@ public abstract class LeafBucketCollector implements LeafCollector {
     @Override
     public void collect(int doc) throws IOException {
         collect(doc, 0);
+    }
+
+    /**
+     * Bulk-collect an array of doc IDs within bucket ordinal 0.
+     *
+     * <p>Doc IDs in {@code docs} must be in ascending order. Only the first {@code count} entries are valid.
+     *
+     * <p>The default implementation falls back to per-doc {@link #collect(int, long)}.
+     * Subclasses should override for bulk ordinal resolution or prefetch.
+     */
+    @ExperimentalApi
+    public void collectBulk(int[] docs, int count) throws IOException {
+        for (int i = 0; i < count; i++) {
+            collect(docs[i], 0);
+        }
     }
 
     @Override

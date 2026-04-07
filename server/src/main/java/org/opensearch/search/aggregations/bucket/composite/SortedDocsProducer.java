@@ -108,11 +108,28 @@ abstract class SortedDocsProducer {
         };
         final Bits liveDocs = context.reader().getLiveDocs();
         final LeafBucketCollector collector = queue.getLeafCollector(leadSourceBucket, context, queueCollector);
+
+        // Bulk collection: batch doc IDs and pass them to the collector chain.
+        // This enables downstream collectors (e.g. GlobalOrdinalValuesSource) to resolve
+        // ordinals in a tight loop with better data locality and prefetch opportunities.
+        final int BATCH_SIZE = 256;
+        final int[] docBatch = new int[BATCH_SIZE];
+        int batchCount = 0;
+
         while (iterator.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
             if (liveDocs == null || liveDocs.get(iterator.docID())) {
-                collector.collect(iterator.docID());
+                docBatch[batchCount++] = iterator.docID();
+                if (batchCount == BATCH_SIZE) {
+                    collector.collectBulk(docBatch, batchCount);
+                    batchCount = 0;
+                }
             }
         }
+        // Flush remaining docs
+        if (batchCount > 0) {
+            collector.collectBulk(docBatch, batchCount);
+        }
+
         if (queue.isFull() && hasCollected[0] && topCompositeCollected[0] == 0) {
             return true;
         }
