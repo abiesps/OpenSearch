@@ -13,12 +13,15 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.PointValues;
 import org.apache.lucene.search.CollectionTerminatedException;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.PrefetchConfig;
+import org.apache.lucene.util.bkd.BKDReader;
 import org.opensearch.common.CheckedRunnable;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.RangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SimpleRangeCollector;
 import org.opensearch.search.aggregations.bucket.filterrewrite.rangecollector.SubAggRangeCollector;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -93,7 +96,46 @@ final class PointTreeTraversal {
             case CELL_INSIDE_QUERY:
                 collector.countNode((int) pointTree.size());
                 if (collector.hasSubAgg()) {
-                    pointTree.visitDocIDs(visitor);
+                    // When prefetch is enabled and the tree is a BKDPointTree, use two-phase
+                    // traversal: phase 1 prefetches all leaf blocks under this node asynchronously,
+                    // phase 2 visits them. This hides EFS latency for CELL_INSIDE_QUERY subtrees.
+                    BKDReader.BKDPointTree bkdTree = unwrapBKDPointTree(pointTree);
+                    if (PrefetchConfig.isEnabled() && bkdTree != null) {
+                        BKDReader.BaseTwoPhaseIntersectVisitor prefetchVisitor =
+                            new BKDReader.BaseTwoPhaseIntersectVisitor(
+                                BKDReader.TwoPhaseIntersectVisitor.PrefetchMode.ALL_MATCH
+                            ) {
+                                @Override
+                                public void visit(int docID) {
+                                    collector.collectDocId(docID);
+                                }
+
+                                @Override
+                                public void visit(DocIdSetIterator iterator) throws IOException {
+                                    collector.collectDocIdSet(iterator);
+                                }
+
+                                @Override
+                                public void visit(int docID, byte[] packedValue) {
+                                    collector.collectDocId(docID);
+                                }
+
+                                @Override
+                                public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
+                                    return PointValues.Relation.CELL_INSIDE_QUERY;
+                                }
+                            };
+                        // Phase 1: prefetch all leaf blocks
+                        bkdTree.prefetchDocIDs(prefetchVisitor);
+                        // Phase 2: visit deferred blocks
+                        java.util.List<Long> fps = prefetchVisitor.deferredBlocks();
+                        for (int i = 0; i < fps.size(); i++) {
+                            bkdTree.visitDocIDs(fps.get(i), prefetchVisitor);
+                            prefetchVisitor.onProcessingDeferredBlock(fps.get(i));
+                        }
+                    } else {
+                        pointTree.visitDocIDs(visitor);
+                    }
                 } else {
                     collector.visitInner();
                 }
@@ -181,5 +223,27 @@ final class PointTreeTraversal {
                 return PointValues.Relation.CELL_CROSSES_QUERY;
             }
         };
+    }
+
+    /**
+     * Unwraps a PointTree to find the underlying BKDPointTree, if any.
+     * Handles ExitablePointTree wrapper from ExitableDirectoryReader.
+     */
+    private static BKDReader.BKDPointTree unwrapBKDPointTree(PointValues.PointTree pointTree) {
+        if (pointTree instanceof BKDReader.BKDPointTree bkdTree) {
+            return bkdTree;
+        }
+        // Try to unwrap ExitablePointTree or similar wrappers via reflection
+        try {
+            Field delegateField = pointTree.getClass().getDeclaredField("pointTree");
+            delegateField.setAccessible(true);
+            Object delegate = delegateField.get(pointTree);
+            if (delegate instanceof BKDReader.BKDPointTree bkdTree) {
+                return bkdTree;
+            }
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            // Not a wrapper we know about, return null
+        }
+        return null;
     }
 }
