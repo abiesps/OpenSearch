@@ -10,6 +10,7 @@ package org.opensearch.index.search.comparators;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.sandbox.document.BigIntegerPoint;
+import org.apache.lucene.search.BulkValueComparator;
 import org.apache.lucene.search.LeafFieldComparator;
 import org.apache.lucene.search.Pruning;
 import org.apache.lucene.search.comparators.NumericComparator;
@@ -66,7 +67,11 @@ public class UnsignedLongComparator extends NumericComparator<BigInteger> {
     }
 
     /** Leaf comparator for {@link UnsignedLongComparator} that provides skipping functionality */
-    public class UnsignedLongLeafComparator extends NumericLeafComparator {
+    public class UnsignedLongLeafComparator extends NumericLeafComparator implements BulkValueComparator {
+
+        private long[] batchValues;
+        private int[] batchDocs;
+        private int batchCount;
 
         public UnsignedLongLeafComparator(LeafReaderContext context) throws IOException {
             super(context);
@@ -104,16 +109,35 @@ public class UnsignedLongComparator extends NumericComparator<BigInteger> {
 
         @Override
         protected long bottomAsComparableLong() {
-            // Apache Lucene will not use unsigned comparison for long values, so we have to convert to double
-            // first (with possible lost of precision) and than to sortable long.
             return NumericUtils.doubleToSortableLong(bottom.doubleValue());
         }
 
         @Override
         protected long topAsComparableLong() {
-            // Apache Lucene will not use unsigned comparison for long values, so we have to convert to double
-            // first (with possible lost of precision) and than to sortable long.
             return NumericUtils.doubleToSortableLong(topValue.doubleValue());
+        }
+
+        @Override
+        public void setBatch(long[] values, int[] docs, int count) {
+            this.batchValues = values;
+            this.batchDocs = docs;
+            this.batchCount = count;
+        }
+
+        @Override
+        public int compareBottomAt(int idx) {
+            return bottom.compareTo(Numbers.toUnsignedBigInteger(batchValues[idx]));
+        }
+
+        @Override
+        public void copyAt(int slot, int idx) throws IOException {
+            values[slot] = Numbers.toUnsignedBigInteger(batchValues[idx]);
+            super.copy(slot, batchDocs[idx]);
+        }
+
+        @Override
+        public int compareTopAt(int idx) {
+            return topValue.compareTo(Numbers.toUnsignedBigInteger(batchValues[idx]));
         }
     }
 }

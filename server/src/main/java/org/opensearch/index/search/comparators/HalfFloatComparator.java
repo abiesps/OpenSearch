@@ -10,6 +10,7 @@ package org.opensearch.index.search.comparators;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.sandbox.document.HalfFloatPoint;
+import org.apache.lucene.search.BulkValueComparator;
 import org.apache.lucene.search.LeafFieldComparator;
 import org.apache.lucene.search.Pruning;
 import org.apache.lucene.search.comparators.NumericComparator;
@@ -64,7 +65,11 @@ public class HalfFloatComparator extends NumericComparator<Float> {
     }
 
     /** Leaf comparator for {@link HalfFloatComparator} that provides skipping functionality */
-    public class HalfFloatLeafComparator extends NumericLeafComparator {
+    public class HalfFloatLeafComparator extends NumericLeafComparator implements BulkValueComparator {
+
+        private long[] batchValues;
+        private int[] batchDocs;
+        private int batchCount;
 
         public HalfFloatLeafComparator(LeafReaderContext context) throws IOException {
             super(context);
@@ -108,6 +113,29 @@ public class HalfFloatComparator extends NumericComparator<Float> {
         @Override
         protected long topAsComparableLong() {
             return HalfFloatPoint.halfFloatToSortableShort(topValue);
+        }
+
+        @Override
+        public void setBatch(long[] values, int[] docs, int count) {
+            this.batchValues = values;
+            this.batchDocs = docs;
+            this.batchCount = count;
+        }
+
+        @Override
+        public int compareBottomAt(int idx) {
+            return Float.compare(bottom, Float.intBitsToFloat((int) batchValues[idx]));
+        }
+
+        @Override
+        public void copyAt(int slot, int idx) throws IOException {
+            values[slot] = Float.intBitsToFloat((int) batchValues[idx]);
+            super.copy(slot, batchDocs[idx]);
+        }
+
+        @Override
+        public int compareTopAt(int idx) {
+            return Float.compare(topValue, Float.intBitsToFloat((int) batchValues[idx]));
         }
     }
 
