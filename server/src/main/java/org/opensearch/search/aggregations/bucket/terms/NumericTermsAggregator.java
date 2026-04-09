@@ -35,6 +35,8 @@ import joptsimple.internal.Strings;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.search.DocIdStream;
+import org.apache.lucene.search.PrefetchConfig;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.util.NumericUtils;
 import org.apache.lucene.util.PriorityQueue;
@@ -155,6 +157,22 @@ public class NumericTermsAggregator extends TermsAggregator implements StarTreeP
                             previous = val;
                         }
                     }
+                }
+            }
+
+            @Override
+            public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                if (PrefetchConfig.isEnabled()) {
+                    // Prefetch DISI + address + value data for the batch, then iterate normally.
+                    int batchSize = PrefetchConfig.getBatchSize();
+                    int[] docBuf = new int[batchSize];
+                    int count = stream.intoArray(docBuf, batchSize);
+                    values.prefetchRange(docBuf, count);
+                    for (int i = 0; i < count; i++) {
+                        collect(docBuf[i], owningBucketOrd);
+                    }
+                } else {
+                    super.collect(stream, owningBucketOrd);
                 }
             }
         });
@@ -714,6 +732,11 @@ public class NumericTermsAggregator extends TermsAggregator implements StarTreeP
                     super.collect(doc, owningBucketOrd);
                     subsetSizes = context.bigArrays().grow(subsetSizes, owningBucketOrd + 1);
                     subsetSizes.increment(owningBucketOrd, 1);
+                }
+
+                @Override
+                public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                    super.collect(stream, owningBucketOrd);
                 }
             };
         }

@@ -39,6 +39,7 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.search.DocIdStream;
+import org.apache.lucene.search.PrefetchConfig;
 import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.util.CollectionUtil;
@@ -251,6 +252,25 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
                         collectValue(sub, doc, owningBucketOrd, preparedRounding.round(value));
                     }
                 }
+
+                @Override
+                public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                    if (PrefetchConfig.isEnabled()) {
+                        // Bulk read timestamp values with prefetch, then round and collect.
+                        int batchSize = PrefetchConfig.getBatchSize();
+                        int[] docBuf = new int[batchSize];
+                        long[] valueBuf = new long[batchSize];
+                        int count = stream.intoArray(docBuf, batchSize);
+                        singleton.longValues(count, docBuf, valueBuf, Long.MIN_VALUE);
+                        for (int i = 0; i < count; i++) {
+                            if (valueBuf[i] != Long.MIN_VALUE) {
+                                collectValue(sub, docBuf[i], owningBucketOrd, preparedRounding.round(valueBuf[i]));
+                            }
+                        }
+                    } else {
+                        super.collect(stream, owningBucketOrd);
+                    }
+                }
             };
         }
 
@@ -273,6 +293,11 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
                         previousRounded = rounded;
                     }
                 }
+            }
+
+            @Override
+            public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                super.collect(stream, owningBucketOrd);
             }
         };
     }

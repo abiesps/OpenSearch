@@ -33,6 +33,7 @@ package org.opensearch.search.aggregations.bucket.histogram;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.search.DocIdStream;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.util.CollectionUtil;
 import org.opensearch.common.Rounding;
@@ -267,6 +268,11 @@ abstract class AutoDateHistogramAggregator extends DeferableBucketAggregator {
             public void collect(int doc, long owningBucketOrd) throws IOException {
                 iteratingCollector.collect(doc, owningBucketOrd);
             }
+
+            @Override
+            public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                super.collect(stream, owningBucketOrd);
+            }
         };
     }
 
@@ -479,6 +485,11 @@ abstract class AutoDateHistogramAggregator extends DeferableBucketAggregator {
                     } while (roundingIdx < roundingInfos.length - 1
                         && (bucketOrds.size() > targetBuckets * roundingInfos[roundingIdx].getMaximumInnerInterval()
                             || max - min > targetBuckets * roundingInfos[roundingIdx].getMaximumRoughEstimateDurationMillis()));
+                }
+
+                @Override
+                public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                    super.collect(stream, owningBucketOrd);
                 }
             };
         }
@@ -727,6 +738,11 @@ abstract class AutoDateHistogramAggregator extends DeferableBucketAggregator {
                         liveBucketCountUnderestimate.set(owningBucketOrd, newEstimatedBucketCount);
                     }
                     return newRounding;
+                }
+
+                @Override
+                public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                    super.collect(stream, owningBucketOrd);
                 }
             };
         }
