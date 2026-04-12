@@ -42,7 +42,7 @@ import java.io.IOException;
  *
  * @opensearch.internal
  */
-final class SingletonSortedNumericDoubleValues extends SortedNumericDoubleValues {
+public final class SingletonSortedNumericDoubleValues extends SortedNumericDoubleValues {
     private final NumericDoubleValues in;
 
     SingletonSortedNumericDoubleValues(NumericDoubleValues in) {

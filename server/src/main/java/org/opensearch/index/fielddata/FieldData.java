@@ -541,12 +541,17 @@ public enum FieldData {
      *
      * @opensearch.internal
      */
-    private static class DoubleCastedValues extends NumericDoubleValues {
+    public static class DoubleCastedValues extends NumericDoubleValues {
 
         private final NumericDocValues values;
 
         DoubleCastedValues(NumericDocValues values) {
             this.values = values;
+        }
+
+        /** Returns the underlying NumericDocValues for bulk prefetch access. */
+        public NumericDocValues getNumericDocValues() {
+            return values;
         }
 
         @Override

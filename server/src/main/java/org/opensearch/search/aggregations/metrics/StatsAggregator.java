@@ -39,6 +39,8 @@ import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.DoubleArray;
 import org.opensearch.common.util.LongArray;
 import org.opensearch.index.fielddata.SortedNumericDoubleValues;
+import org.opensearch.index.fielddata.NumericDoubleValues;
+import org.opensearch.index.fielddata.SingletonSortedNumericDoubleValues;
 import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.InternalAggregation;
@@ -146,6 +148,81 @@ class StatsAggregator extends NumericMetricsAggregator.MultiValue {
             @Override
             public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
                 super.collect(stream, owningBucketOrd);
+            }
+
+            @Override
+            public void collectRange(int min, int max) throws IOException {
+                // Bulk collectRange with one-batch-ahead prefetch for numeric doc values.
+                // Only enabled for single-valued numeric fields (singleton) at bucket 0.
+                org.apache.lucene.index.NumericDocValues numericDV = null;
+                if (values instanceof SingletonSortedNumericDoubleValues singleton) {
+                    NumericDoubleValues ndv = singleton.getNumericDoubleValues();
+                    if (ndv instanceof org.opensearch.index.fielddata.FieldData.DoubleCastedValues dcv) {
+                        numericDV = dcv.getNumericDocValues();
+                    }
+                }
+
+                if (numericDV == null || !org.apache.lucene.search.PrefetchConfig.isEnabled()) {
+                    super.collectRange(min, max);
+                    return;
+                }
+
+                final int BATCH = org.apache.lucene.search.PrefetchConfig.getBatchSize();
+                long[] valBuf = new long[BATCH];
+
+                // Prefetch first batch
+                int firstSize = Math.min(BATCH, max - min);
+                numericDV.prefetchRange(min, firstSize);
+
+                int pos = min;
+                while (pos < max) {
+                    int batchEnd = Math.min(pos + BATCH, max);
+                    int size = batchEnd - pos;
+
+                    // Prefetch NEXT batch
+                    if (batchEnd < max) {
+                        int nextSize = Math.min(BATCH, max - batchEnd);
+                        numericDV.prefetchRange(batchEnd, nextSize);
+                    }
+
+                    // Read CURRENT batch (warm from prior prefetch)
+                    numericDV.longValuesRange(pos, size, valBuf, 0);
+
+                    // Aggregate in batch — bucket 0 (MatchAll + stats agg)
+                    long bucket = 0;
+                    if (bucket >= counts.size()) {
+                        final long from = counts.size();
+                        final long overSize = BigArrays.overSize(bucket + 1);
+                        counts = bigArrays.resize(counts, overSize);
+                        sums = bigArrays.resize(sums, overSize);
+                        compensations = bigArrays.resize(compensations, overSize);
+                        mins = bigArrays.resize(mins, overSize);
+                        maxes = bigArrays.resize(maxes, overSize);
+                        mins.fill(from, overSize, Double.POSITIVE_INFINITY);
+                        maxes.fill(from, overSize, Double.NEGATIVE_INFINITY);
+                    }
+
+                    counts.increment(bucket, size);
+                    double bMin = mins.get(bucket);
+                    double bMax = maxes.get(bucket);
+                    double sum = sums.get(bucket);
+                    double compensation = compensations.get(bucket);
+                    kahanSummation.reset(sum, compensation);
+
+                    for (int i = 0; i < size; i++) {
+                        double value = (double) valBuf[i];
+                        kahanSummation.add(value);
+                        bMin = Math.min(bMin, value);
+                        bMax = Math.max(bMax, value);
+                    }
+
+                    sums.set(bucket, kahanSummation.value());
+                    compensations.set(bucket, kahanSummation.delta());
+                    mins.set(bucket, bMin);
+                    maxes.set(bucket, bMax);
+
+                    pos = batchEnd;
+                }
             }
         };
     }
