@@ -1,0 +1,23 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+opensearchplugin {
+  description = 'Adds the bufferpoolfs store type: a directory that reads through a node-wide Caffeine block cache.'
+  classname = 'org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin'
+}
+
+versions << [
+  'caffeine': '3.3.0'
+]
+
+dependencies {
+  // Caffeine's only transitive dependencies are compile-time annotations (jspecify, error_prone_annotations).
+  api("com.github.ben-manes.caffeine:caffeine:${versions.caffeine}") {
+    transitive = false
+  }
+}
