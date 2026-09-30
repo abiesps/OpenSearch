@@ -11,8 +11,10 @@ Stage 3). Update it at the end of every step.
   place.
 - **Reuse ingested data.** Query-time changes and node settings must not need a re-ingest. Index names change only with
   `DATASET_VERSION` or the hash of the format writers (see `bench_postings.py`).
-- **Measure with enough runs.** 100 iterations per variant, variants rotated each iteration. Report p50/p90/p99 and a
-  95% bootstrap CI for the median change.
+- **Iterations.** 5 per variant from now on (user decision; earlier runs used 100 and 10), variants rotated each
+  iteration. Report p50/p99 and a 95% bootstrap CI for the median change.
+- **Results doc.** Every result also goes into the Pippin doc https://pippin.amazon.dev/docs/k9mg0uBzxdeIFe/postings-poc
+  (main body: summary per phase; Appendix: every table).
 
 ## Where things are
 
@@ -65,7 +67,7 @@ Indices kept (seed 42, one segment, `tag` / `tag_nav` / `tag_dual` keyword field
    `.doc`). Max scores are computed at query time from them. Impacts are not in a separate file yet. Keyword fields
    have no freqs/norms, so their impacts cannot prune anything.
 
-## Phase A: nav-planned prefetch for exhaustive OR (in progress)
+## Phase A: nav-planned prefetch for exhaustive OR (A1–A4 done)
 
 Goal: turn the one-at-a-time cold loads of an exhaustive OR into concurrent loads, using `.nav` to know exactly which
 `.doc` blocks each clause needs next. Scoring stays in 4,096-doc windows; the collector contract is unchanged.
@@ -76,11 +78,22 @@ Goal: turn the one-at-a-time cold loads of an exhaustive OR into concurrent load
 | A2 | `Lucene104DualNav` nav-mode enum implements it: a separate planning cursor over `.nav` (does not move the enum), collects payload ranges of blocks with docs in `[fromDoc, toDoc)`, merges adjacent ranges, calls `docIn.prefetch` | unit test: prefetched ranges cover exactly the blocks later read |
 | A3 | `BooleanScorer`: per clause keep a prefetch horizon; when a window reaches it, hint the range covering the next N cache blocks of that clause. N is a POC knob (static setter, REST toggle) | same hits as today; trace shows prefetch loads ahead of demand |
 | A4 | Benchmark: exhaustive OR queries (`size: 0`, `track_total_hits: true`, 2–3 SHOULD clauses; dense+dense, dense+sparse, sparse+sparse) on the existing v3 indices. Variants: baseline, dual_doc, dual_nav, dual_nav+prefetch; sweep N = 1, 4, 8, 16 | 100 iterations, cold and warm, IOs, p50/p99, unused prefetched blocks |
-| A5 | Write up results, update this file, push both repos | |
+| A5 | Prefetch pool: split a prefetch request into per-block tasks (today one task loads its blocks one after another), re-run the OR suite | larger look-ahead no longer loses at 137/532 MiB |
+| A6 | Cut warm planning overhead (up to +8% warm on dense ORs at 1 GB) | warm within ±3% |
 
 Expected: `d50 OR d10 OR r2` at 1 GB loads about 112 blocks one at a time (~540 ms); with 8 loads in flight (the
 prefetch pool size) it could approach 70–80 ms. The simulation has no EFS queueing or slot limits, so treat the
 result as an upper bound.
+
+### Phase A results (10 iterations, cold, 4 ms per miss; file `postings_or_20260929_224221.json`)
+
+- First run was invalid: `FilterPostingsEnum` did not forward `prefetchAhead`, and OpenSearch wraps every postings enum
+  (query cancellation), so prefetch was a no-op. Fixed in fork commit `16294a3751` with a test that fails without it.
+- Dense ORs at 1 GB: `d50 OR d10` 540 → 133 ms (−75%, pf16), `d50 OR d10 OR r2` 565 → 134 ms (−76%), `d10 OR r2`
+  239 → 78 ms (−68%, pf4), `d50 OR r4` 475 → 178 ms (−63%, pf4). Gain grows with segment size.
+- IOs unchanged by prefetch (no wasted blocks); the nav path costs +6–7 IOs per query. Sparse ORs: −16% to +7%.
+- pf4 beats pf16 at 137/532 MiB; likely because one prefetch request is loaded serially by one task (see A5).
+- Warm: up to +8% on dense ORs at 1 GB (planning CPU).
 
 ## Phase B: top-k OR (next)
 

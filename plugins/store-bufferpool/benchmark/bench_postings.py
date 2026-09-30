@@ -17,7 +17,7 @@ Each doc gets each term below independently with the given probability:
   d50 (50%), d10 (10%), r2 (1e-2), r3 (1e-3), r4 (1e-4), r5 (1e-5), r6 (1e-6)
 
 Queries are bool filters of two terms (a rare lead clause advancing a dense clause), plus d50 AND d10 as a control
-where both lists are dense. Each query runs --runs times per field (default 100), alternating the baseline and nav field on every iteration:
+where both lists are dense. Each query runs --runs times per field (default 5), alternating the baseline and nav field on every iteration:
   cold  block cache cleared before every run, so every block the query needs is loaded
   warm  the same query again, cache kept
 The report gives p50/p90/p99 of the server-side took, and the change of the median with a 95% bootstrap CI.
@@ -486,7 +486,7 @@ def main():
     )
     parser.add_argument("--suite", choices=["and", "or"], default="and", help="conjunction or disjunction queries")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--runs", type=int, default=100, help="runs per (query, field, mode), interleaved between fields")
+    parser.add_argument("--runs", type=int, default=5, help="runs per (query, field, mode), interleaved between fields")
     parser.add_argument("--latencies-ms", default="0,4", help="simulated per-load latencies to test, in ms")
     parser.add_argument("--fork", default=os.path.join(os.path.dirname(repo), "lucene_experiments"))
     parser.add_argument("--format-tag", help="override the format hash that names the index")
