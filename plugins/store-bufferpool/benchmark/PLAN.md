@@ -135,6 +135,14 @@ result as an upper bound.
 - A fixed 4,096-doc window with level-1 bounds rejected nothing (first version).
 - .doc loads unchanged and serial (17-74 per query): next is T4.
 
+### T4 results (5 runs, cold 4 ms; `postings_topk_20260930_163423.json`; fork `82aad05612`)
+
+- Norms 2 blocks (unfiltered) + postings 1 node ahead (DualNav nav, node-aligned): -52% to -64% cold
+  (t50 OR t20 825 -> 313 ms, t20 OR t5 OR t1 1,378 -> 491 ms). Postings prefetch adds 8-35% on top of norms alone;
+  alone it gives -30% to -38% on 2-term queries, -5% to -15% on 3-term. `.doc` IOs unchanged, 0-1 demand loads.
+- Warm k=10 within noise. Warm k=100 unusable in this run (machine load average 226 from other apps).
+- Likely remaining bound: the norm stream (~2 in flight x 235 blocks). Next: norms 4 blocks ahead; cheap filter.
+
 | Step | Change | Done when |
 |---|---|---|
 | T1 | Lucene: `NumericDocValues.prefetchNodes(fromDoc, toDoc, nodeBytes)` hint (no-op by default); dense Lucene90 norms request the whole nodes holding those norms, never twice | unit test: whole nodes, inside the field's region, no overlap |
