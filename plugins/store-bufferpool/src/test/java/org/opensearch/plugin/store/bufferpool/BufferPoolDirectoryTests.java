@@ -22,14 +22,14 @@ import java.nio.ByteOrder;
 import java.nio.file.Path;
 import java.util.Arrays;
 
-import static org.opensearch.plugin.store.bufferpool.BlockCache.BLOCK_SIZE;
+import static org.opensearch.plugin.store.bufferpool.BlockCache.DEFAULT_BLOCK_SIZE;
 
 public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
 
     @Override
     protected Directory getDirectory(Path file) throws IOException {
         // a cache of a few blocks exercises eviction; prefetch runs on the calling thread
-        final long maxBytes = random().nextBoolean() ? 4L * BLOCK_SIZE : 64L * BLOCK_SIZE;
+        final long maxBytes = random().nextBoolean() ? 4L * DEFAULT_BLOCK_SIZE : 64L * DEFAULT_BLOCK_SIZE;
         return new BufferPoolDirectory(file, FSLockFactory.getDefault(), new BlockCache(maxBytes, Runnable::run));
     }
 
@@ -46,7 +46,7 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
     }
 
     public void testReadsAcrossBlockBoundaries() throws IOException {
-        final byte[] data = randomData(3 * BLOCK_SIZE + random().nextInt(BLOCK_SIZE));
+        final byte[] data = randomData(3 * DEFAULT_BLOCK_SIZE + random().nextInt(DEFAULT_BLOCK_SIZE));
         final ByteBuffer expected = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         try (Directory dir = getDirectory(createTempDir())) {
             write(dir, "multi_block", data);
@@ -54,7 +54,7 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
                 assertEquals(data.length, in.length());
                 for (int iter = 0; iter < 2000; iter++) {
                     // positions clustered around block boundaries
-                    final int boundary = BLOCK_SIZE * (1 + random().nextInt(3));
+                    final int boundary = DEFAULT_BLOCK_SIZE * (1 + random().nextInt(3));
                     final int pos = Math.max(0, Math.min(data.length - 8, boundary - 8 + random().nextInt(16)));
                     in.seek(pos);
                     switch (random().nextInt(5)) {
@@ -63,14 +63,14 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
                         case 2 -> assertEquals(expected.getInt(pos), in.readInt());
                         case 3 -> assertEquals(expected.getLong(pos), in.readLong());
                         default -> {
-                            final int len = Math.min(data.length - pos, random().nextInt(2 * BLOCK_SIZE));
+                            final int len = Math.min(data.length - pos, random().nextInt(2 * DEFAULT_BLOCK_SIZE));
                             final byte[] actual = new byte[len];
                             in.readBytes(actual, 0, len);
                             assertArrayEquals(Arrays.copyOfRange(data, pos, pos + len), actual);
                         }
                     }
                 }
-                final int sliceOffset = random().nextInt(BLOCK_SIZE);
+                final int sliceOffset = random().nextInt(DEFAULT_BLOCK_SIZE);
                 final RandomAccessInput slice = in.randomAccessSlice(sliceOffset, data.length - sliceOffset);
                 for (int iter = 0; iter < 2000; iter++) {
                     final int p = random().nextInt(data.length - sliceOffset - 8);
@@ -84,7 +84,7 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
     }
 
     public void testReplacedFileIsNotServedFromCache() throws IOException {
-        final byte[] first = randomData(2 * BLOCK_SIZE + 17);
+        final byte[] first = randomData(2 * DEFAULT_BLOCK_SIZE + 17);
         final byte[] second = randomData(first.length);
         try (Directory dir = getDirectory(createTempDir())) {
             write(dir, "replaced", first);
@@ -95,6 +95,9 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
                 assertArrayEquals(first, read);
 
                 dir.deleteFile("replaced");
+                // a file system that cannot delete open files (WindowsFS) leaves the delete pending, so the name
+                // cannot be re-used while the old reader is open
+                assumeTrue("file system does not delete open files", dir.getPendingDeletions().isEmpty());
                 write(dir, "replaced", second);
 
                 // the old reader re-populates the cache with blocks of the old file
@@ -122,22 +125,22 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
     }
 
     public void testPrefetchLoadsBlocks() throws IOException {
-        final byte[] data = randomData(4 * BLOCK_SIZE);
+        final byte[] data = randomData(4 * DEFAULT_BLOCK_SIZE);
         final Path path = createTempDir();
-        final BlockCache cache = new BlockCache(64L * BLOCK_SIZE, Runnable::run);
+        final BlockCache cache = new BlockCache(64L * DEFAULT_BLOCK_SIZE, Runnable::run);
         try (Directory dir = new BufferPoolDirectory(path, FSLockFactory.getDefault(), cache)) {
             write(dir, "prefetched", data);
             try (IndexInput in = dir.openInput("prefetched", IOContext.DEFAULT)) {
                 assertEquals(0, cache.size());
                 // spans the end of block 0 and the start of block 2
-                in.prefetch(BLOCK_SIZE - 1, BLOCK_SIZE + 2);
+                in.prefetch(DEFAULT_BLOCK_SIZE - 1, DEFAULT_BLOCK_SIZE + 2);
                 assertEquals(3, cache.size());
                 in.prefetch(0, 1);
                 assertEquals(3, cache.size());
-                final IndexInput slice = in.slice("slice", 3L * BLOCK_SIZE, BLOCK_SIZE);
-                slice.prefetch(0, BLOCK_SIZE);
+                final IndexInput slice = in.slice("slice", 3L * DEFAULT_BLOCK_SIZE, DEFAULT_BLOCK_SIZE);
+                slice.prefetch(0, DEFAULT_BLOCK_SIZE);
                 assertEquals(4, cache.size());
-                assertEquals(data[3 * BLOCK_SIZE], slice.readByte());
+                assertEquals(data[3 * DEFAULT_BLOCK_SIZE], slice.readByte());
             }
         }
         assertEquals("closing the directory drops its blocks", 0, cache.size());

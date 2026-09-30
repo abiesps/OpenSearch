@@ -11,22 +11,33 @@ package org.opensearch.plugin.store.bufferpool;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockFactory;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
+import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.SetOnce;
+import org.opensearch.common.settings.ClusterSettings;
+import org.opensearch.common.settings.IndexScopedSettings;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.settings.SettingsFilter;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.env.Environment;
 import org.opensearch.env.NodeEnvironment;
+import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexSettings;
+import org.opensearch.index.codec.CodecServiceFactory;
 import org.opensearch.index.store.FsDirectoryFactory;
+import org.opensearch.plugins.ActionPlugin;
+import org.opensearch.plugins.EnginePlugin;
 import org.opensearch.plugins.IndexStorePlugin;
 import org.opensearch.plugins.Plugin;
 import org.opensearch.repositories.RepositoriesService;
+import org.opensearch.rest.RestController;
+import org.opensearch.rest.RestHandler;
 import org.opensearch.script.ScriptService;
 import org.opensearch.threadpool.ExecutorBuilder;
 import org.opensearch.threadpool.FixedExecutorBuilder;
@@ -40,6 +51,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -47,7 +59,7 @@ import java.util.function.Supplier;
  * files through one node-wide, Caffeine-backed {@link BlockCache} of off-heap blocks instead of the OS page cache mappings
  * that {@code mmapfs} uses.
  */
-public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin {
+public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, EnginePlugin, ActionPlugin {
 
     /** Value of {@code index.store.type} that selects {@link BufferPoolDirectory}. */
     public static final String STORE_TYPE = "bufferpoolfs";
@@ -66,13 +78,34 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin {
         Property.NodeScope
     );
 
+    /** Size of a cached block. Changing it needs a node restart. */
+    public static final Setting<ByteSizeValue> BLOCK_SIZE_SETTING = Setting.byteSizeSetting(
+        "bufferpool.cache.block_size",
+        new ByteSizeValue(BlockCache.DEFAULT_BLOCK_SIZE),
+        new ByteSizeValue(BlockCache.MIN_BLOCK_SIZE),
+        new ByteSizeValue(BlockCache.MAX_BLOCK_SIZE),
+        Property.NodeScope
+    );
+
+    /**
+     * Experiment knob: a delay added to every block load, to simulate a remote storage backend (for example about 4ms for
+     * EFS) on a local disk. 0 disables it.
+     */
+    public static final Setting<TimeValue> SIMULATED_LOAD_LATENCY_SETTING = Setting.timeSetting(
+        "bufferpool.simulated_load_latency",
+        TimeValue.ZERO,
+        TimeValue.ZERO,
+        Property.NodeScope,
+        Property.Dynamic
+    );
+
     private static final int PREFETCH_QUEUE_SIZE = 1024;
 
     private final SetOnce<BlockCache> blockCache = new SetOnce<>();
 
     @Override
     public List<Setting<?>> getSettings() {
-        return List.of(CACHE_SIZE_SETTING);
+        return List.of(CACHE_SIZE_SETTING, BLOCK_SIZE_SETTING, SIMULATED_LOAD_LATENCY_SETTING);
     }
 
     @Override
@@ -97,9 +130,40 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin {
         IndexNameExpressionResolver indexNameExpressionResolver,
         Supplier<RepositoriesService> repositoriesServiceSupplier
     ) {
-        final long maxBytes = CACHE_SIZE_SETTING.get(environment.settings()).getBytes();
-        blockCache.set(new BlockCache(maxBytes, threadPool.executor(PREFETCH_THREAD_POOL)));
+        final Settings settings = environment.settings();
+        final long maxBytes = CACHE_SIZE_SETTING.get(settings).getBytes();
+        final int blockSize = Math.toIntExact(BLOCK_SIZE_SETTING.get(settings).getBytes());
+        final BlockCache cache = new BlockCache(maxBytes, blockSize, threadPool.executor(PREFETCH_THREAD_POOL));
+        cache.setSimulatedLoadLatencyNanos(SIMULATED_LOAD_LATENCY_SETTING.get(settings).nanos());
+        clusterService.getClusterSettings()
+            .addSettingsUpdateConsumer(SIMULATED_LOAD_LATENCY_SETTING, latency -> cache.setSimulatedLoadLatencyNanos(latency.nanos()));
+        blockCache.set(cache);
         return Collections.emptyList();
+    }
+
+    /**
+     * For {@value #STORE_TYPE} indices, the default codec lets each field choose its postings format through the
+     * {@code meta.postings_format} mapping entry, see {@link PostingsFormatSelectingCodec}.
+     */
+    @Override
+    public Optional<CodecServiceFactory> getCustomCodecServiceFactory(IndexSettings indexSettings) {
+        if (STORE_TYPE.equals(indexSettings.getValue(IndexModule.INDEX_STORE_TYPE_SETTING)) == false) {
+            return Optional.empty();
+        }
+        return Optional.of(BufferPoolCodecService::new);
+    }
+
+    @Override
+    public List<RestHandler> getRestHandlers(
+        Settings settings,
+        RestController restController,
+        ClusterSettings clusterSettings,
+        IndexScopedSettings indexScopedSettings,
+        SettingsFilter settingsFilter,
+        IndexNameExpressionResolver indexNameExpressionResolver,
+        Supplier<DiscoveryNodes> nodesInCluster
+    ) {
+        return List.of(new RestBufferPoolStatsAction(blockCache::get));
     }
 
     @Override
