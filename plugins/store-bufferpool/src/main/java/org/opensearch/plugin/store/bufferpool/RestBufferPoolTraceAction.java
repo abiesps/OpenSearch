@@ -96,6 +96,7 @@ final class RestBufferPoolTraceAction extends BaseRestHandler {
                     builder.field("thread", e.thread());
                     builder.field("codec", e.codecCaller());
                     builder.field("search", e.searchCaller());
+                    builder.field("waited_micros", e.waitedNanos() / 1000);
                     builder.endObject();
                 }
                 builder.endArray();

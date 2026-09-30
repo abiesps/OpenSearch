@@ -37,8 +37,10 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *   <li>{@code POST /_bufferpool/cache/_clear}: drops all cached blocks, so the next reads are cold</li>
  *   <li>{@code POST /_bufferpool/dual_nav/_mode?mode=doc|nav}: where {@code Lucene104DualNav} postings read skip data
  *       from, for postings lists opened from now on (JVM-wide)</li>
- *   <li>{@code POST /_bufferpool/disjunction_prefetch?blocks=N}: exhaustive OR queries keep N cache blocks of each clause's
- *       postings requested ahead (JVM-wide, see Lucene's {@code DisjunctionPrefetch}); 0 disables it</li>
+ *   <li>{@code POST /_bufferpool/disjunction_prefetch?blocks=N[&aligned=true]}: exhaustive OR queries keep N cache blocks
+ *       of each clause's postings requested ahead (JVM-wide, see Lucene's {@code DisjunctionPrefetch}); 0 disables it. With
+ *       {@code aligned=true} requests are whole cache blocks: when a clause starts reading block k, blocks up to k + N are
+ *       requested</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -84,6 +86,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             if (blocks < 0) {
                 throw new IllegalArgumentException("missing or negative [blocks]");
             }
+            DisjunctionPrefetch.setNodeBytes(request.paramAsBoolean("aligned", false) ? cache.blockSize() : 0);
             DisjunctionPrefetch.setBytesAhead((long) blocks * cache.blockSize());
         }
         return channel -> {
@@ -94,6 +97,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("cached_bytes", cache.sizeInBytes());
             builder.field("dual_nav_read_mode", Lucene104DualNavPostingsFormat.getReadMode().name().toLowerCase(Locale.ROOT));
             builder.field("disjunction_prefetch_bytes_ahead", DisjunctionPrefetch.getBytesAhead());
+            builder.field("disjunction_prefetch_node_bytes", DisjunctionPrefetch.getNodeBytes());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {

@@ -86,6 +86,8 @@ VARIANTS_OR = [
     ("dual_nav_pf1", "tag_dual", "nav", 1),
     ("dual_nav_pf4", "tag_dual", "nav", 4),
     ("dual_nav_pf16", "tag_dual", "nav", 16),
+    # "aN": node-aligned prefetch in whole cache blocks: when a clause starts reading block k, blocks up to k + N are requested
+    ("dual_nav_pfa1", "tag_dual", "nav", "a1"),
 ]
 VARIANTS = VARIANTS_AND
 SUITE = "and"
@@ -298,7 +300,10 @@ _prefetch_blocks = None
 def set_prefetch(client, blocks):
     global _prefetch_blocks
     if blocks != _prefetch_blocks:
-        client.request("POST", f"/_bufferpool/disjunction_prefetch?blocks={blocks}")
+        if isinstance(blocks, str) and blocks.startswith("a"):
+            client.request("POST", f"/_bufferpool/disjunction_prefetch?blocks={blocks[1:]}&aligned=true")
+        else:
+            client.request("POST", f"/_bufferpool/disjunction_prefetch?blocks={blocks}&aligned=false")
         _prefetch_blocks = blocks
 
 
@@ -488,6 +493,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--runs", type=int, default=5, help="runs per (query, field, mode), interleaved between fields")
     parser.add_argument("--latencies-ms", default="0,4", help="simulated per-load latencies to test, in ms")
+    parser.add_argument("--variants", help="comma-separated subset of the suite's variants (baseline is always kept)")
     parser.add_argument("--fork", default=os.path.join(os.path.dirname(repo), "lucene_experiments"))
     parser.add_argument("--format-tag", help="override the format hash that names the index")
     parser.add_argument("--reingest", action="store_true", help="delete and rebuild the indices")
@@ -499,6 +505,12 @@ def main():
     global QUERIES, VARIANTS, SUITE
     SUITE = args.suite
     QUERIES, VARIANTS = (QUERIES_AND, VARIANTS_AND) if SUITE == "and" else (QUERIES_OR, VARIANTS_OR)
+    if args.variants:
+        wanted = set(args.variants.split(",")) | {"baseline"}
+        unknown = wanted - {v[0] for v in VARIANTS}
+        if unknown:
+            sys.exit(f"unknown variants {sorted(unknown)}; known: {[v[0] for v in VARIANTS]}")
+        VARIANTS = [v for v in VARIANTS if v[0] in wanted]
 
     client = Client(args.url)
     tag = args.format_tag or format_hash(args.fork)

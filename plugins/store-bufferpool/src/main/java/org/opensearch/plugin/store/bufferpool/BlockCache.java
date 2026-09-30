@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
@@ -119,7 +120,18 @@ final class BlockCache {
      */
     ByteBuffer getOrLoad(BlockKey key, FileChannel channel, long fileLength, FileStats fileStats) throws IOException {
         fileStats.requests.increment();
-        return getOrLoad(key, channel, fileLength, fileStats, false);
+        final Trace t = trace;
+        if (t == null) {
+            return getOrLoad(key, channel, fileLength, fileStats, false);
+        }
+        // tracing only: record reads that blocked, on their own load or on a load already in flight (e.g. a prefetch)
+        final long start = System.nanoTime();
+        final ByteBuffer block = getOrLoad(key, channel, fileLength, fileStats, false);
+        final long waited = System.nanoTime() - start;
+        if (waited > TimeUnit.MICROSECONDS.toNanos(100)) {
+            t.recordWait(key, waited);
+        }
+        return block;
     }
 
     private ByteBuffer getOrLoad(BlockKey key, FileChannel channel, long fileLength, FileStats fileStats, boolean prefetch)
@@ -313,6 +325,15 @@ final class BlockCache {
         }
 
         void record(BlockKey key, int size, boolean prefetch) {
+            add(key, size, prefetch, 0);
+        }
+
+        /** A reader's block read that blocked for {@code waitedNanos}; recorded with size -1. */
+        void recordWait(BlockKey key, long waitedNanos) {
+            add(key, -1, false, waitedNanos);
+        }
+
+        private void add(BlockKey key, int size, boolean prefetch, long waitedNanos) {
             final int n = seq.getAndIncrement();
             if (n >= maxEvents) {
                 return;
@@ -328,7 +349,8 @@ final class BlockCache {
                     prefetch,
                     Thread.currentThread().getName(),
                     callers[0],
-                    callers[1]
+                    callers[1],
+                    waitedNanos
                 )
             );
         }
@@ -360,7 +382,7 @@ final class BlockCache {
 
     /** One recorded block load. */
     record Event(int seq, long nanos, String file, long blockOffset, int size, boolean prefetch, String thread, String codecCaller,
-        String searchCaller) {
+        String searchCaller, long waitedNanos) {
     }
 
     /** IO counters of one file type. */
