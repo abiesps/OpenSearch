@@ -163,7 +163,7 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
         IndexNameExpressionResolver indexNameExpressionResolver,
         Supplier<DiscoveryNodes> nodesInCluster
     ) {
-        return List.of(new RestBufferPoolStatsAction(blockCache::get));
+        return List.of(new RestBufferPoolStatsAction(blockCache::get), new RestBufferPoolTraceAction(blockCache::get));
     }
 
     @Override

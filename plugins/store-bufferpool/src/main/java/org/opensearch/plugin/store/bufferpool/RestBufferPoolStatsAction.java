@@ -8,6 +8,8 @@
 
 package org.opensearch.plugin.store.bufferpool;
 
+import org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat;
+import org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat.ReadMode;
 import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.rest.BaseRestHandler;
@@ -17,6 +19,7 @@ import org.opensearch.transport.client.node.NodeClient;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -31,6 +34,8 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *   <li>{@code GET /_bufferpool/stats}: cache size and per-file-type IO counters</li>
  *   <li>{@code POST /_bufferpool/stats/_reset}: sets the counters to zero</li>
  *   <li>{@code POST /_bufferpool/cache/_clear}: drops all cached blocks, so the next reads are cold</li>
+ *   <li>{@code POST /_bufferpool/dual_nav/_mode?mode=doc|nav}: where {@code Lucene104DualNav} postings read skip data
+ *       from, for postings lists opened from now on (JVM-wide)</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -51,7 +56,8 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
         return List.of(
             new Route(GET, "/_bufferpool/stats"),
             new Route(POST, "/_bufferpool/stats/_reset"),
-            new Route(POST, "/_bufferpool/cache/_clear")
+            new Route(POST, "/_bufferpool/cache/_clear"),
+            new Route(POST, "/_bufferpool/dual_nav/_mode")
         );
     }
 
@@ -63,6 +69,12 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             cache.resetStats();
         } else if (path.endsWith("/_clear")) {
             cache.clear();
+        } else if (path.endsWith("/_mode")) {
+            final String mode = request.param("mode");
+            if (mode == null) {
+                throw new IllegalArgumentException("missing [mode], expected doc or nav");
+            }
+            Lucene104DualNavPostingsFormat.setReadMode(ReadMode.valueOf(mode.toUpperCase(Locale.ROOT)));
         }
         return channel -> {
             final XContentBuilder builder = channel.newBuilder();
@@ -70,6 +82,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("block_size", cache.blockSize());
             builder.field("cached_blocks", cache.size());
             builder.field("cached_bytes", cache.sizeInBytes());
+            builder.field("dual_nav_read_mode", Lucene104DualNavPostingsFormat.getReadMode().name().toLowerCase(Locale.ROOT));
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {

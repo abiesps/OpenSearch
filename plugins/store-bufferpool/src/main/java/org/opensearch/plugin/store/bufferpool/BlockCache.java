@@ -27,8 +27,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
 
@@ -61,6 +63,8 @@ final class BlockCache {
     private final Executor prefetchExecutor;
     private final ConcurrentMap<String, FileStats> stats = new ConcurrentHashMap<>();
     private volatile long simulatedLoadLatencyNanos;
+    /** Non-null while a trace is being recorded, see {@link #startTrace(int)}. */
+    private volatile Trace trace;
 
     /**
      * Creates a cache with {@link #DEFAULT_BLOCK_SIZE} blocks.
@@ -262,11 +266,101 @@ final class BlockCache {
                 LockSupport.parkNanos(deadline - now);
             }
         }
+        final Trace t = trace;
+        if (t != null) {
+            t.record(key, size, prefetch);
+        }
         (prefetch ? fileStats.prefetchLoads : fileStats.loads).increment();
         fileStats.bytesLoaded.add(size);
         fileStats.loadNanos.add(System.nanoTime() - start);
         // readers only use absolute gets, so the shared buffer is never mutated and needs no position/limit reset
         return block.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
+    }
+
+    /**
+     * Starts recording every block load (not hits) until {@link #stopTrace()}, replacing any previous trace. For experiments
+     * only: each recorded load walks the stack to find which Lucene code asked for it.
+     *
+     * @param maxEvents loads beyond this count are counted but not recorded
+     */
+    void startTrace(int maxEvents) {
+        trace = new Trace(maxEvents);
+    }
+
+    /** Stops recording and returns the trace, or null if none was running. */
+    Trace stopTrace() {
+        final Trace t = trace;
+        trace = null;
+        return t;
+    }
+
+    /** Returns the running trace without stopping it, or null. */
+    Trace currentTrace() {
+        return trace;
+    }
+
+    /** Block loads recorded in order. */
+    static final class Trace {
+        private static final StackWalker WALKER = StackWalker.getInstance();
+
+        final int maxEvents;
+        final long startNanos = System.nanoTime();
+        final AtomicInteger seq = new AtomicInteger();
+        final ConcurrentLinkedQueue<Event> events = new ConcurrentLinkedQueue<>();
+
+        Trace(int maxEvents) {
+            this.maxEvents = maxEvents;
+        }
+
+        void record(BlockKey key, int size, boolean prefetch) {
+            final int n = seq.getAndIncrement();
+            if (n >= maxEvents) {
+                return;
+            }
+            final String[] callers = callers();
+            events.add(
+                new Event(
+                    n,
+                    System.nanoTime() - startNanos,
+                    key.file().getFileName().toString(),
+                    key.blockOffset(),
+                    size,
+                    prefetch,
+                    Thread.currentThread().getName(),
+                    callers[0],
+                    callers[1]
+                )
+            );
+        }
+
+        /** The innermost Lucene codec frame and the innermost Lucene search frame on the stack, as "Class.method". */
+        private static String[] callers() {
+            return WALKER.walk(frames -> {
+                String codec = null;
+                String search = null;
+                for (StackWalker.StackFrame f : (Iterable<StackWalker.StackFrame>) frames::iterator) {
+                    final String c = f.getClassName();
+                    if (codec == null && (c.startsWith("org.apache.lucene.codecs.") || c.startsWith("org.apache.lucene.index."))) {
+                        codec = c.substring(c.lastIndexOf('.') + 1) + "." + f.getMethodName();
+                    } else if (search == null && c.startsWith("org.apache.lucene.search.")) {
+                        search = c.substring(c.lastIndexOf('.') + 1) + "." + f.getMethodName();
+                    }
+                    if (codec != null && search != null) {
+                        break;
+                    }
+                }
+                return new String[] { codec, search };
+            });
+        }
+
+        int dropped() {
+            return Math.max(0, seq.get() - maxEvents);
+        }
+    }
+
+    /** One recorded block load. */
+    record Event(int seq, long nanos, String file, long blockOffset, int size, boolean prefetch, String thread, String codecCaller,
+        String searchCaller) {
     }
 
     /** IO counters of one file type. */

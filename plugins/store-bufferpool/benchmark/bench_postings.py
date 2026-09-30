@@ -17,9 +17,10 @@ Each doc gets each term below independently with the given probability:
   d50 (50%), d10 (10%), r2 (1e-2), r3 (1e-3), r4 (1e-4), r5 (1e-5), r6 (1e-6)
 
 Queries are bool filters of two terms (a rare lead clause advancing a dense clause), plus d50 AND d10 as a control
-where both lists are dense. Each query runs:
+where both lists are dense. Each query runs --runs times per field (default 100), alternating the baseline and nav field on every iteration:
   cold  block cache cleared before every run, so every block the query needs is loaded
   warm  the same query again, cache kept
+The report gives p50/p90/p99 of the server-side took, and the change of the median with a 95% bootstrap CI.
 with the plugin's simulated per-load latency (bufferpool.simulated_load_latency) set to each value in --latencies-ms.
 Load counts come from GET /_bufferpool/stats, per file type (for example Lucene104_0.doc vs Lucene104Nav_0.doc/.nav).
 
@@ -59,13 +60,22 @@ QUERIES = [
     ("r4 AND d10", ["r4", "d10"]),
     ("d10 AND d50 (control)", ["d10", "d50"]),
 ]
-FIELDS = [("baseline", "tag"), ("nav", "tag_nav")]
+# (variant, field, Lucene104DualNav read mode or None). The two dual variants read the same files.
+VARIANTS = [
+    ("baseline", "tag", None),
+    ("nav", "tag_nav", None),
+    ("dual_doc", "tag_dual", "doc"),
+    ("dual_nav", "tag_dual", "nav"),
+]
+FIELDS = [(v, f) for v, f, _ in VARIANTS]
 NAV_FORMAT = "Lucene104Nav"
+DUAL_FORMAT = "Lucene104DualNav"
 # stock Lucene104 under its own name, so the baseline field does not share files with _id (see the plugin)
 BASELINE_FORMAT = "Lucene104Baseline"
 # Bump when the mapping, index settings or data generation change, so a new index is built.
-DATASET_VERSION = 2
+DATASET_VERSION = 3
 FORK_FORMAT_FILES = [
+    "lucene/core/src/java/org/apache/lucene/codecs/lucene104/Lucene104DualNavPostingsWriter.java",
     "lucene/core/src/java/org/apache/lucene/codecs/lucene104/Lucene104NavPostingsWriter.java",
     "lucene/core/src/java/org/apache/lucene/codecs/lucene104/Lucene104NavPostingsFormat.java",
 ]
@@ -128,7 +138,7 @@ def mapping():
     return {
         "dynamic": "strict",
         "_source": {"enabled": False},
-        "properties": {"tag": field(BASELINE_FORMAT), "tag_nav": field(NAV_FORMAT)},
+        "properties": {"tag": field(BASELINE_FORMAT), "tag_nav": field(NAV_FORMAT), "tag_dual": field(DUAL_FORMAT)},
     }
 
 
@@ -155,7 +165,7 @@ def bulk_bodies(index, num_docs, seed, batch):
         # "d50" etc. need no JSON escaping
         values = ",".join(f'"{t}"' for t in tags)
         lines.append(action)
-        lines.append(f'{{"tag":[{values}],"tag_nav":[{values}]}}')
+        lines.append(f'{{"tag":[{values}],"tag_nav":[{values}],"tag_dual":[{values}]}}')
         if len(lines) >= 2 * batch:
             yield ("\n".join(lines) + "\n").encode()
             lines = []
@@ -231,7 +241,7 @@ def file_sizes(client, index, data_dir):
     sizes = {}
     if os.path.isdir(index_dir):
         for name in os.listdir(index_dir):
-            for fmt in (BASELINE_FORMAT, NAV_FORMAT):
+            for fmt in (BASELINE_FORMAT, NAV_FORMAT, DUAL_FORMAT):
                 marker = f"_{fmt}_"
                 if marker in name:
                     key = name[name.index(marker) + 1 :]
@@ -257,23 +267,81 @@ def run_query(client, index, field, terms):
     return resp["hits"]["total"]["value"], resp["took"], wall_ms
 
 
-def measure(client, index, field, terms, runs, cold):
-    """Runs the query `runs` times; returns hits, took per run, and the IO counters of the last run."""
-    tooks, walls, hits, io = [], [], None, None
+def set_read_mode(client, mode):
+    if mode is not None:
+        client.request("POST", f"/_bufferpool/dual_nav/_mode?mode={mode}")
+
+
+def measure_all(client, index, terms, runs, cold):
+    """
+    Runs the query for every variant `runs` times, rotating the variant order on every iteration so that drift over
+    time (GC, thermals, background merges) affects all variants equally. Returns, per variant: hits, took and client
+    wall time per run, blocks loaded per run, and the IO counters of the last run.
+    """
+    out = {v: {"hits": None, "tooks": [], "walls": [], "loads": [], "io": None} for v, _, _ in VARIANTS}
     if not cold:
-        run_query(client, index, field, terms)  # make sure every block the query needs is cached
-    for _ in range(runs):
-        if cold:
-            client.request("POST", "/_bufferpool/cache/_clear")
-        client.request("POST", "/_bufferpool/stats/_reset")
-        h, took, wall = run_query(client, index, field, terms)
-        io = {k: v for k, v in client.request("GET", "/_bufferpool/stats")["files"].items() if v["requests"] or v["loads"] or v["prefetch_loads"]}
-        if hits is not None and h != hits:
-            raise RuntimeError(f"{field} {terms}: hit count changed between runs ({hits} vs {h})")
-        hits = h
-        tooks.append(took)
-        walls.append(wall)
-    return hits, tooks, walls, io
+        for _, field, mode in VARIANTS:
+            set_read_mode(client, mode)
+            run_query(client, index, field, terms)  # make sure every block the query needs is cached
+    for i in range(runs):
+        order = VARIANTS[i % len(VARIANTS):] + VARIANTS[: i % len(VARIANTS)]
+        for variant, field, mode in order:
+            set_read_mode(client, mode)
+            if cold:
+                client.request("POST", "/_bufferpool/cache/_clear")
+            client.request("POST", "/_bufferpool/stats/_reset")
+            h, took, wall = run_query(client, index, field, terms)
+            files = client.request("GET", "/_bufferpool/stats")["files"]
+            io = {k: v for k, v in files.items() if v["requests"] or v["loads"] or v["prefetch_loads"]}
+            r = out[variant]
+            if r["hits"] is not None and h != r["hits"]:
+                raise RuntimeError(f"{field} {terms}: hit count changed between runs ({r['hits']} vs {h})")
+            r["hits"] = h
+            r["tooks"].append(took)
+            r["walls"].append(wall)
+            r["loads"].append(summarize_io(io)[0])
+            r["io"] = io
+    set_read_mode(client, "doc")
+    return out
+
+
+def percentile(values, q):
+    """Nearest-rank percentile, q in [0, 100]."""
+    ordered = sorted(values)
+    k = max(0, min(len(ordered) - 1, int(round(q / 100 * len(ordered) + 0.5)) - 1))
+    return ordered[k]
+
+
+def distribution(values):
+    return {
+        "p50": statistics.median(values),
+        "p90": percentile(values, 90),
+        "p99": percentile(values, 99),
+        "mean": statistics.fmean(values),
+        "stdev": statistics.stdev(values) if len(values) > 1 else 0.0,
+        "min": min(values),
+        "max": max(values),
+    }
+
+
+def median_change_ci(base, nav, resamples=2000, seed=7):
+    """
+    Relative change of the median, (median(nav) - median(base)) / median(base), with a 95% bootstrap confidence
+    interval. If the interval excludes 0, the difference is unlikely to be noise.
+    """
+    b_med = statistics.median(base)
+    if b_med == 0:
+        return None
+    point = (statistics.median(nav) - b_med) / b_med
+    rng = random.Random(seed)
+    changes = []
+    for _ in range(resamples):
+        bs = statistics.median(rng.choices(base, k=len(base)))
+        ns = statistics.median(rng.choices(nav, k=len(nav)))
+        if bs > 0:
+            changes.append((ns - bs) / bs)
+    changes.sort()
+    return {"change": point, "ci_low": changes[int(0.025 * len(changes))], "ci_high": changes[int(0.975 * len(changes)) - 1]}
 
 
 def summarize_io(io):
@@ -297,32 +365,49 @@ def run_matrix(client, index, latencies, runs):
         for latency in latencies:
             set_latency(client, latency)
             for qname, terms in QUERIES:
-                row_hits = {}
-                for variant, field in FIELDS:
-                    for mode in ("cold", "warm"):
-                        hits, tooks, walls, io = measure(client, index, field, terms, runs, mode == "cold")
-                        loads, bytes_loaded, by_type = summarize_io(io)
-                        row_hits[variant] = hits
+                for mode in ("cold", "warm"):
+                    started = time.time()
+                    runs_by_variant = measure_all(client, index, terms, runs, mode == "cold")
+                    hits = {v: r["hits"] for v, r in runs_by_variant.items()}
+                    if len(set(hits.values())) != 1:
+                        raise RuntimeError(f"{qname}: variants disagree on hits {hits}")
+                    # cold: server-side took (ms, integer) is precise enough; warm queries take a few ms, so use the
+                    # client wall time (sub-ms resolution, includes ~1ms of HTTP overhead that all variants pay)
+                    metric = "tooks" if mode == "cold" else "walls"
+                    base = runs_by_variant["baseline"][metric]
+                    for variant, _, _ in VARIANTS:
+                        r = runs_by_variant[variant]
+                        loads, bytes_loaded, by_type = summarize_io(r["io"])
                         results.append(
                             {
                                 "latency_ms": latency,
                                 "query": qname,
                                 "variant": variant,
                                 "mode": mode,
-                                "hits": hits,
-                                "took_ms": tooks,
-                                "took_ms_median": statistics.median(tooks),
-                                "wall_ms_median": statistics.median(walls),
+                                "hits": r["hits"],
+                                "took_ms": r["tooks"],
+                                "wall_ms": r["walls"],
+                                "loads_per_run": r["loads"],
+                                "took": distribution(r["tooks"]),
+                                "wall": distribution(r["walls"]),
+                                "took_ms_median": statistics.median(r["tooks"]),
+                                "wall_ms_median": statistics.median(r["walls"]),
                                 "loads": loads,
                                 "bytes_loaded": bytes_loaded,
                                 "loads_by_type": by_type,
-                                "io": io,
+                                "io": r["io"],
+                                "median_change_vs_baseline": None
+                                if variant == "baseline"
+                                else median_change_ci(base, r[metric]),
                             }
                         )
-                if row_hits["baseline"] != row_hits["nav"]:
-                    raise RuntimeError(f"{qname}: baseline and nav disagree ({row_hits})")
+                    print(
+                        f"  {latency:g}ms {qname:<22} {mode}: {runs} x {len(VARIANTS)} runs in {time.time() - started:.0f}s",
+                        flush=True,
+                    )
     finally:
         set_latency(client, 0)
+        set_read_mode(client, "doc")
     return results
 
 
@@ -361,7 +446,7 @@ def main():
         "--sizes", help="comma-separated segment size presets instead of --docs: " + ", ".join(SIZE_PRESETS)
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--runs", type=int, default=3, help="runs per (query, field, mode); the median is reported")
+    parser.add_argument("--runs", type=int, default=100, help="runs per (query, field, mode), interleaved between fields")
     parser.add_argument("--latencies-ms", default="0,4", help="simulated per-load latencies to test, in ms")
     parser.add_argument("--fork", default=os.path.join(os.path.dirname(repo), "lucene_experiments"))
     parser.add_argument("--format-tag", help="override the format hash that names the index")
@@ -398,46 +483,60 @@ def main():
     print(f"\nraw results: {out}")
 
 
-def print_size_summary(runs, latency):
-    print(f"\n## across segment sizes, cold, simulated load latency {latency:g} ms\n")
-    print("| query | segment | nav/doc KiB (base) | cold loads base → nav | cold took ms base → nav | change |")
-    print("|---|---:|---:|---|---|---:|")
-    for qname, _ in QUERIES:
-        for run in runs:
-            meta = run["meta"]
-            cells = {(r["variant"]): r for r in run["results"]
-                     if r["query"] == qname and r["mode"] == "cold" and r["latency_ms"] == latency}
-            b, n = cells["baseline"], cells["nav"]
-            base_doc = meta["file_sizes"].get(f"{BASELINE_FORMAT}_0.doc", 0) / 1024
-            change = (n["took_ms_median"] - b["took_ms_median"]) / max(b["took_ms_median"], 1e-9) * 100
-            print(
-                f"| {qname} | {meta['segment_bytes'] / 2**20:,.0f} MiB | {base_doc:,.0f} "
-                f"| {b['loads']} → {n['loads']} | {b['took_ms_median']:g} → {n['took_ms_median']:g} | {change:+.0f}% |"
-            )
+def fmt_ci(ci):
+    if ci is None:
+        return "n/a"
+    sig = "" if ci["ci_low"] <= 0 <= ci["ci_high"] else " *"
+    return f"{ci['change'] * 100:+.0f}% [{ci['ci_low'] * 100:+.0f}, {ci['ci_high'] * 100:+.0f}]{sig}"
 
 
 def print_report(meta, results):
-    print(f"\n## {meta['docs']:,} docs, 1 segment, block size {meta['block_size'] // 1024} KiB, median of {meta['runs']} runs")
+    print(
+        f"\n## {meta['docs']:,} docs, {meta['segment_bytes'] / 2**20:,.0f} MiB segment, block size "
+        f"{meta['block_size'] // 1024} KiB, {meta['runs']} runs per variant (interleaved)"
+    )
+    print("cold: server-side took (ms); warm: client wall time (ms, includes HTTP).")
+    print("change = change of the median vs baseline with a 95% bootstrap CI; * = the CI excludes 0")
+    names = [v for v, _, _ in VARIANTS]
     rows = {}
     for r in results:
-        rows.setdefault((r["latency_ms"], r["query"]), {})[(r["variant"], r["mode"])] = r
+        rows.setdefault((r["latency_ms"], r["query"], r["mode"]), {})[r["variant"]] = r
     for latency in sorted({k[0] for k in rows}):
-        print(f"\n### simulated load latency {latency:g} ms\n")
-        print("| query | hits | cold loads base → nav | cold KiB base → nav | cold took ms base → nav | warm took ms base → nav | nav cold loads doc / nav / tim+tip |")
-        print("|---|---:|---|---|---|---|---|")
-        for (lat, qname), cells in rows.items():
-            if lat != latency:
-                continue
-            bc, nc = cells[("baseline", "cold")], cells[("nav", "cold")]
-            bw, nw = cells[("baseline", "warm")], cells[("nav", "warm")]
-            t = nc["loads_by_type"]
-            print(
-                f"| {qname} | {bc['hits']:,} | {bc['loads']} → {nc['loads']} "
-                f"| {bc['bytes_loaded'] / 1024:,.0f} → {nc['bytes_loaded'] / 1024:,.0f} "
-                f"| {bc['took_ms_median']:g} → {nc['took_ms_median']:g} "
-                f"| {bw['took_ms_median']:g} → {nw['took_ms_median']:g} "
-                f"| {t.get('doc', 0)} / {t.get('nav', 0)} / {t.get('tim', 0) + t.get('tip', 0)} |"
-            )
+        for mode in ("cold", "warm"):
+            print(f"\n### {mode}, simulated load latency {latency:g} ms\n")
+            print("| query | hits | " + " | ".join(f"{v} IOs, p50 ms (change)" for v in names) + " |")
+            print("|---|---:|" + "---|" * len(names))
+            for (lat, qname, m), cells in rows.items():
+                if lat != latency or m != mode:
+                    continue
+                key = "took" if mode == "cold" else "wall"
+                parts = []
+                for v in names:
+                    c = cells[v]
+                    lp = c["loads_per_run"]
+                    loads = f"{min(lp)}" if min(lp) == max(lp) else f"{min(lp)}-{max(lp)}"
+                    change = "" if v == "baseline" else f" ({fmt_ci(c['median_change_vs_baseline'])})"
+                    parts.append(f"{loads}, {c[key]['p50']:.1f}{change}")
+                print(f"| {qname} | {cells['baseline']['hits']:,} | " + " | ".join(parts) + " |")
+
+
+def print_size_summary(runs, latency):
+    print(f"\n## across segment sizes, cold, simulated load latency {latency:g} ms\n")
+    names = [v for v, _, _ in VARIANTS]
+    print("| query | segment | " + " | ".join(f"{v} IOs / p50 ms" for v in names) + " | best |")
+    print("|---|---:|" + "---|" * (len(names) + 1))
+    for qname, _ in QUERIES:
+        for run in runs:
+            meta = run["meta"]
+            cells = {r["variant"]: r for r in run["results"]
+                     if r["query"] == qname and r["mode"] == "cold" and r["latency_ms"] == latency}
+            best = min(names, key=lambda v: cells[v]["took"]["p50"])
+            parts = []
+            for v in names:
+                c = cells[v]
+                change = "" if v == "baseline" else f" ({c['median_change_vs_baseline']['change'] * 100:+.0f}%)"
+                parts.append(f"{c['loads']} / {c['took']['p50']:g}{change}")
+            print(f"| {qname} | {meta['segment_bytes'] / 2**20:,.0f} MiB | " + " | ".join(parts) + f" | {best} |")
 
 
 if __name__ == "__main__":
