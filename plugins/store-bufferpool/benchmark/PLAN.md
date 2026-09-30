@@ -106,16 +106,32 @@ result as an upper bound.
 - Pruning skips candidates (1.5K-14K collected of 1.8M-18M matches) but no 128 KiB `.doc` block: top-k reads the same
   `.doc` blocks as the exhaustive query. DualNav doc/nav = baseline (-4% to +3%). k=100 = k=10 in IOs.
 - OpenSearch's CancellableBulkScorer chunks read the same blocks as one Lucene call (validate/TopkBlocks.java).
-- Next: norms prefetch for each window's doc range, then B2 (.doc prefetch of essential clauses). 8 KiB nodes, A5, A6 parked.
+- Next: T1-T4 below. 8 KiB nodes, A5, A6 parked.
 
 
 
-| Step | Change |
-|---|---|
-| B1 | New corpus: a text field with varied term frequencies and document lengths (BM25 impacts that differ per block), plus top-k OR queries; one re-ingest (bump `DATASET_VERSION`) |
-| B2 | Impact-aware prefetch in `MaxScoreBulkScorer`: prefetch the essential clauses' blocks for upcoming outer windows; leave out blocks whose max score plus the other clauses' max scores is below `minCompetitiveScore` |
-| B3 | Impacts in their own small file (duplicate, per the rule), so the navigation plane stays minimal |
-| B4 | Skip index over impacts: skip non-competitive blocks with O(log n) reads instead of O(n) |
+### Top-k prefetch design (agreed)
+
+- `.nvm` is loaded into heap when the segment opens, so it needs no prefetch. The cost is `.nvd`: one dense stream per
+  field (1 byte per doc, `normsOffset + doc`), shared by all clauses on that field.
+- Before scoring, prefetch the first `.nav` node of each clause (term metadata stores where `.nav` starts, not its
+  length, so "the whole region" would need a format change).
+- Scoring stays in 4,096-doc windows. Before each window, a planner looks ahead and decides, per upcoming window, whether
+  it is eligible: sum over clauses of the max score from the clause's impacts (read through a second impacts enum, which
+  in DualNav nav mode reads only `.nav`) >= the current `minCompetitiveScore`. The threshold only rises, so an
+  ineligible window stays ineligible.
+- For eligible windows only, request whole storage blocks (nodes), one to two ahead per stream as in Phase 3b: the norm
+  blocks of the field, and later (T4) the `.doc` nodes of the clauses. Requests never overlap.
+- Variants to measure: norms prefetch filtered by eligibility, norms prefetch without the filter (shows what the
+  filter saves), then norms + `.doc`. Report prefetched blocks never read.
+
+| Step | Change | Done when |
+|---|---|---|
+| T1 | Lucene: `NumericDocValues.prefetchNodes(fromDoc, toDoc, nodeBytes)` hint (no-op by default); dense Lucene90 norms request the whole nodes holding those norms, never twice | unit test: whole nodes, inside the field's region, no overlap |
+| T2 | Lucene: `TopKPrefetch` switch; `TermScorer` gets a planning impacts enum (second enum on the same term) and the norms; `MaxScoreBulkScorer` planner: eligibility per 4,096-doc window, norms requested for eligible windows `docsAhead` ahead, filter optional; first `.nav` node prefetched at start | top-k identical with and without; with the filter off, every norm read was prefetched before it |
+| T3 | Plugin endpoint + `bench_topk.py` variants; measure on `topk_v2` (5 runs) | results table + blocks prefetched but never read |
+| T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
+| T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
 
 ## Parked
 
