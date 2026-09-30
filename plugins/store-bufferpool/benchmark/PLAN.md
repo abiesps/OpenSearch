@@ -95,7 +95,20 @@ result as an upper bound.
 - pf4 beats pf16 at 137/532 MiB; likely because one prefetch request is loaded serially by one task (see A5).
 - Warm: up to +8% on dense ORs at 1 GB (planning CPU).
 
-## Phase B: top-k OR (next)
+## Phase B: top-k OR (B1 done)
+
+### B1 results (index `topk_v2_30700000_42_f246f5c2`, 709 MiB, 5 runs, cold 4 ms; `postings_topk_20260930_003050.json`)
+
+- Corpus: `bench_topk.py` (text fields `body` = Lucene104Baseline, `body_dual` = DualNav via copy_to; terms t50/t20/t5/t1/t01;
+  tf 1 except 2% hot 20K-doc batches per term; 16-128 filler tokens). Queries: bool should, size k, track_total_hits false.
+- Norms (`.nvd`) are 54-93% of cold IOs (89-235 blocks; the field's norms are 235 blocks), `.doc` 17-74. Cold top-k is
+  2-14x slower than the exhaustive count of the same query, which reads no norms. Warm top-k is 3-7 ms.
+- Pruning skips candidates (1.5K-14K collected of 1.8M-18M matches) but no 128 KiB `.doc` block: top-k reads the same
+  `.doc` blocks as the exhaustive query. DualNav doc/nav = baseline (-4% to +3%). k=100 = k=10 in IOs.
+- OpenSearch's CancellableBulkScorer chunks read the same blocks as one Lucene call (validate/TopkBlocks.java).
+- Next: norms prefetch for each window's doc range, then B2 (.doc prefetch of essential clauses). 8 KiB nodes, A5, A6 parked.
+
+
 
 | Step | Change |
 |---|---|
