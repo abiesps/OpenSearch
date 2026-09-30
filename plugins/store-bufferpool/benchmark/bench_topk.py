@@ -62,12 +62,34 @@ QUERIES = [
     ("t5 OR t1 OR t01", ["t5", "t1", "t01"], 10),
     ("t50 OR t20 (k=100)", ["t50", "t20"], 100),
 ]
-# (variant, field, Lucene104DualNav read mode or None, disjunction prefetch)
-VARIANTS = [
+# (variant, field, Lucene104DualNav read mode or None, top-k prefetch)
+# top-k prefetch: 0 = off, "nN" = norms N cache blocks ahead for every window, "nNf" = only eligible windows (max score
+# from .nav impacts can beat the current threshold)
+VARIANTS_ALL = [
     ("baseline", "body", None, 0),
     ("dual_doc", "body_dual", "doc", 0),
     ("dual_nav", "body_dual", "nav", 0),
+    ("baseline_norms2", "body", None, "n2"),
+    ("dual_nav_norms2", "body_dual", "nav", "n2"),
+    ("dual_nav_norms2_filter", "body_dual", "nav", "n2f"),
 ]
+VARIANTS = VARIANTS_ALL[:3]
+
+_topk = None
+
+
+def set_topk(client, spec):
+    """Sets the top-k prefetch switch (see VARIANTS_ALL); the disjunction (BooleanScorer) prefetch stays off."""
+    global _topk
+    if spec == _topk:
+        return
+    if not spec:
+        client.request("POST", "/_bufferpool/topk_prefetch?norms_blocks=0")
+    else:
+        blocks = int(spec[1:].rstrip("f"))
+        filt = "true" if spec.endswith("f") else "false"
+        client.request("POST", f"/_bufferpool/topk_prefetch?norms_blocks={blocks}&filter={filt}")
+    _topk = spec
 
 
 def mapping():
@@ -191,7 +213,7 @@ def check_same_results(client, index, terms, k):
     ref = None
     for variant, field, mode, blocks in VARIANTS:
         bp.set_read_mode(client, mode)
-        bp.set_prefetch(client, blocks)
+        set_topk(client, blocks)
         resp, _ = search(client, index, query_body(field, terms, k, with_ids=True))
         got = [(h["_id"], h["_score"]) for h in resp["hits"]["hits"]]
         if len(got) != k:
@@ -213,7 +235,7 @@ def exhaustive_reference(client, index, terms):
     ref = {}
     for variant, field, mode, blocks in VARIANTS:
         bp.set_read_mode(client, mode)
-        bp.set_prefetch(client, 0)
+        set_topk(client, 0)
         client.request("POST", "/_bufferpool/cache/_clear")
         client.request("POST", "/_bufferpool/stats/_reset")
         resp, _ = search(client, index, query_body(field, terms, 0, exhaustive=True))
@@ -227,13 +249,13 @@ def measure(client, index, terms, k, runs, cold, expected_scores):
     if not cold:
         for _, field, mode, blocks in VARIANTS:
             bp.set_read_mode(client, mode)
-            bp.set_prefetch(client, blocks)
+            set_topk(client, blocks)
             search(client, index, query_body(field, terms, k))
     for i in range(runs):
         order = VARIANTS[i % len(VARIANTS):] + VARIANTS[: i % len(VARIANTS)]
         for variant, field, mode, blocks in order:
             bp.set_read_mode(client, mode)
-            bp.set_prefetch(client, blocks)
+            set_topk(client, blocks)
             if cold:
                 client.request("POST", "/_bufferpool/cache/_clear")
             client.request("POST", "/_bufferpool/stats/_reset")
@@ -250,7 +272,7 @@ def measure(client, index, terms, k, runs, cold, expected_scores):
             r["loads"].append(bp.summarize_io(io)[0])
             r["io"] = io
     bp.set_read_mode(client, "doc")
-    bp.set_prefetch(client, 0)
+    set_topk(client, 0)
     return out
 
 
@@ -299,7 +321,7 @@ def run_matrix(client, index, latencies, runs):
     finally:
         bp.set_latency(client, 0)
         bp.set_read_mode(client, "doc")
-        bp.set_prefetch(client, 0)
+        set_topk(client, 0)
     return results
 
 
@@ -334,8 +356,17 @@ def main():
     parser.add_argument("--bulk-threads", type=int, default=4)
     parser.add_argument("--fork", default=os.path.join(os.path.dirname(repo), "lucene_experiments"))
     parser.add_argument("--ingest-only", action="store_true")
+    parser.add_argument("--variants", help="comma-separated variants (baseline always kept); default: "
+                        + ",".join(v[0] for v in VARIANTS_ALL[:3]))
     parser.add_argument("--out", default=os.path.join(os.path.expanduser("~"), "bufferpool-bench", "results"))
     args = parser.parse_args()
+    global VARIANTS
+    if args.variants:
+        wanted = set(args.variants.split(",")) | {"baseline"}
+        unknown = wanted - {v[0] for v in VARIANTS_ALL}
+        if unknown:
+            sys.exit(f"unknown variants {sorted(unknown)}; known: {[v[0] for v in VARIANTS_ALL]}")
+        VARIANTS = [v for v in VARIANTS_ALL if v[0] in wanted]
     client = bp.Client(args.url)
     tag = bp.format_hash(args.fork)
     if tag is None:

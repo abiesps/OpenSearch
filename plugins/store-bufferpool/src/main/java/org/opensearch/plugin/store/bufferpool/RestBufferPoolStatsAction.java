@@ -11,6 +11,7 @@ package org.opensearch.plugin.store.bufferpool;
 import org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat;
 import org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat.ReadMode;
 import org.apache.lucene.search.DisjunctionPrefetch;
+import org.apache.lucene.search.TopKPrefetch;
 import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.rest.BaseRestHandler;
@@ -41,6 +42,10 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       of each clause's postings requested ahead (JVM-wide, see Lucene's {@code DisjunctionPrefetch}); 0 disables it. With
  *       {@code aligned=true} requests are whole cache blocks: when a clause starts reading block k, blocks up to k + N are
  *       requested</li>
+ *   <li>{@code POST /_bufferpool/topk_prefetch?norms_blocks=N[&filter=true|false]}: top-k OR queries request norms up to N
+ *       cache blocks ahead (N * block size doc IDs, for 1-byte norms), in whole blocks, only for doc windows whose max
+ *       score can beat the current threshold unless {@code filter=false} (JVM-wide, see Lucene's {@code TopKPrefetch});
+ *       0 disables it</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -63,7 +68,8 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             new Route(POST, "/_bufferpool/stats/_reset"),
             new Route(POST, "/_bufferpool/cache/_clear"),
             new Route(POST, "/_bufferpool/dual_nav/_mode"),
-            new Route(POST, "/_bufferpool/disjunction_prefetch")
+            new Route(POST, "/_bufferpool/disjunction_prefetch"),
+            new Route(POST, "/_bufferpool/topk_prefetch")
         );
     }
 
@@ -81,6 +87,15 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                 throw new IllegalArgumentException("missing [mode], expected doc or nav");
             }
             Lucene104DualNavPostingsFormat.setReadMode(ReadMode.valueOf(mode.toUpperCase(Locale.ROOT)));
+        } else if (path.endsWith("/topk_prefetch")) {
+            final int blocks = request.paramAsInt("norms_blocks", -1);
+            if (blocks < 0) {
+                throw new IllegalArgumentException("missing or negative [norms_blocks]");
+            }
+            // norms are 1 byte per doc for BM25 text fields: N blocks of norms = N * block size doc IDs
+            TopKPrefetch.setNodeBytes(cache.blockSize());
+            TopKPrefetch.setFilter(request.paramAsBoolean("filter", true));
+            TopKPrefetch.setNormsDocsAhead(Math.toIntExact((long) blocks * cache.blockSize()));
         } else if (path.endsWith("/disjunction_prefetch")) {
             final int blocks = request.paramAsInt("blocks", -1);
             if (blocks < 0) {
@@ -98,6 +113,8 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("dual_nav_read_mode", Lucene104DualNavPostingsFormat.getReadMode().name().toLowerCase(Locale.ROOT));
             builder.field("disjunction_prefetch_bytes_ahead", DisjunctionPrefetch.getBytesAhead());
             builder.field("disjunction_prefetch_node_bytes", DisjunctionPrefetch.getNodeBytes());
+            builder.field("topk_prefetch_norms_docs_ahead", TopKPrefetch.getNormsDocsAhead());
+            builder.field("topk_prefetch_filter", TopKPrefetch.isFilter());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {

@@ -61,6 +61,9 @@ import java.util.function.Supplier;
  */
 public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, EnginePlugin, ActionPlugin {
 
+    /** Creates the plugin; the block cache is created when the node starts. */
+    public BufferPoolStorePlugin() {}
+
     /** Value of {@code index.store.type} that selects {@link BufferPoolDirectory}. */
     public static final String STORE_TYPE = "bufferpoolfs";
 
@@ -144,6 +147,8 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
     /**
      * For {@value #STORE_TYPE} indices, the default codec lets each field choose its postings format through the
      * {@code meta.postings_format} mapping entry, see {@link PostingsFormatSelectingCodec}.
+     *
+     * @param indexSettings settings of the index the codec is for
      */
     @Override
     public Optional<CodecServiceFactory> getCustomCodecServiceFactory(IndexSettings indexSettings) {
