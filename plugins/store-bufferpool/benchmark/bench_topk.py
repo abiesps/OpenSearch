@@ -64,7 +64,7 @@ QUERIES = [
 ]
 # (variant, field, Lucene104DualNav read mode or None, top-k prefetch)
 # top-k prefetch: 0 = off, "nN" = norms N cache blocks ahead for every window, "nNf" = only eligible windows (max score
-# from .nav impacts can beat the current threshold)
+# from .nav impacts can beat the current threshold), "...dD" = also each clause's postings D blocks ahead (node-aligned)
 VARIANTS_ALL = [
     ("baseline", "body", None, 0),
     ("dual_doc", "body_dual", "doc", 0),
@@ -72,6 +72,8 @@ VARIANTS_ALL = [
     ("baseline_norms2", "body", None, "n2"),
     ("dual_nav_norms2", "body_dual", "nav", "n2"),
     ("dual_nav_norms2_filter", "body_dual", "nav", "n2f"),
+    ("dual_nav_doc1", "body_dual", "nav", "n0d1"),
+    ("dual_nav_norms2_doc1", "body_dual", "nav", "n2d1"),
 ]
 VARIANTS = VARIANTS_ALL[:3]
 
@@ -86,9 +88,10 @@ def set_topk(client, spec):
     if not spec:
         client.request("POST", "/_bufferpool/topk_prefetch?norms_blocks=0")
     else:
-        blocks = int(spec[1:].rstrip("f"))
-        filt = "true" if spec.endswith("f") else "false"
-        client.request("POST", f"/_bufferpool/topk_prefetch?norms_blocks={blocks}&filter={filt}")
+        norms, _, doc = spec[1:].partition("d")
+        filt = "true" if norms.endswith("f") else "false"
+        blocks = int(norms.rstrip("f"))
+        client.request("POST", f"/_bufferpool/topk_prefetch?norms_blocks={blocks}&filter={filt}&doc_blocks={int(doc or 0)}")
     _topk = spec
 
 

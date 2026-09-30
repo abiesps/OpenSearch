@@ -42,7 +42,8 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       of each clause's postings requested ahead (JVM-wide, see Lucene's {@code DisjunctionPrefetch}); 0 disables it. With
  *       {@code aligned=true} requests are whole cache blocks: when a clause starts reading block k, blocks up to k + N are
  *       requested</li>
- *   <li>{@code POST /_bufferpool/topk_prefetch?norms_blocks=N[&filter=true|false]}: top-k OR queries request norms up to N
+ *   <li>{@code POST /_bufferpool/topk_prefetch?norms_blocks=N[&filter=true|false][&doc_blocks=D]}: top-k OR queries
+ *       keep each clause's postings requested D cache blocks ahead, and request norms up to N
  *       cache blocks ahead (N * block size doc IDs, for 1-byte norms), in whole blocks, only for doc windows whose max
  *       score can beat the current threshold unless {@code filter=false} (JVM-wide, see Lucene's {@code TopKPrefetch});
  *       0 disables it</li>
@@ -89,9 +90,15 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             Lucene104DualNavPostingsFormat.setReadMode(ReadMode.valueOf(mode.toUpperCase(Locale.ROOT)));
         } else if (path.endsWith("/topk_prefetch")) {
             final int blocks = request.paramAsInt("norms_blocks", -1);
-            if (blocks < 0) {
-                throw new IllegalArgumentException("missing or negative [norms_blocks]");
+            final int docBlocks = request.paramAsInt("doc_blocks", 0);
+            if (blocks < 0 || docBlocks < 0) {
+                throw new IllegalArgumentException("missing or negative [norms_blocks], or negative [doc_blocks]");
             }
+            if (docBlocks > 0) {
+                // Lucene104DualNav plans postings prefetch in whole nodes only when the node size is set
+                DisjunctionPrefetch.setNodeBytes(cache.blockSize());
+            }
+            TopKPrefetch.setDocNodesAhead(docBlocks);
             // norms are 1 byte per doc for BM25 text fields: N blocks of norms = N * block size doc IDs
             TopKPrefetch.setNodeBytes(cache.blockSize());
             TopKPrefetch.setFilter(request.paramAsBoolean("filter", true));
@@ -115,6 +122,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("disjunction_prefetch_node_bytes", DisjunctionPrefetch.getNodeBytes());
             builder.field("topk_prefetch_norms_docs_ahead", TopKPrefetch.getNormsDocsAhead());
             builder.field("topk_prefetch_filter", TopKPrefetch.isFilter());
+            builder.field("topk_prefetch_doc_nodes_ahead", TopKPrefetch.getDocNodesAhead());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {
