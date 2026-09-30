@@ -125,6 +125,16 @@ result as an upper bound.
 - Variants to measure: norms prefetch filtered by eligibility, norms prefetch without the filter (shows what the
   filter saves), then norms + `.doc`. Report prefetched blocks never read.
 
+### T1-T3 results (5 runs, cold 4 ms; `postings_topk_20260930_114724.json`; fork `8ff4f53b06`)
+
+- Norms prefetch 2 blocks ahead, every window: -35% to -58% cold (e.g. t20 OR t5 OR t1 1,553 -> 648 ms stock,
+  703 ms DualNav). Works on stock postings too. Warm within noise. 2-term queries load 235 norm blocks but read 88-100.
+- With the eligibility filter (level-0 impact ranges): 2-term queries load 91-97 norm blocks (no waste) but are 2-14%
+  slower than unfiltered, and warm costs +1-8 ms. 3-term queries: no saving, t20 OR t5 OR t1 slower (935 ms, 65 norm
+  demand loads). Likely cause: Lucene's outer windows use coarser bounds than the planner, so rejected ranges get read.
+- A fixed 4,096-doc window with level-1 bounds rejected nothing (first version).
+- .doc loads unchanged and serial (17-74 per query): next is T4.
+
 | Step | Change | Done when |
 |---|---|---|
 | T1 | Lucene: `NumericDocValues.prefetchNodes(fromDoc, toDoc, nodeBytes)` hint (no-op by default); dense Lucene90 norms request the whole nodes holding those norms, never twice | unit test: whole nodes, inside the field's region, no overlap |
