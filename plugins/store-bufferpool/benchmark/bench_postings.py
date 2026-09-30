@@ -51,7 +51,8 @@ import urllib.error
 import urllib.request
 
 TERMS = [("d50", 0.5), ("d10", 0.1), ("r2", 1e-2), ("r3", 1e-3), ("r4", 1e-4), ("r5", 1e-5), ("r6", 1e-6)]
-QUERIES = [
+# conjunction suite: bool filter of two terms (rare lead AND dense)
+QUERIES_AND = [
     ("r6 AND d50", ["r6", "d50"]),
     ("r5 AND d50", ["r5", "d50"]),
     ("r4 AND d50", ["r4", "d50"]),
@@ -60,14 +61,34 @@ QUERIES = [
     ("r4 AND d10", ["r4", "d10"]),
     ("d10 AND d50 (control)", ["d10", "d50"]),
 ]
-# (variant, field, Lucene104DualNav read mode or None). The two dual variants read the same files.
-VARIANTS = [
-    ("baseline", "tag", None),
-    ("nav", "tag_nav", None),
-    ("dual_doc", "tag_dual", "doc"),
-    ("dual_nav", "tag_dual", "nav"),
+# disjunction suite: exhaustive OR (size 0, all hits counted, no scores) -> Lucene BooleanScorer
+QUERIES_OR = [
+    ("d50 OR d10", ["d50", "d10"]),
+    ("d50 OR d10 OR r2", ["d50", "d10", "r2"]),
+    ("d10 OR r2", ["d10", "r2"]),
+    ("d50 OR r4", ["d50", "r4"]),
+    ("r2 OR r3 OR r4", ["r2", "r3", "r4"]),
+    ("r4 OR r5 OR r6", ["r4", "r5", "r6"]),
 ]
-FIELDS = [(v, f) for v, f, _ in VARIANTS]
+QUERIES = QUERIES_AND
+# (variant, field, Lucene104DualNav read mode or None, disjunction prefetch in cache blocks per clause).
+# All dual variants read the same files.
+VARIANTS_AND = [
+    ("baseline", "tag", None, 0),
+    ("nav", "tag_nav", None, 0),
+    ("dual_doc", "tag_dual", "doc", 0),
+    ("dual_nav", "tag_dual", "nav", 0),
+]
+VARIANTS_OR = [
+    ("baseline", "tag", None, 0),
+    ("dual_doc", "tag_dual", "doc", 0),
+    ("dual_nav", "tag_dual", "nav", 0),
+    ("dual_nav_pf1", "tag_dual", "nav", 1),
+    ("dual_nav_pf4", "tag_dual", "nav", 4),
+    ("dual_nav_pf16", "tag_dual", "nav", 16),
+]
+VARIANTS = VARIANTS_AND
+SUITE = "and"
 NAV_FORMAT = "Lucene104Nav"
 DUAL_FORMAT = "Lucene104DualNav"
 # stock Lucene104 under its own name, so the baseline field does not share files with _id (see the plugin)
@@ -256,11 +277,10 @@ def set_latency(client, ms):
 
 
 def run_query(client, index, field, terms):
-    body = {
-        "size": 0,
-        "track_total_hits": True,
-        "query": {"bool": {"filter": [{"term": {field: t}} for t in terms]}},
-    }
+    clauses = [{"term": {field: t}} for t in terms]
+    # and: filter conjunction; or: exhaustive disjunction (size 0 + all hits counted -> no scores)
+    bool_query = {"filter": clauses} if SUITE == "and" else {"should": clauses, "minimum_should_match": 1}
+    body = {"size": 0, "track_total_hits": True, "query": {"bool": bool_query}}
     start = time.perf_counter()
     resp = client.request("POST", f"/{index}/_search?request_cache=false", body)
     wall_ms = (time.perf_counter() - start) * 1000
@@ -272,25 +292,40 @@ def set_read_mode(client, mode):
         client.request("POST", f"/_bufferpool/dual_nav/_mode?mode={mode}")
 
 
+_prefetch_blocks = None
+
+
+def set_prefetch(client, blocks):
+    global _prefetch_blocks
+    if blocks != _prefetch_blocks:
+        client.request("POST", f"/_bufferpool/disjunction_prefetch?blocks={blocks}")
+        _prefetch_blocks = blocks
+
+
 def measure_all(client, index, terms, runs, cold):
     """
     Runs the query for every variant `runs` times, rotating the variant order on every iteration so that drift over
     time (GC, thermals, background merges) affects all variants equally. Returns, per variant: hits, took and client
     wall time per run, blocks loaded per run, and the IO counters of the last run.
     """
-    out = {v: {"hits": None, "tooks": [], "walls": [], "loads": [], "io": None} for v, _, _ in VARIANTS}
+    out = {v: {"hits": None, "tooks": [], "walls": [], "loads": [], "io": None} for v, _, _, _ in VARIANTS}
     if not cold:
-        for _, field, mode in VARIANTS:
+        for _, field, mode, blocks in VARIANTS:
             set_read_mode(client, mode)
+            set_prefetch(client, blocks)
             run_query(client, index, field, terms)  # make sure every block the query needs is cached
     for i in range(runs):
         order = VARIANTS[i % len(VARIANTS):] + VARIANTS[: i % len(VARIANTS)]
-        for variant, field, mode in order:
+        for variant, field, mode, blocks in order:
             set_read_mode(client, mode)
+            set_prefetch(client, blocks)
             if cold:
                 client.request("POST", "/_bufferpool/cache/_clear")
             client.request("POST", "/_bufferpool/stats/_reset")
             h, took, wall = run_query(client, index, field, terms)
+            if blocks:
+                # let prefetches that were issued but not used finish, so they count against this run
+                time.sleep(0.02)
             files = client.request("GET", "/_bufferpool/stats")["files"]
             io = {k: v for k, v in files.items() if v["requests"] or v["loads"] or v["prefetch_loads"]}
             r = out[variant]
@@ -302,6 +337,7 @@ def measure_all(client, index, terms, runs, cold):
             r["loads"].append(summarize_io(io)[0])
             r["io"] = io
     set_read_mode(client, "doc")
+    set_prefetch(client, 0)
     return out
 
 
@@ -375,7 +411,7 @@ def run_matrix(client, index, latencies, runs):
                     # client wall time (sub-ms resolution, includes ~1ms of HTTP overhead that all variants pay)
                     metric = "tooks" if mode == "cold" else "walls"
                     base = runs_by_variant["baseline"][metric]
-                    for variant, _, _ in VARIANTS:
+                    for variant, _, _, _ in VARIANTS:
                         r = runs_by_variant[variant]
                         loads, bytes_loaded, by_type = summarize_io(r["io"])
                         results.append(
@@ -408,6 +444,7 @@ def run_matrix(client, index, latencies, runs):
     finally:
         set_latency(client, 0)
         set_read_mode(client, "doc")
+        set_prefetch(client, 0)
     return results
 
 
@@ -427,6 +464,8 @@ def run_one(client, args, docs, tag, repo, latencies):
         "opensearch_head": git_head(repo),
         "lucene_fork_head": git_head(args.fork),
         "format_tag": tag,
+        "suite": SUITE,
+        "variants": [list(v) for v in VARIANTS],
         **segment,
         "file_sizes": sizes,
     }
@@ -445,6 +484,7 @@ def main():
     parser.add_argument(
         "--sizes", help="comma-separated segment size presets instead of --docs: " + ", ".join(SIZE_PRESETS)
     )
+    parser.add_argument("--suite", choices=["and", "or"], default="and", help="conjunction or disjunction queries")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--runs", type=int, default=100, help="runs per (query, field, mode), interleaved between fields")
     parser.add_argument("--latencies-ms", default="0,4", help="simulated per-load latencies to test, in ms")
@@ -456,6 +496,9 @@ def main():
     parser.add_argument("--data-dir", default=os.path.join(os.path.expanduser("~"), "bufferpool-bench", "data"))
     parser.add_argument("--out", default=os.path.join(os.path.expanduser("~"), "bufferpool-bench", "results"))
     args = parser.parse_args()
+    global QUERIES, VARIANTS, SUITE
+    SUITE = args.suite
+    QUERIES, VARIANTS = (QUERIES_AND, VARIANTS_AND) if SUITE == "and" else (QUERIES_OR, VARIANTS_OR)
 
     client = Client(args.url)
     tag = args.format_tag or format_hash(args.fork)
@@ -473,7 +516,7 @@ def main():
     runs = [run_one(client, args, docs, tag, repo, latencies) for docs in doc_counts]
 
     os.makedirs(args.out, exist_ok=True)
-    out = os.path.join(args.out, f"postings_{datetime.datetime.now():%Y%m%d_%H%M%S}.json")
+    out = os.path.join(args.out, f"postings_{SUITE}_{datetime.datetime.now():%Y%m%d_%H%M%S}.json")
     with open(out, "w") as f:
         json.dump({"runs": runs}, f, indent=1)
     for run in runs:
@@ -497,7 +540,7 @@ def print_report(meta, results):
     )
     print("cold: server-side took (ms); warm: client wall time (ms, includes HTTP).")
     print("change = change of the median vs baseline with a 95% bootstrap CI; * = the CI excludes 0")
-    names = [v for v, _, _ in VARIANTS]
+    names = [v for v, _, _, _ in VARIANTS]
     rows = {}
     for r in results:
         rows.setdefault((r["latency_ms"], r["query"], r["mode"]), {})[r["variant"]] = r
@@ -522,7 +565,7 @@ def print_report(meta, results):
 
 def print_size_summary(runs, latency):
     print(f"\n## across segment sizes, cold, simulated load latency {latency:g} ms\n")
-    names = [v for v, _, _ in VARIANTS]
+    names = [v for v, _, _, _ in VARIANTS]
     print("| query | segment | " + " | ".join(f"{v} IOs / p50 ms" for v in names) + " | best |")
     print("|---|---:|" + "---|" * (len(names) + 1))
     for qname, _ in QUERIES:
