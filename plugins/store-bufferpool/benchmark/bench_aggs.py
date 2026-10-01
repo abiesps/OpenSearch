@@ -67,7 +67,9 @@ WINDOWS = {"7d": (0, SPAN_MS, "1h"), "1d": (3 * 86_400_000, 4 * 86_400_000, "10m
 #           runs of date_histogram handed to the sub-aggregation as a stream
 #   vecdec  vec + Lucene bulk doc-values reads decode the packed span between the first and last doc in one pass
 #           (CollectExperiments.setBulkDecode)
-VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec", "vecdec")]
+#   pf      vecdec + doc-values prefetch, one node ahead, doc-ID aligned, proven by a look-ahead iterator of the query
+#           (DocValuesPrefetch)
+VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec", "vecdec"), ("pf", "pf")]
 VARIANTS = VARIANTS_ALL[:1]
 DEFAULT_QUERIES = [
     "dh:s50:7d", "dh:s10:7d", "dh:s1:7d", "dh:s10:1d",

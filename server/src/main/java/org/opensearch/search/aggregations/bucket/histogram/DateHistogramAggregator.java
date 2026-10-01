@@ -56,6 +56,7 @@ import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.BucketOrder;
 import org.opensearch.search.aggregations.CardinalityUpperBound;
+import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.LeafBucketCollector;
 import org.opensearch.search.aggregations.LeafBucketCollectorBase;
@@ -234,7 +235,22 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
 
         if (HistogramSkiplistLeafCollector.canUseSkiplist(hardBounds, parent, skipper, singleton)) {
             skipListCollectorsUsed++;
-            return new HistogramSkiplistLeafCollector(singleton, skipper, preparedRounding, bucketOrds, sub, this);
+            final HistogramSkiplistLeafCollector collector = new HistogramSkiplistLeafCollector(
+                singleton,
+                skipper,
+                preparedRounding,
+                bucketOrds,
+                sub,
+                this
+            );
+            if (DocValuesPrefetch.isEnabled()) {
+                collector.prefetch(
+                    DocValuesPrefetch.queryMatches(context, ctx),
+                    ctx.reader().getDocValuesSkipper(this.fieldName),
+                    preparedRounding
+                );
+            }
+            return collector;
         }
 
         if (singleton != null) {

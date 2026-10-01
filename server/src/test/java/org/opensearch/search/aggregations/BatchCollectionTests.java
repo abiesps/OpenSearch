@@ -25,6 +25,7 @@ import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.tests.util.TestUtil;
 import org.apache.lucene.util.BytesRef;
 import org.opensearch.index.mapper.DateFieldMapper;
 import org.opensearch.index.mapper.KeywordFieldMapper;
@@ -59,9 +60,19 @@ public class BatchCollectionTests extends AggregatorTestCase {
     private final MappedFieldType vType = new NumberFieldMapper.NumberFieldType(V, NumberFieldMapper.NumberType.LONG);
     private final MappedFieldType svcType = new KeywordFieldMapper.KeywordFieldType(SVC);
 
+    /** Whether {@link #run} turns doc-values prefetch on together with batch collection. */
+    private boolean prefetch;
+
+    @Override
+    public void setUp() throws Exception {
+        super.setUp();
+        prefetch = randomBoolean();
+    }
+
     @Override
     public void tearDown() throws Exception {
         BatchCollection.setEnabled(false);
+        DocValuesPrefetch.setEnabled(false);
         super.tearDown();
     }
 
@@ -72,7 +83,8 @@ public class BatchCollectionTests extends AggregatorTestCase {
      */
     private Directory index(int numDocs, boolean allHaveV, long maxV) throws IOException {
         Directory dir = newDirectory();
-        IndexWriterConfig config = newIndexWriterConfig();
+        // the default codec, so doc values use Lucene90 (node planning and bulk reads)
+        IndexWriterConfig config = newIndexWriterConfig().setCodec(TestUtil.getDefaultCodec());
         try (IndexWriter w = new IndexWriter(dir, config)) {
             long ts = 1_700_000_000_000L;
             for (int i = 0; i < numDocs; i++) {
@@ -108,10 +120,13 @@ public class BatchCollectionTests extends AggregatorTestCase {
     private <A extends InternalAggregation> A run(IndexSearcher searcher, Query query, AggregationBuilder agg, boolean batch)
         throws IOException {
         BatchCollection.setEnabled(batch);
+        DocValuesPrefetch.setEnabled(batch && prefetch);
+        DocValuesPrefetch.setNodeBytes(1L << randomIntBetween(10, 17));
         try {
             return searchAndReduce(searcher, query, agg, false, tsType, vType, svcType);
         } finally {
             BatchCollection.setEnabled(false);
+            DocValuesPrefetch.setEnabled(false);
         }
     }
 
@@ -144,7 +159,9 @@ public class BatchCollectionTests extends AggregatorTestCase {
                 AvgAggregationBuilder avg = new AvgAggregationBuilder("avg").field(V);
                 InternalAvg stockAvg = run(searcher, query, avg, false);
                 BatchCollection.resetCounters();
+                DocValuesPrefetch.resetCounters();
                 InternalAvg batchAvg = run(searcher, query, avg, true);
+                assertPrefetched(allHaveV);
                 assertEquals(query + " avg", stockAvg.getValue(), batchAvg.getValue(), 0d);
                 if (query instanceof BooleanQuery && allHaveV) {
                     // the dense conjunction collects DocIdStreams, so the top-level avg reads them in bulk
@@ -157,7 +174,9 @@ public class BatchCollectionTests extends AggregatorTestCase {
                     .subAggregation(new AvgAggregationBuilder("avg").field(V));
                 InternalDateHistogram stock = run(searcher, query, histogram, false);
                 BatchCollection.resetCounters();
+                DocValuesPrefetch.resetCounters();
                 InternalDateHistogram batch = run(searcher, query, histogram, true);
+                assertPrefetched(true);
                 assertTrue(query + " histogram has buckets", stock.getBuckets().size() > 1);
                 assertTrue(query + " histogram", Objects.equals(histogramResult(stock), histogramResult(batch)));
                 if (query instanceof BooleanQuery && interval.equals("30m")) {
@@ -172,7 +191,9 @@ public class BatchCollectionTests extends AggregatorTestCase {
                         .subAggregation(new AvgAggregationBuilder("avg").field(V));
                     StringTerms stockTerms = run(searcher, query, terms, false);
                     BatchCollection.resetCounters();
+                    DocValuesPrefetch.resetCounters();
                     StringTerms batchTerms = run(searcher, query, terms, true);
+                    assertPrefetched(true);
                     assertTrue(query + " " + mode + " terms has buckets", stockTerms.getBuckets().size() > 1);
                     assertTrue(query + " " + mode + " terms", Objects.equals(termsResult(stockTerms), termsResult(batchTerms)));
                     if (query instanceof BooleanQuery) {
@@ -181,6 +202,16 @@ public class BatchCollectionTests extends AggregatorTestCase {
                     }
                 }
             }
+        }
+    }
+
+    /** With prefetch on, planners were created and requested nodes; without it, none. */
+    private void assertPrefetched(boolean expectPlanners) {
+        if (prefetch && expectPlanners) {
+            assertTrue("planners", DocValuesPrefetch.planners() > 0);
+            assertTrue("requests", DocValuesPrefetch.requests() > 0);
+        } else if (prefetch == false) {
+            assertEquals(0, DocValuesPrefetch.planners());
         }
     }
 

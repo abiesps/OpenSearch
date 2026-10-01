@@ -19,6 +19,7 @@ import org.opensearch.rest.BaseRestHandler;
 import org.opensearch.rest.BytesRestResponse;
 import org.opensearch.rest.RestRequest;
 import org.opensearch.search.aggregations.BatchCollection;
+import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.transport.client.node.NodeClient;
 
 import java.io.IOException;
@@ -53,7 +54,8 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       leaf collectors created from now on (JVM-wide). {@code runend}: Lucene's dense conjunction keeps each clause's
  *       doc ID run end instead of recomputing it per window (see Lucene's {@code CollectExperiments}); {@code vec}:
  *       runend plus OpenSearch batch aggregation collection ({@code BatchCollection}); {@code vecdec}: vec plus Lucene
- *       bulk doc-values reads that decode a span of packed values in one pass; {@code off} is stock</li>
+ *       bulk doc-values reads that decode a span of packed values in one pass; {@code pf}: vecdec plus doc-values prefetch
+ *       one node ahead, doc-ID aligned ({@code DocValuesPrefetch}); {@code off} is stock</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -83,6 +85,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
     }
 
     private static void setAggBatch(boolean cacheRunEnd, boolean batchCollection, boolean bulkDecode) {
+        DocValuesPrefetch.setEnabled(false);
         CollectExperiments.setCacheRunEnd(cacheRunEnd);
         BatchCollection.setEnabled(batchCollection);
         CollectExperiments.setBulkDecode(bulkDecode);
@@ -95,6 +98,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
         if (path.endsWith("/_reset")) {
             cache.resetStats();
             BatchCollection.resetCounters();
+            DocValuesPrefetch.resetCounters();
         } else if (path.endsWith("/_clear")) {
             cache.clear();
         } else if (path.endsWith("/_mode")) {
@@ -125,7 +129,12 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                 case "runend" -> setAggBatch(true, false, false);
                 case "vec" -> setAggBatch(true, true, false);
                 case "vecdec" -> setAggBatch(true, true, true);
-                default -> throw new IllegalArgumentException("[mode] must be off, runend, vec or vecdec, got [" + mode + "]");
+                case "pf" -> {
+                    setAggBatch(true, true, true);
+                    DocValuesPrefetch.setNodeBytes(cache.blockSize());
+                    DocValuesPrefetch.setEnabled(true);
+                }
+                default -> throw new IllegalArgumentException("[mode] must be off, runend, vec, vecdec or pf, got [" + mode + "]");
             }
         } else if (path.endsWith("/disjunction_prefetch")) {
             final int blocks = request.paramAsInt("blocks", -1);
@@ -153,6 +162,9 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("agg_batch_bulk_chunks", BatchCollection.bulkChunks());
             builder.field("agg_batch_stream_runs", BatchCollection.streamRuns());
             builder.field("agg_batch_per_doc_streams", BatchCollection.perDocStreams());
+            builder.field("agg_prefetch", DocValuesPrefetch.isEnabled());
+            builder.field("agg_prefetch_planners", DocValuesPrefetch.planners());
+            builder.field("agg_prefetch_requests", DocValuesPrefetch.requests());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {

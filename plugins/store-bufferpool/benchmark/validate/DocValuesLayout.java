@@ -33,7 +33,8 @@ import java.util.List;
  */
 public class DocValuesLayout {
 
-    record Region(String field, String region, String file, long start, long end, String info) {}
+    record Region(String field, String region, String file, long start, long end, String info) {
+    }
 
     public static void main(String[] args) throws Exception {
         final List<Region> regions = new ArrayList<>();
@@ -55,8 +56,12 @@ public class DocValuesLayout {
                     regions.add(new Region(fi.name, "unknown-producer", "", 0, 0, String.valueOf(producer)));
                     continue;
                 }
-                final String dvd = segment.getSegmentName() + "_" + fi.getAttribute("PerFieldDocValuesFormat.format") + "_"
-                    + fi.getAttribute("PerFieldDocValuesFormat.suffix") + ".dvd";
+                final String dvd = segment.getSegmentName()
+                    + "_"
+                    + fi.getAttribute("PerFieldDocValuesFormat.format")
+                    + "_"
+                    + fi.getAttribute("PerFieldDocValuesFormat.suffix")
+                    + ".dvd";
                 final String dvs = dvd.substring(0, dvd.length() - 1) + "s";
                 switch (fi.getDocValuesType()) {
                     case NUMERIC -> numeric(regions, fi.name, "", dvd, entry(producer, "numerics", fi.number));
@@ -75,11 +80,19 @@ public class DocValuesLayout {
                     case BINARY -> {
                         final Object e = entry(producer, "binaries", fi.number);
                         add(regions, fi.name, "binary-data", dvd, (long) get(e, "dataOffset"), (long) get(e, "dataLength"), "");
-                        add(regions, fi.name, "binary-addresses", dvd, (long) get(e, "addressesOffset"),
-                            (long) get(e, "addressesLength"), "");
+                        add(
+                            regions,
+                            fi.name,
+                            "binary-addresses",
+                            dvd,
+                            (long) get(e, "addressesOffset"),
+                            (long) get(e, "addressesLength"),
+                            ""
+                        );
                         disi(regions, fi.name, dvd, e);
                     }
-                    default -> {}
+                    default -> {
+                    }
                 }
                 final Object skipper = entry(producer, "skippers", fi.number);
                 if (skipper != null) {
@@ -88,16 +101,25 @@ public class DocValuesLayout {
                     offset.setAccessible(true);
                     length.setAccessible(true);
                     final boolean ownFile = get(producer, "skipIndexData") != null;
-                    add(regions, fi.name, "skipper", ownFile ? dvs : dvd, (long) offset.invoke(skipper), (long) length.invoke(skipper),
-                        "");
+                    add(regions, fi.name, "skipper", ownFile ? dvs : dvd, (long) offset.invoke(skipper), (long) length.invoke(skipper), "");
                 }
             }
             final StringBuilder out = new StringBuilder("{\"maxDoc\": ").append(segment.maxDoc()).append(", \"regions\": [\n");
             for (int i = 0; i < regions.size(); i++) {
                 final Region r = regions.get(i);
-                out.append(String.format(java.util.Locale.ROOT,
-                    "  {\"field\": \"%s\", \"region\": \"%s\", \"file\": \"%s\", \"start\": %d, \"end\": %d, \"info\": \"%s\"}%s%n",
-                    r.field, r.region, r.file, r.start, r.end, r.info, i + 1 < regions.size() ? "," : ""));
+                out.append(
+                    String.format(
+                        java.util.Locale.ROOT,
+                        "  {\"field\": \"%s\", \"region\": \"%s\", \"file\": \"%s\", \"start\": %d, \"end\": %d, \"info\": \"%s\"}%s%n",
+                        r.field,
+                        r.region,
+                        r.file,
+                        r.start,
+                        r.end,
+                        r.info,
+                        i + 1 < regions.size() ? "," : ""
+                    )
+                );
             }
             System.out.print(out.append("]}\n"));
         }
@@ -108,8 +130,15 @@ public class DocValuesLayout {
         final int blockShift = (int) get(e, "blockShift");
         final byte bpv = (byte) get(e, "bitsPerValue");
         final long jump = (long) get(e, "valueJumpTableOffset");
-        final String info = "numValues=" + numValues + " bpv=" + bpv + " blockShift=" + blockShift
-            + (get(e, "table") != null ? " table" : "") + " gcd=" + get(e, "gcd");
+        final String info = "numValues="
+            + numValues
+            + " bpv="
+            + bpv
+            + " blockShift="
+            + blockShift
+            + (get(e, "table") != null ? " table" : "")
+            + " gcd="
+            + get(e, "gcd");
         add(regions, field, prefix + "values", file, (long) get(e, "valuesOffset"), (long) get(e, "valuesLength"), info);
         if (jump >= 0 && blockShift >= 0) {
             final long blocks = (numValues + (1L << blockShift) - 1) >>> blockShift;
@@ -133,15 +162,29 @@ public class DocValuesLayout {
         add(regions, field, "terms-data", file, (long) get(t, "termsDataOffset"), (long) get(t, "termsDataLength"), info);
         add(regions, field, "terms-addresses", file, (long) get(t, "termsAddressesOffset"), (long) get(t, "termsAddressesLength"), "");
         add(regions, field, "terms-index", file, (long) get(t, "termsIndexOffset"), (long) get(t, "termsIndexLength"), "");
-        add(regions, field, "terms-index-addresses", file, (long) get(t, "termsIndexAddressesOffset"),
-            (long) get(t, "termsIndexAddressesLength"), "");
+        add(
+            regions,
+            field,
+            "terms-index-addresses",
+            file,
+            (long) get(t, "termsIndexAddressesOffset"),
+            (long) get(t, "termsIndexAddressesLength"),
+            ""
+        );
     }
 
     static void disi(List<Region> regions, String field, String file, Object e) throws Exception {
         final long offset = (long) get(e, "docsWithFieldOffset");
         if (offset >= 0) {
-            add(regions, field, "docs-with-field", file, offset, (long) get(e, "docsWithFieldLength"),
-                "jumpTableEntries=" + get(e, "jumpTableEntryCount"));
+            add(
+                regions,
+                field,
+                "docs-with-field",
+                file,
+                offset,
+                (long) get(e, "docsWithFieldLength"),
+                "jumpTableEntries=" + get(e, "jumpTableEntryCount")
+            );
         }
     }
 

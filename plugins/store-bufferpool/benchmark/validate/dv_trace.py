@@ -89,7 +89,9 @@ def summarize(events, regions, block_size):
         ups = sum(1 for a, b in zip(offs, offs[1:]) if b > a)
         order[region] = {"loads": len(offs), "increasing_pairs": ups, "pairs": max(0, len(offs) - 1),
                          "first_block": min(offs) // block_size, "last_block": max(offs) // block_size}
+    blocks = sorted({(e["file"], e["offset"] // block_size, bool(e["prefetch"])) for e in loads})
     return {"loads": len(loads), "by_region": dict(by_region.most_common()), "shared_blocks": shared,
+            "blocks": [[f, b, p] for f, b, p in blocks],
             "prefetched": dict(prefetched), "waited": waited, "order": order,
             "by_caller": [{"region": r, "codec": c, "search": s, "loads": n} for (r, c, s), n in by_caller.most_common()]}
 
@@ -105,6 +107,7 @@ def main():
     parser.add_argument("--url", default="http://localhost:9200")
     parser.add_argument("--fork", default=os.path.expanduser("~/workspace/lucene_experiments"))
     parser.add_argument("--out")
+    parser.add_argument("--compare", help="dv_trace JSON of a run without prefetch: report blocks loaded here but not there")
     args = parser.parse_args()
 
     client = bp.Client(args.url)
@@ -137,6 +140,22 @@ def main():
     finally:
         bp.set_latency(client, 0)
         client.request("POST", "/_bufferpool/agg_batch?mode=off")
+    if args.compare:
+        ref = {r["query"]: r for r in json.load(open(args.compare))["results"]}
+        print("\n## prefetched blocks vs blocks read without prefetch")
+        for r in results:
+            base = ref.get(r["query"])
+            if base is None:
+                continue
+            read = {(f, b) for f, b, _ in base["aggregation"]["blocks"]}
+            mine = {(f, b): p for f, b, p in r["aggregation"]["blocks"]}
+            pre = [k for k, p in mine.items() if p]
+            wasted = [k for k in pre if k not in read]
+            missing = [k for k in read if k not in mine]
+            r["prefetched_blocks"] = len(pre)
+            r["prefetched_not_read"] = len(wasted)
+            print(f"  {r['query']:<16} loaded {len(mine)} (prefetched {len(pre)}), read without prefetch {len(read)}; "
+                  f"prefetched but never read {len(wasted)} {sorted(wasted)[:6]}; read there but not loaded here {len(missing)}")
     if args.out:
         with open(args.out, "w") as f:
             json.dump({"index": index, "block_size": block_size, "results": results}, f, indent=1)

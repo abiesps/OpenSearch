@@ -51,6 +51,7 @@ import org.opensearch.index.fielddata.SortedNumericDoubleValues;
 import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.BatchCollection;
+import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.LeafBucketCollector;
 import org.opensearch.search.aggregations.LeafBucketCollectorBase;
@@ -152,10 +153,21 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
         final long[] localSums = batchLongs == null ? null : new long[LOCAL_BUCKETS];
         final int[] localCounts = batchLongs == null ? null : new int[LOCAL_BUCKETS];
         final int[] touched = batchLongs == null ? null : new int[LOCAL_BUCKETS];
+        // doc-values prefetch: keeps the next node of the field that will be read requested
+        final DocValuesPrefetch.Planner planner = batchLongs == null || DocValuesPrefetch.isEnabled() == false
+            ? null
+            : DocValuesPrefetch.planner(
+                DocValuesPrefetch.of(BatchCollection.exactLongs(valuesSource, ctx)),
+                DocValuesPrefetch.queryMatches(context, ctx),
+                DocValuesPrefetch.ALL_MATCHES
+            );
 
         return new LeafBucketCollectorBase(sub, values) {
             @Override
             public void collect(int doc, long bucket) throws IOException {
+                if (planner != null) {
+                    planner.advance(doc);
+                }
                 if (values.advanceExact(doc)) {
                     int valueCount = values.docValueCount();
                     setKahanSummation(bucket);
@@ -219,6 +231,10 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
                 long count = 0;
                 int n;
                 while ((n = stream.intoArray(batchDocs)) > 0) {
+                    if (planner != null) {
+                        planner.advance(batchDocs[0]);
+                        planner.advance(batchDocs[n - 1]);
+                    }
                     if (BatchCollection.allHaveValues(batchLongs, batchDocs, n)) {
                         batchLongs.longValues(n, batchDocs, batchValues, 0L);
                         BatchCollection.countBulkChunk();
@@ -262,6 +278,10 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
             public void collectBatch(int[] docs, long[] buckets, int count) throws IOException {
                 if (count == 0) {
                     return;
+                }
+                if (planner != null) {
+                    planner.advance(docs[0]);
+                    planner.advance(docs[count - 1]);
                 }
                 if (batchLongs == null || count > BatchCollection.CHUNK || strictlyIncreasing(docs, count) == false) {
                     super.collectBatch(docs, buckets, count);

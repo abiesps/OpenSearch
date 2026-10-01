@@ -10,12 +10,14 @@ package org.opensearch.search.aggregations.bucket;
 
 import org.apache.lucene.index.DocValuesSkipper;
 import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.DocIdStream;
 import org.apache.lucene.search.Scorable;
 import org.opensearch.common.Rounding;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.AggregatorBase;
 import org.opensearch.search.aggregations.BatchCollection;
+import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.search.aggregations.LeafBucketCollector;
 import org.opensearch.search.aggregations.bucket.histogram.LongBounds;
 import org.opensearch.search.aggregations.bucket.terms.LongKeyedBucketOrds;
@@ -40,6 +42,8 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
     private final BucketsAggregator aggregator;
     /** Non-null when {@link BatchCollection} is on: the view of a single-bucket run handed to {@link #sub}. */
     private final BatchCollection.UpTo batchView;
+    /** Non-null when {@link DocValuesPrefetch} is on, see {@link #prefetch}. */
+    private DocValuesPrefetch.Planner planner;
 
     /**
      * Supplier function to get the current preparedRounding from the parent aggregator.
@@ -103,6 +107,48 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
         this.aggregator = aggregator;
         this.batchView = BatchCollection.isEnabled() ? new BatchCollection.UpTo() : null;
         this.increaseRoundingIfNeeded = increaseRoundingIfNeeded;
+    }
+
+    /**
+     * Turns on doc-values prefetch for a fixed rounding (date_histogram): keeps the next node of {@link #values} that will
+     * be read requested. Values are read only for matching docs in skipper intervals whose values do not all fall in one
+     * bucket (see {@link #advanceSkipper}), so the planner checks the same condition on its own skipper. Both skippers
+     * are prefetched whole.
+     *
+     * @param matches the query's matches, a new iterator that is only advanced
+     * @param planSkipper a second skipper of the field, used only for planning
+     */
+    public void prefetch(DocIdSetIterator matches, DocValuesSkipper planSkipper, Rounding.Prepared rounding) throws IOException {
+        if (planSkipper == null) {
+            return;
+        }
+        skipper.prefetch();
+        planSkipper.prefetch();
+        planner = DocValuesPrefetch.planner(DocValuesPrefetch.of(values), matches, (target, it) -> {
+            int t = target;
+            while (true) {
+                final int m = DocValuesPrefetch.advanceTo(t, it);
+                if (m == DocIdSetIterator.NO_MORE_DOCS) {
+                    return m;
+                }
+                if (m > planSkipper.maxDocID(0)) {
+                    planSkipper.advance(m);
+                }
+                if (planSkipper.minDocID(0) > m) {
+                    return m; // no interval holds m: be safe, the collector may read it
+                }
+                final int docs = planSkipper.maxDocID(0) - planSkipper.minDocID(0) + 1;
+                final boolean oneBucket = planSkipper.docCount(0) == docs
+                    && rounding.round(planSkipper.minValue(0)) == rounding.round(planSkipper.maxValue(0));
+                if (oneBucket == false) {
+                    return m;
+                }
+                if (planSkipper.maxDocID(0) >= DocIdSetIterator.NO_MORE_DOCS - 1) {
+                    return DocIdSetIterator.NO_MORE_DOCS;
+                }
+                t = planSkipper.maxDocID(0) + 1; // no values are read in this interval
+            }
+        });
     }
 
     @Override
@@ -170,7 +216,13 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
         if (upToSameBucket) {
             aggregator.incrementBucketDocCount(upToBucketIndex, 1L);
             sub.collect(doc, upToBucketIndex);
-        } else if (values.advanceExact(doc)) {
+        } else {
+            if (planner != null) {
+                planner.advance(doc);
+            }
+            if (values.advanceExact(doc) == false) {
+                return;
+            }
             final long value = values.longValue();
             long rounded = currentRounding.round(value);
             long bucketIndex = bucketOrdsSupplier.get().add(owningBucketOrd, rounded);

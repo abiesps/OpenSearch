@@ -64,6 +64,7 @@ import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.BatchCollection;
 import org.opensearch.search.aggregations.BucketOrder;
 import org.opensearch.search.aggregations.CardinalityUpperBound;
+import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.InternalMultiBucketAggregation;
 import org.opensearch.search.aggregations.InternalOrder;
@@ -267,9 +268,20 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                 final int[] batchDocs = batch ? new int[BatchCollection.CHUNK] : null;
                 final int[] batchOrds = batch ? new int[BatchCollection.CHUNK] : null;
                 final long[] batchBuckets = batch ? new long[BatchCollection.CHUNK] : null;
+                // doc-values prefetch: keeps the next node of the ordinals that will be read requested
+                final DocValuesPrefetch.Planner planner = DocValuesPrefetch.isEnabled()
+                    ? DocValuesPrefetch.planner(
+                        DocValuesPrefetch.of(singleValues),
+                        DocValuesPrefetch.queryMatches(context, ctx),
+                        DocValuesPrefetch.ALL_MATCHES
+                    )
+                    : null;
                 return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, globalOrds) {
                     @Override
                     public void collect(int doc, long owningBucketOrd) throws IOException {
+                        if (planner != null) {
+                            planner.advance(doc);
+                        }
                         if (false == singleValues.advanceExact(doc)) {
                             return;
                         }
@@ -287,6 +299,10 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                         // one bulk ordinal read per chunk, then bucket ordinals and the sub-aggregations per chunk
                         int n;
                         while ((n = stream.intoArray(batchDocs)) > 0) {
+                            if (planner != null) {
+                                planner.advance(batchDocs[0]);
+                                planner.advance(batchDocs[n - 1]);
+                            }
                             singleValues.ordValues(n, batchDocs, batchOrds);
                             BatchCollection.countBulkChunk();
                             collectionStrategy.collectGlobalOrds(owningBucketOrd, batchDocs, batchOrds, batchBuckets, n, sub);
