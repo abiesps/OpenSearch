@@ -142,6 +142,8 @@ result as an upper bound.
   alone it gives -30% to -38% on 2-term queries, -5% to -15% on 3-term. `.doc` IOs unchanged, 0-1 demand loads.
 - Warm k=10 within noise. Warm k=100 unusable in this run (machine load average 226 from other apps).
 - Likely remaining bound: the norm stream (~2 in flight x 235 blocks). Next: norms 4 blocks ahead; cheap filter.
+- Decision (user): block look-ahead stays at 1 and doc-ID aligned, to save IO; no deeper look-ahead experiments.
+- Top-k work paused here (open item: a cheap norms filter aligned with Lucene's outer windows). Next area: doc values.
 
 | Step | Change | Done when |
 |---|---|---|
