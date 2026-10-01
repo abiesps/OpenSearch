@@ -15,6 +15,7 @@ import org.apache.lucene.search.Scorable;
 import org.opensearch.common.Rounding;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.AggregatorBase;
+import org.opensearch.search.aggregations.BatchCollection;
 import org.opensearch.search.aggregations.LeafBucketCollector;
 import org.opensearch.search.aggregations.bucket.histogram.LongBounds;
 import org.opensearch.search.aggregations.bucket.terms.LongKeyedBucketOrds;
@@ -37,6 +38,8 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
     private final LeafBucketCollector sub;
     private final boolean isSubNoOp;
     private final BucketsAggregator aggregator;
+    /** Non-null when {@link BatchCollection} is on: the view of a single-bucket run handed to {@link #sub}. */
+    private final BatchCollection.UpTo batchView;
 
     /**
      * Supplier function to get the current preparedRounding from the parent aggregator.
@@ -98,6 +101,7 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
         this.sub = sub;
         this.isSubNoOp = (sub == NO_OP_COLLECTOR);
         this.aggregator = aggregator;
+        this.batchView = BatchCollection.isEnabled() ? new BatchCollection.UpTo() : null;
         this.increaseRoundingIfNeeded = increaseRoundingIfNeeded;
     }
 
@@ -199,6 +203,11 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
                     // stream.count maybe faster when we don't need to handle sub-aggs
                     long count = stream.count(upToExclusive);
                     aggregator.incrementBucketDocCount(upToBucketIndex, count);
+                } else if (batchView != null) {
+                    // the docs below upToExclusive all fall in one bucket: hand them to the sub-aggregation as a stream
+                    BatchCollection.countStreamRun();
+                    sub.collect(batchView.reset(stream, upToExclusive), upToBucketIndex);
+                    aggregator.incrementBucketDocCount(upToBucketIndex, batchView.drainAndCount());
                 } else {
                     final int[] count = { 0 };
                     stream.forEach(upToExclusive, doc -> {

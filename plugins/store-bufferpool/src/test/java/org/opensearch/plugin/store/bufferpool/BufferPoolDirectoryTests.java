@@ -78,6 +78,11 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
                     assertEquals(expected.getInt(sliceOffset + p), slice.readInt(p));
                     assertEquals(expected.getShort(sliceOffset + p), slice.readShort(p));
                     assertEquals(data[sliceOffset + p], slice.readByte(p));
+                    // positional bulk read, across block boundaries
+                    final int len = Math.min(data.length - sliceOffset - p, random().nextInt(2 * DEFAULT_BLOCK_SIZE));
+                    final byte[] actual = new byte[len];
+                    slice.readBytes(p, actual, 0, len);
+                    assertArrayEquals(Arrays.copyOfRange(data, sliceOffset + p, sliceOffset + p + len), actual);
                 }
             }
         }

@@ -197,6 +197,24 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
     }
 
     @Override
+    public void readBytes(long p, byte[] b, int offset, int len) throws IOException {
+        if (p < 0 || len > length - p) {
+            throw eof(p, len);
+        }
+        // whole-block copies; the default implementation reads one byte at a time
+        while (len > 0) {
+            if (p < blockStart || p >= blockEnd) {
+                loadBlock(p);
+            }
+            final int n = (int) Math.min(len, blockEnd - p);
+            block.get((int) (p - blockStart), b, offset, n);
+            p += n;
+            offset += n;
+            len -= n;
+        }
+    }
+
+    @Override
     public short readShort(long p) throws IOException {
         if (inBlockAfterLoad(p, Short.BYTES)) {
             return block.getShort((int) (p - blockStart));

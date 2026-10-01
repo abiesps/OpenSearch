@@ -50,7 +50,6 @@ import org.opensearch.common.SetOnce;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.util.LongArray;
-import org.opensearch.common.util.LongHash;
 import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.index.codec.composite.CompositeIndexFieldInfo;
@@ -62,6 +61,7 @@ import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.aggregations.AggregationExecutionException;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.AggregatorFactories;
+import org.opensearch.search.aggregations.BatchCollection;
 import org.opensearch.search.aggregations.BucketOrder;
 import org.opensearch.search.aggregations.CardinalityUpperBound;
 import org.opensearch.search.aggregations.InternalAggregation;
@@ -263,6 +263,10 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                  * Optimize when there isn't a filter because that is very
                  * common and marginally faster.
                  */
+                final boolean batch = BatchCollection.isEnabled();
+                final int[] batchDocs = batch ? new int[BatchCollection.CHUNK] : null;
+                final int[] batchOrds = batch ? new int[BatchCollection.CHUNK] : null;
+                final long[] batchBuckets = batch ? new long[BatchCollection.CHUNK] : null;
                 return resultStrategy.wrapCollector(new LeafBucketCollectorBase(sub, globalOrds) {
                     @Override
                     public void collect(int doc, long owningBucketOrd) throws IOException {
@@ -275,7 +279,18 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
 
                     @Override
                     public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
-                        super.collect(stream, owningBucketOrd);
+                        if (batch == false) {
+                            BatchCollection.countPerDocStream();
+                            super.collect(stream, owningBucketOrd);
+                            return;
+                        }
+                        // one bulk ordinal read per chunk, then bucket ordinals and the sub-aggregations per chunk
+                        int n;
+                        while ((n = stream.intoArray(batchDocs)) > 0) {
+                            singleValues.ordValues(n, batchDocs, batchOrds);
+                            BatchCollection.countBulkChunk();
+                            collectionStrategy.collectGlobalOrds(owningBucketOrd, batchDocs, batchOrds, batchBuckets, n, sub);
+                        }
                     }
 
                     @Override
@@ -702,6 +717,20 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
         abstract void collectGlobalOrd(long owningBucketOrd, int doc, long globalOrd, LeafBucketCollector sub) throws IOException;
 
         /**
+         * Batch variant of {@link #collectGlobalOrd} for single-valued docs: {@code docs[i]} has global ordinal
+         * {@code globalOrds[i]}, or none when it is -1. {@code bucketOrds} is scratch space of the same length.
+         * The default calls {@link #collectGlobalOrd} per doc.
+         */
+        void collectGlobalOrds(long owningBucketOrd, int[] docs, int[] globalOrds, long[] bucketOrds, int count, LeafBucketCollector sub)
+            throws IOException {
+            for (int i = 0; i < count; i++) {
+                if (globalOrds[i] >= 0) {
+                    collectGlobalOrd(owningBucketOrd, docs[i], globalOrds[i], sub);
+                }
+            }
+        }
+
+        /**
          * Convert a global ordinal into a bucket ordinal.
          */
         abstract long globalOrdToBucketOrd(long owningBucketOrd, long globalOrd);
@@ -753,6 +782,20 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
         }
 
         @Override
+        void collectGlobalOrds(long owningBucketOrd, int[] docs, int[] globalOrds, long[] bucketOrds, int count, LeafBucketCollector sub)
+            throws IOException {
+            assert owningBucketOrd == 0;
+            int n = 0;
+            for (int i = 0; i < count; i++) {
+                if (globalOrds[i] >= 0) {
+                    docs[n] = docs[i];
+                    bucketOrds[n++] = globalOrds[i];
+                }
+            }
+            collectExistingBuckets(sub, docs, bucketOrds, n);
+        }
+
+        @Override
         long globalOrdToBucketOrd(long owningBucketOrd, long globalOrd) {
             assert owningBucketOrd == 0;
             return globalOrd;
@@ -787,6 +830,9 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
      * {@link DenseGlobalOrds} when collecting every ordinal, but significantly
      * less when collecting only a few.
      */
+    /** Batch collection caches global-to-bucket ordinals in an array only for fields with at most this many terms. */
+    private static final int MAX_CACHED_ORDS = 1 << 16;
+
     private class RemapGlobalOrds extends CollectionStrategy {
         protected final LongKeyedBucketOrds bucketOrds;
 
@@ -816,6 +862,43 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
             } else {
                 collectBucket(sub, doc, bucketOrd);
             }
+        }
+
+        /** Bucket ordinal per global ordinal of owning bucket 0, -1 when not looked up yet (batch collection only). */
+        private long[] ordToBucket;
+
+        @Override
+        void collectGlobalOrds(long owningBucketOrd, int[] docs, int[] globalOrds, long[] bucketOrdsOut, int count, LeafBucketCollector sub)
+            throws IOException {
+            // only for a top-level terms aggregation: under a parent bucket the owner changes from doc to doc
+            if (owningBucketOrd != 0 || valueCount > MAX_CACHED_ORDS) {
+                super.collectGlobalOrds(owningBucketOrd, docs, globalOrds, bucketOrdsOut, count, sub);
+                return;
+            }
+            if (ordToBucket == null || ordToBucket.length < valueCount) {
+                ordToBucket = new long[(int) valueCount];
+                Arrays.fill(ordToBucket, -1L);
+            }
+            int n = 0;
+            for (int i = 0; i < count; i++) {
+                final int globalOrd = globalOrds[i];
+                if (globalOrd < 0) {
+                    continue;
+                }
+                long bucketOrd = ordToBucket[globalOrd];
+                if (bucketOrd < 0) {
+                    bucketOrd = bucketOrds.add(owningBucketOrd, globalOrd);
+                    if (bucketOrd < 0) {
+                        bucketOrd = -1 - bucketOrd;
+                    } else {
+                        grow(bucketOrd + 1);
+                    }
+                    ordToBucket[globalOrd] = bucketOrd;
+                }
+                docs[n] = docs[i];
+                bucketOrdsOut[n++] = bucketOrd;
+            }
+            collectExistingBuckets(sub, docs, bucketOrdsOut, n);
         }
 
         @Override

@@ -45,6 +45,7 @@ import org.apache.lucene.util.packed.PackedLongValues;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.LongHash;
 import org.opensearch.search.aggregations.Aggregator;
+import org.opensearch.search.aggregations.BatchCollection;
 import org.opensearch.search.aggregations.BucketCollector;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.LeafBucketCollector;
@@ -152,6 +153,28 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
                 lastDoc = doc;
                 maxBucket = Math.max(maxBucket, bucket);
             }
+
+            @Override
+            public void collectBatch(int[] docs, long[] buckets, int count) throws IOException {
+                if (count == 0) {
+                    return;
+                }
+                if (context == null) {
+                    context = ctx;
+                    docDeltasBuilder = PackedLongValues.packedBuilder(PackedInts.DEFAULT);
+                    bucketsBuilder = PackedLongValues.packedBuilder(PackedInts.DEFAULT);
+                }
+                int last = lastDoc;
+                long max = maxBucket;
+                for (int i = 0; i < count; i++) {
+                    docDeltasBuilder.add(docs[i] - last);
+                    bucketsBuilder.add(buckets[i]);
+                    last = docs[i];
+                    max = Math.max(max, buckets[i]);
+                }
+                lastDoc = last;
+                maxBucket = max;
+            }
         };
     }
 
@@ -205,6 +228,10 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
                 }
                 final PackedLongValues.Iterator docDeltaIterator = entry.docDeltas.iterator();
                 final PackedLongValues.Iterator buckets = entry.buckets.iterator();
+                if (needsScores == false && BatchCollection.isEnabled() && maxBucket < MAX_REBASE_TABLE) {
+                    replayBatch(leafCollector, entry.docDeltas.size(), docDeltaIterator, buckets);
+                    continue;
+                }
                 int doc = 0;
                 for (long i = 0, end = entry.docDeltas.size(); i < end; ++i) {
                     doc += (int) docDeltaIterator.next();
@@ -227,6 +254,48 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
             }
         }
         collector.postCollection();
+    }
+
+    /** Batch replay builds a dense rebase table of bucket ordinals up to this size. */
+    private static final long MAX_REBASE_TABLE = 1 << 20;
+    private long[] rebaseTable;
+
+    /**
+     * Replays one segment in chunks of {@link BatchCollection#CHUNK} docs with
+     * {@link LeafBucketCollector#collectBatch}, and rebases buckets with a dense table instead of a hash lookup per doc.
+     */
+    private void replayBatch(
+        LeafBucketCollector leafCollector,
+        long size,
+        PackedLongValues.Iterator docDeltaIterator,
+        PackedLongValues.Iterator buckets
+    ) throws IOException {
+        if (rebaseTable == null) {
+            rebaseTable = new long[Math.toIntExact(maxBucket + 1)];
+            for (int b = 0; b < rebaseTable.length; b++) {
+                rebaseTable[b] = selectedBuckets.find(b);
+            }
+        }
+        final long[] rebase = rebaseTable;
+        final int[] docs = new int[BatchCollection.CHUNK];
+        final long[] rebased = new long[BatchCollection.CHUNK];
+        int doc = 0;
+        int n = 0;
+        for (long i = 0; i < size; ++i) {
+            doc += (int) docDeltaIterator.next();
+            final long rebasedBucket = rebase[(int) buckets.next()];
+            if (rebasedBucket != -1) {
+                docs[n] = doc;
+                rebased[n++] = rebasedBucket;
+                if (n == docs.length) {
+                    leafCollector.collectBatch(docs, rebased, n);
+                    n = 0;
+                }
+            }
+        }
+        if (n > 0) {
+            leafCollector.collectBatch(docs, rebased, n);
+        }
     }
 
     /**

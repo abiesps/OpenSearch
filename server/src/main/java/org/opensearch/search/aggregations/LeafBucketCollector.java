@@ -172,6 +172,20 @@ public abstract class LeafBucketCollector implements LeafCollector {
         stream.forEach((doc) -> collect(doc, owningBucketOrd));
     }
 
+    /**
+     * Bulk-collect {@code count} docs, each in its own bucket: {@code docs[i]} in {@code owningBucketOrds[i]}. Doc IDs are
+     * in increasing order and may repeat (a multi-valued parent can put one doc in several buckets). Used by bucket
+     * aggregations when {@link BatchCollection} is on.
+     *
+     * <p>The default implementation calls {@link #collect(int, long)} for each doc.
+     */
+    @ExperimentalApi
+    public void collectBatch(int[] docs, long[] owningBucketOrds, int count) throws IOException {
+        for (int i = 0; i < count; i++) {
+            collect(docs[i], owningBucketOrds[i]);
+        }
+    }
+
     @Override
     public void setScorer(Scorable scorer) throws IOException {
         // no-op by default

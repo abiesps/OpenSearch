@@ -10,6 +10,7 @@ package org.opensearch.plugin.store.bufferpool;
 
 import org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat;
 import org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat.ReadMode;
+import org.apache.lucene.search.CollectExperiments;
 import org.apache.lucene.search.DisjunctionPrefetch;
 import org.apache.lucene.search.TopKPrefetch;
 import org.opensearch.core.rest.RestStatus;
@@ -17,6 +18,7 @@ import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.rest.BaseRestHandler;
 import org.opensearch.rest.BytesRestResponse;
 import org.opensearch.rest.RestRequest;
+import org.opensearch.search.aggregations.BatchCollection;
 import org.opensearch.transport.client.node.NodeClient;
 
 import java.io.IOException;
@@ -47,6 +49,11 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       cache blocks ahead (N * block size doc IDs, for 1-byte norms), in whole blocks, only for doc windows whose max
  *       score can beat the current threshold unless {@code filter=false} (JVM-wide, see Lucene's {@code TopKPrefetch});
  *       0 disables it</li>
+ *   <li>{@code POST /_bufferpool/agg_batch?mode=off|runend|vec|vecdec}: batch collection experiments for scorers and
+ *       leaf collectors created from now on (JVM-wide). {@code runend}: Lucene's dense conjunction keeps each clause's
+ *       doc ID run end instead of recomputing it per window (see Lucene's {@code CollectExperiments}); {@code vec}:
+ *       runend plus OpenSearch batch aggregation collection ({@code BatchCollection}); {@code vecdec}: vec plus Lucene
+ *       bulk doc-values reads that decode a span of packed values in one pass; {@code off} is stock</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -70,8 +77,15 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             new Route(POST, "/_bufferpool/cache/_clear"),
             new Route(POST, "/_bufferpool/dual_nav/_mode"),
             new Route(POST, "/_bufferpool/disjunction_prefetch"),
-            new Route(POST, "/_bufferpool/topk_prefetch")
+            new Route(POST, "/_bufferpool/topk_prefetch"),
+            new Route(POST, "/_bufferpool/agg_batch")
         );
+    }
+
+    private static void setAggBatch(boolean cacheRunEnd, boolean batchCollection, boolean bulkDecode) {
+        CollectExperiments.setCacheRunEnd(cacheRunEnd);
+        BatchCollection.setEnabled(batchCollection);
+        CollectExperiments.setBulkDecode(bulkDecode);
     }
 
     @Override
@@ -80,6 +94,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
         final String path = request.path();
         if (path.endsWith("/_reset")) {
             cache.resetStats();
+            BatchCollection.resetCounters();
         } else if (path.endsWith("/_clear")) {
             cache.clear();
         } else if (path.endsWith("/_mode")) {
@@ -103,6 +118,15 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             TopKPrefetch.setNodeBytes(cache.blockSize());
             TopKPrefetch.setFilter(request.paramAsBoolean("filter", true));
             TopKPrefetch.setNormsDocsAhead(Math.toIntExact((long) blocks * cache.blockSize()));
+        } else if (path.endsWith("/agg_batch")) {
+            final String mode = request.param("mode");
+            switch (mode == null ? "" : mode) {
+                case "off" -> setAggBatch(false, false, false);
+                case "runend" -> setAggBatch(true, false, false);
+                case "vec" -> setAggBatch(true, true, false);
+                case "vecdec" -> setAggBatch(true, true, true);
+                default -> throw new IllegalArgumentException("[mode] must be off, runend, vec or vecdec, got [" + mode + "]");
+            }
         } else if (path.endsWith("/disjunction_prefetch")) {
             final int blocks = request.paramAsInt("blocks", -1);
             if (blocks < 0) {
@@ -123,6 +147,12 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("topk_prefetch_norms_docs_ahead", TopKPrefetch.getNormsDocsAhead());
             builder.field("topk_prefetch_filter", TopKPrefetch.isFilter());
             builder.field("topk_prefetch_doc_nodes_ahead", TopKPrefetch.getDocNodesAhead());
+            builder.field("agg_batch_cache_run_end", CollectExperiments.isCacheRunEnd());
+            builder.field("agg_batch_collection", BatchCollection.isEnabled());
+            builder.field("agg_batch_bulk_decode", CollectExperiments.isBulkDecode());
+            builder.field("agg_batch_bulk_chunks", BatchCollection.bulkChunks());
+            builder.field("agg_batch_stream_runs", BatchCollection.streamRuns());
+            builder.field("agg_batch_per_doc_streams", BatchCollection.perDocStreams());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {

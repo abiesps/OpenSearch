@@ -24,7 +24,9 @@ Stage 3). Update it at the end of every step.
 | OpenSearch | `abiesps/OpenSearch`, branch `poc-ioopt`, local `~/workspace/OpenSearch` (builds against the fork's `10.5.1-SNAPSHOT` from `~/.m2`; every Gradle command needs `-Drepos.mavenLocal=true`) |
 | Publish fork jars | in the fork: `./gradlew :lucene:core:publishJarsPublicationToMavenLocal` (or `mavenToLocal` for all modules) |
 | Node | `plugins/store-bufferpool/benchmark/start_node.sh` / `stop_node.sh`; data in `~/bufferpool-bench/data` survives restarts |
-| Benchmark | `plugins/store-bufferpool/benchmark/bench_postings.py --sizes 128mb,500mb,1gb` (see README.md) |
+| Benchmark | `plugins/store-bufferpool/benchmark/bench_postings.py --sizes 128mb,500mb,1gb` (see README.md); aggregations: `bench_aggs.py --docs 30000000 --variants stock,runend,vec,vecdec` |
+| Lucene refresh | `plugins/store-bufferpool/benchmark/refresh_lucene.sh`: publish all fork modules, restart, verify every node Lucene jar against `~/.m2` and the fork HEAD |
+| CPU profile | `plugins/store-bufferpool/benchmark/validate/jfr_profile.py QUERY --mode MODE` (JFR on the node, code path + top frames) |
 | Offline IO tracer | `plugins/store-bufferpool/benchmark/PostingsIoTrace.java` (term byte ranges, blocks touched per query) |
 | Results | `~/bufferpool-bench/results/*.json` |
 
@@ -152,6 +154,102 @@ result as an upper bound.
 | T3 | Plugin endpoint + `bench_topk.py` variants; measure on `topk_v2` (5 runs) | results table + blocks prefetched but never read |
 | T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
 | T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
+
+## Phase C: aggregations on doc values (C0-C2 done)
+
+Decisions (user):
+- **Vectorization first.** Batch and vectorize collection, measure it, and only then build doc-values prefetch.
+- **Navigation data stays on disk.** The value jump table and the IndexedDISI jump table are already together in the
+  field's `.dvd` slice. For queries that iterate doc values, prefetch that slice before query execution instead of
+  keeping a separate copy in heap.
+- Prefetch, when it comes, is non-speculative: look-ahead 1, doc-ID aligned (same rule as postings).
+- Tests run through OpenSearch with the changed Lucene as the dependency.
+
+What stock already has (fork 10.5.1, OpenSearch `poc-ioopt`):
+- Lucene: bulk `NumericDocValues.longValues(size, docs, values, default)` (dense Lucene90 overrides it);
+  `DocIdStream.intoArray`; `ConstantScoreBulkScorer` and `DenseConjunctionBulkScorer` emit 4,096-doc
+  `BitSetDocIdStream` windows; sparse conjunctions (`ConjunctionBulkScorer`) and `DefaultBulkScorer` collect per doc.
+- OpenSearch: `LeafBucketCollector.collect(DocIdStream, owningBucketOrd)` and `collectRange` exist, but `avg` and
+  `date_histogram` still read values per doc (`advanceExact` + `longValue`/`nextValue`) inside them, and bucket
+  aggregations call their sub-aggregations per doc.
+
+| Step | Change | Done when |
+|---|---|---|
+| C0 | `refresh_lucene.sh`: publish all fork modules, rebuild, restart, check every node lib jar against `~/.m2` and the fork head | script passes; mismatch fails it |
+| C1 | Log-style corpus `logs_v1` + `bench_aggs.py` (Discover `date_histogram`, `terms(service)` + `avg(latency)`; cold and warm, 5 runs) | stock numbers, collect path per query, CPU profile |
+| C2 | Vectorized batch collection: doc IDs in batches, bulk value decode, vectorized rounding / sum, batched bucket ords and sub-aggregation calls | same aggregation results as stock; warm and cold measured |
+| C3 | Doc-values prefetch (non-speculative, `.dvd` jump tables first) | measured on top of C2 |
+
+### C1: corpus and stock profile
+
+- Index `logs_v1_30000000_42_f246f5c2`: 30M docs, 831 MiB, one segment, `_source` off, `log_byte_size` merges. Doc ID
+  order is time order within 7 runs (merges permuted the runs; adjacent docs are less than 2 s apart).
+  `@timestamp` and `latency` use the blocked (varying bits per value) numeric encoding.
+- Queries: `bool filter [term sel:sX, range @timestamp]` + `dh` (date_histogram 1h over 7d, 10m over 1d), `dh_avg`
+  (+ avg(latency)), `terms` (terms(service, 10) + avg(latency)). `s50`/`s10` run with `DenseConjunctionBulkScorer`
+  (4,096-doc `BitSetDocIdStream` windows); top-level `date_histogram` uses `HistogramSkiplistLeafCollector`.
+- JFR profile (`validate/jfr_profile.py`): for 7d ranges, 37-97% of warm CPU was not aggregation at all:
+  `DenseConjunctionBulkScorer` called `docIDRunEnd()` on the range clause every window, and on a bit set that matches
+  almost every doc it scans to the end of the run, O(maxDoc / 64) per 4,096-doc window. The rest was per-doc value
+  reads (`VaryingBPVReader.getLongValue` + one bufferpool read per value), the terms ordinal hash, and the deferred
+  (breadth-first) record and replay of the avg sub-aggregation.
+
+### C2: changes (each behind a switch; `POST /_bufferpool/agg_batch?mode=off|runend|vec|vecdec`, cumulative)
+
+| Mode | Where | Change |
+|---|---|---|
+| runend | Lucene `DenseConjunctionBulkScorer` | keep each clause's last run end while the clause is inside it (`CollectExperiments.setCacheRunEnd`); not for the collector's competitive iterator |
+| vec | OpenSearch `BatchCollection` | `avg`: `collect(DocIdStream)` in 1,024-doc chunks, one `longValues` bulk read per chunk, exact long sum per chunk; `date_histogram` skip-list collector: a run of docs in one bucket goes to the sub-aggregation as a bounded `DocIdStream`; `terms` (global ords, single-valued): bulk `ordValues` per chunk, ordinal-to-bucket array cache (top level), `collectExistingBuckets` + new `LeafBucketCollector.collectBatch(docs, buckets, n)`; deferring collector records and replays in batches with a rebase table; `avg.collectBatch` sums per bucket locally |
+| vecdec | Lucene `Lucene90DocValuesProducer` | bulk reads (`longValues`, new `SortedDocValues.ordValues`) of dense fields read the packed bytes of the doc span once and decode only the requested values (`PackedSpans.gather`, all widths, blocked/table/gcd/plain), when the span has at most 64 values per requested doc (`CollectExperiments.setBulkDecode`) |
+
+Also: `BufferPoolIndexInput.readBytes(long, ...)` copied one byte at a time (Lucene's default); it now copies whole
+blocks. Results are exact: integer sums are exact in longs and added to the compensated sum once per chunk and
+bucket; every run checks bucket keys, doc counts and avg values for equality with stock.
+
+### C2 results (5 runs, `aggs_20261001_092720.json`; fork `3098298c82`; load average 22-27)
+
+p50 ms (cold: server took at 4 ms per miss; warm: client wall). `*` = 95% CI of the median change excludes 0. Docs = docs
+in the returned buckets. IOs are the same in every mode.
+
+| Query | Docs | Mode | stock | runend | vec | vecdec | IOs |
+|---|---:|---|---:|---:|---:|---:|---:|
+| dh:s50:7d | 15,004,856 | cold | 1,651 | 1,247 (-24%*) | 1,246 (-25%*) | 1,238 (-25%*) | 251 |
+| dh:s50:7d | 15,004,856 | warm | 253 | 10.7 (-96%*) | 10.9 (-96%*) | 10.7 (-96%*) | 0 |
+| dh:s10:7d | 3,000,344 | cold | 1,170 | 1,165 (-0%) | 1,169 (-0%) | 1,169 (-0%) | 237 |
+| dh:s10:7d | 3,000,344 | warm | 12.6 | 12.8 (+1%) | 13.3 (+5%) | 12.6 (-0%) | 0 |
+| dh:s1:7d | 300,008 | cold | 1,072 | 1,073 (+0%) | 1,076 (+0%) | 1,077 (+0%) | 220 |
+| dh:s1:7d | 300,008 | warm | 6.3 | 6.2 (-1%) | 6.2 (-1%) | 6.4 (+2%) | 0 |
+| dh:s10:1d | 428,670 | cold | 1,108 | 1,098 (-1%) | 1,093 (-1%) | 1,112 (+0%) | 221 |
+| dh:s10:1d | 428,670 | warm | 27.3 | 21.5 (-21%) | 20.4 (-25%*) | 21.1 (-23%*) | 0 |
+| dh_avg:s50:7d | 15,004,856 | cold | 4,112 | 3,777 (-8%*) | 3,342 (-19%*) | 3,094 (-25%*) | 605 |
+| dh_avg:s50:7d | 15,004,856 | warm | 508 | 253 (-50%*) | 114 (-78%*) | 59.0 (-88%*) | 0 |
+| dh_avg:s10:7d | 3,000,344 | cold | 3,068 | 3,043 (-1%) | 2,974 (-3%*) | 2,934 (-4%*) | 591 |
+| dh_avg:s10:7d | 3,000,344 | warm | 69.8 | 64.7 (-7%*) | 37.9 (-46%) | 29.1 (-58%) | 0 |
+| dh_avg:s10:1d | 428,670 | cold | 1,380 | 1,380 (+0%) | 1,360 (-1%) | 1,349 (-2%*) | 274 |
+| dh_avg:s10:1d | 428,670 | warm | 33.0 | 27.9 (-15%*) | 23.6 (-29%*) | 23.0 (-30%*) | 0 |
+| terms:s50:7d | 9,769,794 | cold | 4,409 | 4,539 (+3%) | 3,716 (-16%) | 3,732 (-15%*) | 625 |
+| terms:s50:7d | 9,769,794 | warm | 740 | 495 (-33%*) | 282 (-62%*) | 239 (-68%*) | 0 |
+| terms:s10:7d | 1,953,354 | cold | 3,302 | 3,395 (+3%) | 3,143 (-5%*) | 3,168 (-4%*) | 613 |
+| terms:s10:7d | 1,953,354 | warm | 115 | 114 (-1%) | 71.2 (-38%*) | 62.4 (-46%*) | 0 |
+| terms:s1:7d | 195,349 | cold | 2,926 | 2,953 (+1%) | 2,921 (-0%) | 2,908 (-1%) | 597 |
+| terms:s1:7d | 195,349 | warm | 14.5 | 14.7 (+1%) | 11.2 (-23%) | 11.8 (-19%) | 0 |
+| terms:s10:1d | 279,196 | cold | 1,167 | 1,155 (-1%) | 1,128 (-3%) | 1,125 (-4%) | 224 |
+| terms:s10:1d | 279,196 | warm | 38.8 | 32.7 (-16%*) | 25.9 (-33%*) | 25.6 (-34%*) | 0 |
+
+What it shows:
+- Warm (CPU): -58% to -96% on the 7d queries at s50/s10, -19% to -34% at 1d and s1. Cold: only queries whose CPU was
+  large gain (-15% to -25% at s50); the rest are within 4%, because cold time is about 4.8 ms x IOs, and the IOs do not
+  change. That is what C3 (prefetch) is for: every 7d query reads all 209 `@timestamp` blocks and 354-377 `latency`
+  or `service` blocks one dependent miss after another.
+- No explicit SIMD yet. The gains come from removing per-doc calls (bulk reads, batch sub-aggregation calls, array
+  instead of hash) and from not reading values one `RandomAccessInput` call at a time. Loops are simple enough for C2
+  to unroll; whether it vectorizes them was not checked.
+- Remaining warm profile, dh_avg:s50 vecdec (59 ms): `FixedBitSet.intoArray` (doc IDs out of the window bit set) 23%,
+  `PackedSpans.gather` 22%, block switching in `VaryingBPVReader` 28%. terms:s50 vecdec (239 ms): the deferred
+  avg's record (`PackedLongValues.Builder`) and replay are about 60%.
+- Candidates before or with C3: Panama gather/unpack for the common widths; consume window bit sets word by word
+  instead of materializing doc IDs; skip deferral when the sub-aggregations are cheap (avg); the user's change 3
+  (skipper sum/count per interval, so intervals fully inside the filter need no value reads).
 
 ## Parked
 

@@ -116,6 +116,22 @@ public abstract class BucketsAggregator extends AggregatorBase {
     }
 
     /**
+     * Batch variant of {@link #collectExistingBucket}: counts {@code docs[i]} in bucket {@code bucketOrds[i]} for
+     * {@code i < count}, then hands the whole batch to {@code subCollector} with one
+     * {@link LeafBucketCollector#collectBatch} call. The buckets must exist (see {@link #grow}).
+     */
+    public final void collectExistingBuckets(LeafBucketCollector subCollector, int[] docs, long[] bucketOrds, int count)
+        throws IOException {
+        for (int i = 0; i < count; i++) {
+            final long docCount = docCountProvider.getDocCount(docs[i]);
+            if (docCounts.increment(bucketOrds[i], docCount) == docCount) {
+                multiBucketConsumer.accept(0);
+            }
+        }
+        subCollector.collectBatch(docs, bucketOrds, count);
+    }
+
+    /**
      * Same as {@link #collectBucket(LeafBucketCollector, int, long)}, but doesn't check if the docCounts needs to be re-sized.
      */
     public final void collectExistingBucket(LeafBucketCollector subCollector, int doc, long bucketOrd) throws IOException {

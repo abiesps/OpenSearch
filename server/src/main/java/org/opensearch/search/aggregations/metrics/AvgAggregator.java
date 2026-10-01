@@ -32,6 +32,7 @@
 package org.opensearch.search.aggregations.metrics;
 
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.DocIdStream;
 import org.apache.lucene.search.ScoreMode;
@@ -49,6 +50,7 @@ import org.opensearch.index.compositeindex.datacube.startree.utils.iterator.Sort
 import org.opensearch.index.fielddata.SortedNumericDoubleValues;
 import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.aggregations.Aggregator;
+import org.opensearch.search.aggregations.BatchCollection;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.LeafBucketCollector;
 import org.opensearch.search.aggregations.LeafBucketCollectorBase;
@@ -98,6 +100,18 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
         }
     }
 
+    /** Batch collection sums a batch per bucket locally when its buckets span at most this many ordinals. */
+    private static final int LOCAL_BUCKETS = 4096;
+
+    private static boolean strictlyIncreasing(int[] docs, int count) {
+        for (int i = 1; i < count; i++) {
+            if (docs[i] <= docs[i - 1]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public ScoreMode scoreMode() {
         return valuesSource != null && valuesSource.needsScores() ? ScoreMode.COMPLETE : ScoreMode.COMPLETE_NO_SCORES;
@@ -130,6 +144,14 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
         final BigArrays bigArrays = context.bigArrays();
         final SortedNumericDoubleValues values = valuesSource.doubleValues(ctx);
         final CompensatedSum kahanSummation = new CompensatedSum(0, 0);
+        // batch collection: a second iterator over the same values, read in bulk; the per-doc path keeps its own
+        final NumericDocValues batchLongs = BatchCollection.isEnabled() ? BatchCollection.exactLongs(valuesSource, ctx) : null;
+        final int[] batchDocs = batchLongs == null ? null : new int[BatchCollection.CHUNK];
+        final long[] batchValues = batchLongs == null ? null : new long[BatchCollection.CHUNK];
+        // per-bucket partial sums of one batch, indexed by bucket - smallest bucket of the batch
+        final long[] localSums = batchLongs == null ? null : new long[LOCAL_BUCKETS];
+        final int[] localCounts = batchLongs == null ? null : new int[LOCAL_BUCKETS];
+        final int[] touched = batchLongs == null ? null : new int[LOCAL_BUCKETS];
 
         return new LeafBucketCollectorBase(sub, values) {
             @Override
@@ -149,6 +171,10 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
 
             @Override
             public void collect(DocIdStream stream, long bucket) throws IOException {
+                if (batchLongs != null) {
+                    collectBatch(stream, bucket);
+                    return;
+                }
                 setKahanSummation(bucket);
                 final int[] count = { 0 };
                 stream.forEach((doc) -> {
@@ -181,6 +207,106 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
                 counts.increment(0, count);
                 sums.set(0, kahanSummation.value());
                 compensations.set(0, kahanSummation.delta());
+            }
+
+            /**
+             * Reads the stream in chunks with one bulk value read per chunk. The values are integers, so each chunk is
+             * summed exactly in a long and added to the compensated sum once; when every partial sum stays below 2^53
+             * (checked per chunk), the result is identical to adding the values one by one as doubles.
+             */
+            private void collectBatch(DocIdStream stream, long bucket) throws IOException {
+                setKahanSummation(bucket);
+                long count = 0;
+                int n;
+                while ((n = stream.intoArray(batchDocs)) > 0) {
+                    if (BatchCollection.allHaveValues(batchLongs, batchDocs, n)) {
+                        batchLongs.longValues(n, batchDocs, batchValues, 0L);
+                        BatchCollection.countBulkChunk();
+                        long sum = 0;
+                        long magnitude = 0;
+                        for (int i = 0; i < n; i++) {
+                            final long v = batchValues[i];
+                            sum += v;
+                            magnitude |= v ^ (v >> 63);
+                        }
+                        count += n;
+                        // |v| < 2^42 and n <= 1024 = 2^10 keep the chunk sum below 2^52
+                        if (magnitude < (1L << 42)) {
+                            kahanSummation.add((double) sum);
+                        } else {
+                            for (int i = 0; i < n; i++) {
+                                kahanSummation.add((double) batchValues[i]);
+                            }
+                        }
+                    } else {
+                        for (int i = 0; i < n; i++) {
+                            if (batchLongs.advanceExact(batchDocs[i])) {
+                                kahanSummation.add((double) batchLongs.longValue());
+                                count++;
+                            }
+                        }
+                    }
+                }
+                counts.increment(bucket, count);
+                sums.set(bucket, kahanSummation.value());
+                compensations.set(bucket, kahanSummation.delta());
+            }
+
+            /**
+             * Docs each in their own bucket (from a bucket aggregation). Values are read in bulk and summed exactly per
+             * bucket in longs, then added to each bucket's compensated sum once, which gives the same result as adding
+             * them one by one (see {@link #collectBatch(DocIdStream, long)}). Falls back to per-doc collection for
+             * repeated docs, missing values, large values or a wide range of buckets.
+             */
+            @Override
+            public void collectBatch(int[] docs, long[] buckets, int count) throws IOException {
+                if (count == 0) {
+                    return;
+                }
+                if (batchLongs == null || count > BatchCollection.CHUNK || strictlyIncreasing(docs, count) == false) {
+                    super.collectBatch(docs, buckets, count);
+                    return;
+                }
+                long minBucket = buckets[0];
+                long maxBucket = buckets[0];
+                for (int i = 1; i < count; i++) {
+                    minBucket = Math.min(minBucket, buckets[i]);
+                    maxBucket = Math.max(maxBucket, buckets[i]);
+                }
+                if (maxBucket - minBucket >= LOCAL_BUCKETS || BatchCollection.allHaveValues(batchLongs, docs, count) == false) {
+                    super.collectBatch(docs, buckets, count);
+                    return;
+                }
+                batchLongs.longValues(count, docs, batchValues, 0L);
+                BatchCollection.countBulkChunk();
+                long magnitude = 0;
+                for (int i = 0; i < count; i++) {
+                    final long v = batchValues[i];
+                    magnitude |= v ^ (v >> 63);
+                }
+                if (magnitude >= (1L << 42)) {
+                    super.collectBatch(docs, buckets, count);
+                    return;
+                }
+                int numTouched = 0;
+                for (int i = 0; i < count; i++) {
+                    final int k = (int) (buckets[i] - minBucket);
+                    if (localCounts[k]++ == 0) {
+                        touched[numTouched++] = k;
+                    }
+                    localSums[k] += batchValues[i];
+                }
+                for (int t = 0; t < numTouched; t++) {
+                    final int k = touched[t];
+                    final long bucket = minBucket + k;
+                    setKahanSummation(bucket);
+                    kahanSummation.add((double) localSums[k]);
+                    counts.increment(bucket, localCounts[k]);
+                    sums.set(bucket, kahanSummation.value());
+                    compensations.set(bucket, kahanSummation.delta());
+                    localSums[k] = 0;
+                    localCounts[k] = 0;
+                }
             }
 
             private void setKahanSummation(long bucket) {
