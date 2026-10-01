@@ -155,7 +155,7 @@ result as an upper bound.
 | T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
 | T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
 
-## Phase C: aggregations on doc values (C0-C2 done)
+## Phase C: aggregations on doc values (C0-C2, C3a done)
 
 Decisions (user):
 - **Vectorization first.** Batch and vectorize collection, measure it, and only then build doc-values prefetch.
@@ -256,6 +256,55 @@ What it shows:
   floating-point sums, and a vector plus scalar path per width. Lucene's Panama doc-values decoder only vectorizes
   64-bit values with vectors of 32+ bytes, so on this Mac (16-byte NEON) it always runs scalar. If resumed: behind a
   switch, scalar below a minimum run length, check s1 and 1-day for regressions, measure on x86 too.
+
+### C3a: where the cold reads go (`validate/DocValuesLayout.java` + `validate/dv_trace.py`; mode vecdec, 4 ms)
+
+`DocValuesLayout.java` maps `.dvd`/`.dvs` byte ranges to field and region from the doc-values metadata.
+`dv_trace.py` traces every block load of each query cold, maps it to a region, and runs the same query without
+aggregations to separate the query's loads from the aggregation's. Files: `~/bufferpool-bench/results/c3a/`.
+`.dvd` layout: `_seq_no` blocks 0-458, `@timestamp` 459-1032 (blocked, 1,832 value blocks, jump table in block 1032),
+`service` ords 1032-1261 (8 bits), `status` ords 1261-1375 (4 bits), `latency` 1375-1728 (blocked, jump table in 1728);
+skipper of `@timestamp` in `.dvs` blocks 0-1.
+
+| Query | Took | Loads | Waited | Query alone | @timestamp values | latency values | service ords | points (kdd) | navigation |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| dh:s50:7d | 1,274 | 251 | 1,213 | 42 loads, 220 ms | 207 / 574 | – | – | 1 | 4 |
+| dh:s10:7d | 1,225 | 237 | 1,175 | 31 loads, 169 ms | 207 / 574 | – | – | 1 | 4 |
+| dh:s1:7d | 1,129 | 220 | 1,080 | 15 loads, 76 ms | 206 / 574 | – | – | 1 | 4 |
+| dh:s10:1d | 1,152 | 221 | 1,083 | 136 loads, 707 ms | 83 / 574 | – | – | 110 | 4 |
+| dh_avg:s50:7d | 3,324 | 605 | 2,994 | 42 loads, 221 ms | 207 / 574 | 352 / 354 | – | 1 | 6 |
+| dh_avg:s10:7d | 3,034 | 591 | 2,905 | 31 loads, 172 ms | 207 / 574 | 352 / 354 | – | 1 | 6 |
+| dh_avg:s10:1d | 1,419 | 274 | 1,335 | 136 loads, 712 ms | 83 / 574 | 51 / 354 | – | 110 | 6 |
+| terms:s50:7d | 4,037 | 625 | 3,064 | 42 loads, 220 ms | – | 352 / 354 | 228 / 230 | 1 | 5 |
+| terms:s10:7d | 3,373 | 613 | 3,010 | 31 loads, 165 ms | 1 / 574 | 352 / 354 | 228 / 230 | 0 | 7 |
+| terms:s1:7d | 3,012 | 597 | 2,923 | 15 loads, 73 ms | 1 / 574 | 352 / 354 | 228 / 230 | 0 | 7 |
+| terms:s10:1d | 1,207 | 224 | 1,086 | 136 loads, 715 ms | – | 51 / 354 | 34 / 230 | 110 | 5 |
+
+(Took and waited in ms. "x / y" = blocks loaded / blocks of the region. Navigation = jump tables, skipper, terms data.)
+
+Findings:
+1. 90-97% of cold time is spent waiting on loads: every load is waited on, one after another.
+2. Each doc-values field is read as one stream in strictly increasing block order (no backward jumps), so "next
+   node" is well defined per field.
+3. `latency` (avg) and `service` (terms ords) read every block of the matching doc range (352/354, 228/230), at every
+   selectivity: even s1 (1% of docs) has a match in every 128 KiB node.
+4. `@timestamp` under the skip-list date_histogram reads only 207 of 574 blocks: values are read only in skipper
+   intervals that span a bucket boundary; the other intervals are counted from the skipper.
+5. Navigation is 4-7 loads per query (about 20-35 ms). Prefetching it alone (C3b) is a small gain; it matters
+   because C3c needs it (the jump table to map docs to nodes, the skipper to know which `@timestamp` nodes are read).
+6. Query side: 1-day ranges run on points: 110 `.kdd` loads, about half the 1-day cold time (query alone 707-715 ms).
+   Postings `.doc`: 4-34 sequential loads. Doc-values prefetch does not touch these.
+
+Consequences for C3c:
+- The proof must match what the collector reads. For fields read at every matching doc (`latency`, `service`), "the
+  look-ahead iterator has a match in the node" is enough. For `@timestamp` under the skip-list collector, a node is
+  read only if a match falls in a skipper interval that spans a bucket boundary, so the planner also checks the
+  skipper; without that, about 367 of 574 nodes would be prefetched and never read.
+- Fold C3b into C3c: prefetch the jump tables and the skipper when the leaf collector is created.
+- Estimate (not measured): one node ahead keeps about 2 loads in flight per stream (as in Phase 3b), and streams run
+  in parallel (8 prefetch threads). The longest stream then sets the time: about 352 x 4.8 / 2 = 0.85 s for 7-day
+  dh_avg and terms (now 3.0-4.0 s), about 0.5 s for 7-day dh (now 1.1-1.3 s). 1-day queries stay bound by the 110
+  points loads (about 0.5-0.7 s, now 1.1-1.4 s).
 
 ## Parked
 
