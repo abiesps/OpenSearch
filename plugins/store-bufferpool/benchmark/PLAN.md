@@ -155,7 +155,7 @@ result as an upper bound.
 | T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
 | T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
 
-## Phase C: aggregations on doc values (C0-C2, C3a done)
+## Phase C: aggregations on doc values (C0-C2, C3a, C3c first version done)
 
 Decisions (user):
 - **Vectorization first.** Batch and vectorize collection, measure it, and only then build doc-values prefetch.
@@ -305,6 +305,62 @@ Consequences for C3c:
   in parallel (8 prefetch threads). The longest stream then sets the time: about 352 x 4.8 / 2 = 0.85 s for 7-day
   dh_avg and terms (now 3.0-4.0 s), about 0.5 s for 7-day dh (now 1.1-1.3 s). 1-day queries stay bound by the 110
   points loads (about 0.5-0.7 s, now 1.1-1.4 s).
+
+### C3c: doc-values prefetch (fork `690525375d`, `ab8781e6f8`; OpenSearch `3a7c3945537`; mode `pf` = vecdec + prefetch)
+
+- Lucene: `NumericDocValues`/`SortedDocValues.nextPrefetchNodeDoc(doc, nodeBytes)` (first doc whose value starts in a
+  later node) and `prefetchNodes` for dense Lucene90 numerics (packed, table, gcd, blocked) and dense sorted ordinals
+  (`DocValuesNodes`). Blocked fields find blocks through the value jump table (prefetched on first use) and derive each
+  block's bits per value from its length, so planning reads no value block; requests include the block header node.
+  `DocValuesSkipper.prefetch()` requests the whole skipper. Each node is requested once. Test:
+  `TestLucene90DocValuesPrefetch` checks the mapping against the bytes Lucene actually reads.
+- OpenSearch `DocValuesPrefetch.Planner`: when collection reaches a doc in a new node of a field, it asks for the next
+  node's first doc, finds the next doc at or after it that will be read, and requests that doc's node (one node
+  ahead, doc-ID aligned). Proof of a read: a look-ahead scorer of the query (its own `Weight.scorer`), only advanced.
+  The skip-list date_histogram adds a skipper check: no values are read in a level-0 interval that is dense and falls
+  in one bucket. Wired into avg (latency), global-ordinal terms (service ords) and the skip-list collector (timestamp).
+
+Validation (`validate/dv_trace.py --compare`, cold, all 11 queries): the blocks loaded with prefetch are exactly the
+blocks loaded without it (plus one `.doc` block in the 1-day queries, read by the look-ahead scorer); prefetched but
+never read: 0; aggregation results equal stock in every run.
+
+Results (5 runs, `aggs_20261001_162306.json`, load average 4-7; p50 ms; `*` = CI excludes 0):
+
+| Query | Mode | stock | vecdec | pf | pf vs vecdec | IOs |
+|---|---|---:|---:|---:|---:|---:|
+| dh:s50:7d | cold | 1,754 | 1,279 (-27%*) | 734 (-58%*) | -43% | 251 / 251 |
+| dh:s50:7d | warm | 230 | 10.3 (-96%*) | 11.6 (-95%*) | +12% | 0 / 0 |
+| dh:s10:7d | cold | 1,208 | 1,194 (-1%) | 681 (-44%*) | -43% | 237 / 237 |
+| dh:s10:7d | warm | 12.6 | 12.2 (-3%) | 13.2 (+5%*) | +8% | 0 / 0 |
+| dh:s1:7d | cold | 1,091 | 1,070 (-2%) | 595 (-45%*) | -44% | 220 / 220 |
+| dh:s1:7d | warm | 4.9 | 5.6 (+14%) | 5.9 (+20%) | +5% | 0 / 0 |
+| dh:s10:1d | cold | 1,166 | 1,129 (-3%*) | 984 (-16%*) | -13% | 221 / 222 |
+| dh:s10:1d | warm | 24.0 | 18.0 (-25%*) | 39.1 (+63%*) | +117% | 0 / 0 |
+| dh_avg:s50:7d | cold | 4,397 | 3,281 (-25%*) | 1,332 (-70%*) | -59% | 605 / 605 |
+| dh_avg:s50:7d | warm | 426 | 52.5 (-88%*) | 53.7 (-87%*) | +2% | 0 / 0 |
+| dh_avg:s10:7d | cold | 3,305 | 2,999 (-9%*) | 1,206 (-64%*) | -60% | 591 / 591 |
+| dh_avg:s10:7d | warm | 55.3 | 23.7 (-57%*) | 25.8 (-53%*) | +9% | 0 / 0 |
+| dh_avg:s10:1d | cold | 1,476 | 1,410 (-4%*) | 1,066 (-28%*) | -24% | 274 / 275 |
+| dh_avg:s10:1d | warm | 28.9 | 19.3 (-33%*) | 58.0 (+101%*) | +200% | 0 / 0 |
+| terms:s50:7d | cold | 4,836 | 4,150 (-14%*) | 1,954 (-60%*) | -53% | 625 / 625 |
+| terms:s50:7d | warm | 698 | 218 (-69%*) | 221 (-68%*) | +2% | 0 / 0 |
+| terms:s10:7d | cold | 3,626 | 3,303 (-9%*) | 1,710 (-53%*) | -48% | 613 / 613 |
+| terms:s10:7d | warm | 105 | 54.1 (-48%*) | 55.1 (-47%*) | +2% | 0 / 0 |
+| terms:s1:7d | cold | 2,995 | 2,974 (-1%*) | 1,689 (-44%*) | -43% | 597 / 597 |
+| terms:s1:7d | warm | 14.2 | 10.6 (-25%) | 12.8 (-10%) | +21% | 0 / 0 |
+| terms:s10:1d | cold | 1,208 | 1,151 (-5%*) | 1,006 (-17%*) | -13% | 224 / 225 |
+| terms:s10:1d | warm | 35.8 | 22.3 (-38%*) | 60.7 (+69%*) | +172% | 0 / 0 |
+
+Findings:
+- Cold 7-day: -43% to -60% vs vecdec (-44% to -70% vs stock), with the same blocks loaded. Close to the C3a estimate for
+  dh and dh_avg. terms is slower than the estimate because its two fields are read in two phases, not in parallel: the
+  `service` ords during collection, then `latency` when the deferred avg is replayed.
+- Cold 1-day: -13% to -24%; the 110 points (`.kdd`) loads of the query are not prefetched.
+- Warm 7-day: within +2% to +12%. Warm 1-day: +63% to +200% (+21 to +39 ms). JFR on dh_avg:s10:1d: 42% of the time
+  building the look-ahead scorers (each planner builds its own, and each runs the points intersection again), 28% in the
+  planners' first advance: with the range as a bit set, Lucene's `BitSetConjunctionDISI` walks the `sel` postings doc by
+  doc from doc 0 to the start of the 1-day range. The main query avoids both.
+- Next for C3c: one shared look-ahead per segment, and a look-ahead that leapfrogs when a clause is a bit set.
 
 ## Parked
 
