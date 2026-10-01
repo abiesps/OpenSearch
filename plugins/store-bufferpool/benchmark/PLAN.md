@@ -247,9 +247,15 @@ What it shows:
 - Remaining warm profile, dh_avg:s50 vecdec (59 ms): `FixedBitSet.intoArray` (doc IDs out of the window bit set) 23%,
   `PackedSpans.gather` 22%, block switching in `VaryingBPVReader` 28%. terms:s50 vecdec (239 ms): the deferred
   avg's record (`PackedLongValues.Builder`) and replay are about 60%.
-- Candidates before or with C3: Panama gather/unpack for the common widths; consume window bit sets word by word
-  instead of materializing doc IDs; skip deferral when the sub-aggregations are cheap (avg); the user's change 3
-  (skipper sum/count per interval, so intervals fully inside the filter need no value reads).
+- Other CPU candidates for later: consume window bit sets word by word instead of materializing doc IDs; skip
+  deferral when the sub-aggregations are cheap (avg); the user's change 3 (skipper sum/count per interval, so
+  intervals fully inside the filter need no value reads).
+- Explicit SIMD (Panama Vector API): parked (user decision). Warm-only gain on top of batching; it cannot change cold
+  latency. Regression risks: short or sparse batches (s1, 1-day), scattered docs (NEON has no gather), heap-allocated
+  vectors before C2 compiles the code, per-CPU differences in vector width and native instructions, changed
+  floating-point sums, and a vector plus scalar path per width. Lucene's Panama doc-values decoder only vectorizes
+  64-bit values with vectors of 32+ bytes, so on this Mac (16-byte NEON) it always runs scalar. If resumed: behind a
+  switch, scalar below a minimum run length, check s1 and 1-day for regressions, measure on x86 too.
 
 ## Parked
 
@@ -257,3 +263,4 @@ What it shows:
   `containsKey`) plus an `expectedAdvances(k)` hint from `ConjunctionDISI`, so the DualNav reader picks doc/nav itself.
 - Resident `.nav` experiment (keep `.nav` warm, `.doc` cold): IO counts say the nav path would then never lose.
 - 8 KiB cache blocks.
+- Explicit SIMD for aggregation collection (see Phase C2 notes).
