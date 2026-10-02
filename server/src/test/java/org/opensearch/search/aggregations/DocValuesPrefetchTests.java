@@ -143,6 +143,9 @@ public class DocValuesPrefetchTests extends OpenSearchTestCase {
                         } else {
                             assertEquals(0, DocValuesPrefetch.sharedHits());
                         }
+                        assertEquals(share ? 1 : 0, DocValuesPrefetch.sharedSearches());
+                        DocValuesPrefetch.release(search);
+                        assertEquals("released searches hold nothing", 0, DocValuesPrefetch.sharedSearches());
                     }
                 }
             }

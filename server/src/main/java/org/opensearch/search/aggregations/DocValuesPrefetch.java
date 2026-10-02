@@ -16,12 +16,15 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.ConjunctionUtils;
 import org.apache.lucene.search.ConstantScoreQuery;
+import org.apache.lucene.search.ConstantScoreScorer;
+import org.apache.lucene.search.ConstantScoreWeight;
+import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.FilterDocIdSetIterator;
 import org.apache.lucene.search.FilteredDocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.LRUQueryCache;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.QueryCache;
 import org.apache.lucene.search.QueryCachingPolicy;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
@@ -29,16 +32,19 @@ import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.FixedBitSet;
+import org.apache.lucene.util.RoaringDocIdSet;
 import org.opensearch.search.internal.SearchContext;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -67,8 +73,11 @@ public final class DocValuesPrefetch {
     private static final LongAdder leapfrogs = new LongAdder();
     private static final LongAdder sharedHits = new LongAdder();
     private static final LongAdder sharedMisses = new LongAdder();
-    /** Per search: a searcher over the same reader that caches the look-ahead's non-term clauses per segment. */
-    private static final Map<Object, IndexSearcher> SHARED = Collections.synchronizedMap(new WeakHashMap<>());
+    /**
+     * Per search: a searcher over the same reader that caches the look-ahead's non-term clauses per segment. An entry
+     * lives until its search is released ({@link #release}); a search context releases its entry when it closes.
+     */
+    private static final Map<Object, IndexSearcher> SHARED = new ConcurrentHashMap<>();
 
     private DocValuesPrefetch() {}
 
@@ -169,19 +178,7 @@ public final class DocValuesPrefetch {
         }
         return SHARED.computeIfAbsent(search, c -> {
             final IndexSearcher searcher = new IndexSearcher(base.getIndexReader());
-            searcher.setQueryCache(new LRUQueryCache(256, 256L << 20, leaf -> true, Float.POSITIVE_INFINITY) {
-                @Override
-                protected void onHit(Object readerCoreKey, Query query) {
-                    super.onHit(readerCoreKey, query);
-                    sharedHits.increment();
-                }
-
-                @Override
-                protected void onMiss(Object readerCoreKey, Query query) {
-                    super.onMiss(readerCoreKey, query);
-                    sharedMisses.increment();
-                }
-            });
+            searcher.setQueryCache(new SearchQueryCache());
             searcher.setQueryCachingPolicy(new QueryCachingPolicy() {
                 @Override
                 public void onUse(Query query) {}
@@ -194,6 +191,99 @@ public final class DocValuesPrefetch {
             });
             return searcher;
         });
+    }
+
+    /** Drops the shared look-ahead work of {@code search}; later look-aheads with the same key start over. */
+    public static void release(Object search) {
+        SHARED.remove(search);
+    }
+
+    /** Searches holding shared look-ahead work (should be 0 when no search runs). */
+    public static int sharedSearches() {
+        return SHARED.size();
+    }
+
+    /**
+     * Caches the docs of a clause per segment for one search. Unlike {@code LRUQueryCache} it registers no listener on
+     * the segment readers, so nothing outlives the search once {@link #release} drops it.
+     */
+    private static final class SearchQueryCache implements QueryCache {
+        private record Key(Query query, Object leaf) {
+        }
+
+        private final Map<Key, DocIdSet> sets = new ConcurrentHashMap<>();
+
+        @Override
+        public Weight doCache(Weight weight, QueryCachingPolicy policy) {
+            try {
+                if (policy.shouldCache(weight.getQuery()) == false) {
+                    return weight;
+                }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            return new ConstantScoreWeight(weight.getQuery(), 1f) {
+                @Override
+                public ScorerSupplier scorerSupplier(LeafReaderContext ctx) throws IOException {
+                    final DocIdSet set = docs(weight, ctx);
+                    final DocIdSetIterator probe = set.iterator();
+                    if (probe == null) {
+                        return null;
+                    }
+                    final long cost = probe.cost();
+                    return new ScorerSupplier() {
+                        @Override
+                        public Scorer get(long leadCost) throws IOException {
+                            return new ConstantScoreScorer(score(), ScoreMode.COMPLETE_NO_SCORES, set.iterator());
+                        }
+
+                        @Override
+                        public long cost() {
+                            return cost;
+                        }
+                    };
+                }
+
+                @Override
+                public boolean isCacheable(LeafReaderContext ctx) {
+                    return false;
+                }
+            };
+        }
+
+        private DocIdSet docs(Weight weight, LeafReaderContext ctx) throws IOException {
+            final Key key = new Key(weight.getQuery(), ctx.id());
+            DocIdSet set = sets.get(key);
+            if (set != null) {
+                sharedHits.increment();
+                return set;
+            }
+            sharedMisses.increment();
+            set = build(weight, ctx);
+            final DocIdSet raced = sets.putIfAbsent(key, set);
+            return raced == null ? set : raced;
+        }
+
+        private static DocIdSet build(Weight weight, LeafReaderContext ctx) throws IOException {
+            final ScorerSupplier supplier = weight.scorerSupplier(ctx);
+            if (supplier == null) {
+                return DocIdSet.EMPTY;
+            }
+            // lead cost "unbounded": the clause's own index structure, never a doc-values scan
+            final DocIdSetIterator it = supplier.get(Long.MAX_VALUE).iterator();
+            final int maxDoc = ctx.reader().maxDoc();
+            if (it.cost() >= maxDoc >>> 7) {
+                final FixedBitSet bits = new FixedBitSet(maxDoc);
+                it.nextDoc();
+                it.intoBitSet(DocIdSetIterator.NO_MORE_DOCS, bits, 0);
+                return new BitDocIdSet(bits);
+            }
+            final RoaringDocIdSet.Builder builder = new RoaringDocIdSet.Builder(maxDoc);
+            for (int doc = it.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = it.nextDoc()) {
+                builder.add(doc);
+            }
+            return builder.build();
+        }
     }
 
     /** The FILTER / MUST clauses of a pure conjunction (no SHOULD, no MUST_NOT), unwrapping constant-score wrappers. */
@@ -247,6 +337,10 @@ public final class DocValuesPrefetch {
      * the query), skipping deleted docs.
      */
     public static DocIdSetIterator queryMatches(SearchContext context, LeafReaderContext ctx) throws IOException {
+        if (shareLookahead && SHARED.containsKey(context) == false) {
+            // registered before the entry exists, so a search that closes never leaves one behind
+            context.addReleasable(() -> release(context));
+        }
         return queryMatches(context, context.searcher(), context.query(), ctx);
     }
 

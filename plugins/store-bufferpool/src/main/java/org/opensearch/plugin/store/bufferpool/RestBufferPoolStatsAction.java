@@ -178,6 +178,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("agg_prefetch_leapfrogs", DocValuesPrefetch.leapfrogs());
             builder.field("agg_prefetch_shared_hits", DocValuesPrefetch.sharedHits());
             builder.field("agg_prefetch_shared_misses", DocValuesPrefetch.sharedMisses());
+            builder.field("agg_prefetch_shared_searches", DocValuesPrefetch.sharedSearches());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {
