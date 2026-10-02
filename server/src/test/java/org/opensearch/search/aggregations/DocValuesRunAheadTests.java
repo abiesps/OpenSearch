@@ -141,14 +141,21 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
             final int maxDoc = randomIntBetween(1, 1_500_000);
             final FixedBitSet matches = randomMatches(maxDoc);
             final int lag = randomFrom(4096, 10_000, 65_536, 1 << 17);
-            final DocValuesPrefetch.RunAhead ra = new DocValuesPrefetch.RunAhead(lag);
+            final DocValuesPrefetch.RunAhead ra = new DocValuesPrefetch.RunAhead(lag, randomBoolean());
             final FakeField field = new FakeField(randomIntBetween(500, 200_000), maxDoc);
             final DocValuesPrefetch.Planner planner = DocValuesPrefetch.planner(field, ra, DocValuesPrefetch.ALL_MATCHES);
             final List<Integer> delivered = new ArrayList<>();
+            // docs the scorer handed over one at a time, and docs the collector got one at a time (not in a stream)
+            final List<Integer> perDocIn = new ArrayList<>();
+            final List<Integer> perDocOut = new ArrayList<>();
+            final boolean[] inStream = new boolean[1];
             final LeafBucketCollector out = new LeafBucketCollector() {
                 @Override
                 public void collect(int doc, long owningBucketOrd) throws IOException {
                     assertEquals(0, owningBucketOrd);
+                    if (inStream[0] == false) {
+                        perDocOut.add(doc);
+                    }
                     planner.advance(doc);
                     delivered.add(doc);
                     field.collected++;
@@ -156,6 +163,28 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
 
                 @Override
                 public void collect(DocIdStream stream, long owningBucketOrd) throws IOException {
+                    inStream[0] = true;
+                    try {
+                        collectStream(stream, owningBucketOrd);
+                    } finally {
+                        inStream[0] = false;
+                    }
+                }
+
+                @Override
+                public void collectRange(int min, int max) throws IOException {
+                    assertTrue(min < max);
+                    inStream[0] = true;
+                    try {
+                        for (int doc = min; doc < max; doc++) {
+                            collect(doc, 0);
+                        }
+                    } finally {
+                        inStream[0] = false;
+                    }
+                }
+
+                private void collectStream(DocIdStream stream, long owningBucketOrd) throws IOException {
                     if (randomBoolean()) {
                         stream.forEach(doc -> collect(doc, owningBucketOrd));
                     } else {
@@ -189,6 +218,7 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
                         doc = end;
                     }
                     case 1 -> {
+                        perDocIn.add(next);
                         in.collect(next, 0);
                         doc = next + 1;
                     }
@@ -202,6 +232,7 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
             }
             in.finish();
             assertDelivered(matches, delivered);
+            assertEquals("docs handed over one at a time are collected one at a time", perDocIn, perDocOut);
             assertPlanned(matches, field);
         }
     }

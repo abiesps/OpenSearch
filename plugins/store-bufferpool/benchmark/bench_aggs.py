@@ -74,8 +74,9 @@ WINDOWS = {"7d": (0, SPAN_MS, "1h"), "1d": (3 * 86_400_000, 4 * 86_400_000, "10m
 #   pfsl    pf + both
 #   pfw     vecdec + doc-values prefetch proven by the main scorer's own matches: a run-ahead buffer between the scorer
 #           and the aggregation collectors (131,072 doc IDs; no second scorer)
+#   pfwg    pfw + gate: collection waits at a planner's next requested doc until the read after its node is known
 VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec", "vecdec"), ("pf", "pf"), ("pfs", "pfs"),
-                ("pfl", "pfl"), ("pfsl", "pfsl"), ("pfw", "pfw")]
+                ("pfl", "pfl"), ("pfsl", "pfsl"), ("pfw", "pfw"), ("pfwg", "pfwg")]
 VARIANTS = VARIANTS_ALL[:1]
 DEFAULT_QUERIES = [
     "dh:s50:7d", "dh:s10:7d", "dh:s1:7d", "dh:s10:1d",

@@ -96,6 +96,7 @@ public class BatchCollectionTests extends AggregatorTestCase {
         DocValuesPrefetch.setShareLookahead(false);
         DocValuesPrefetch.setLeapfrogLookahead(false);
         DocValuesPrefetch.setRunAhead(false);
+        DocValuesPrefetch.setRunAheadGate(false);
         super.tearDown();
     }
 
@@ -169,6 +170,7 @@ public class BatchCollectionTests extends AggregatorTestCase {
         DocValuesPrefetch.setShareLookahead(randomBoolean());
         DocValuesPrefetch.setLeapfrogLookahead(randomBoolean());
         DocValuesPrefetch.setRunAhead(forceRunAhead || randomBoolean());
+        DocValuesPrefetch.setRunAheadGate(randomBoolean());
         DocValuesPrefetch.setRunAheadDocs(randomFrom(4096, 8192, 65_536, 1 << 17));
         try {
             return searchAndReduce(searcher, query, agg, false, tsType, vType, svcType);

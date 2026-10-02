@@ -73,6 +73,7 @@ public final class DocValuesPrefetch {
     private static volatile long nodeBytes = 128 * 1024;
     private static volatile boolean runAhead;
     private static volatile int runAheadDocs = 1 << 17;
+    private static volatile boolean runAheadGate;
     private static final LongAdder runAheadLeaves = new LongAdder();
     private static final LongAdder runAheadReplays = new LongAdder();
     /** The run-ahead buffer of the leaf collector tree being built on this thread, see {@link #beginLeaf()}. */
@@ -140,6 +141,20 @@ public final class DocValuesPrefetch {
     /** Returns whether planners use the run-ahead buffer. */
     public static boolean isRunAhead() {
         return runAhead;
+    }
+
+    /**
+     * Sets whether the run-ahead buffer holds collection before a planner's next requested doc until the read after
+     * that doc's node is known (up to the buffer's capacity), so a field read far apart (date_histogram reads values
+     * only in skipper intervals that span two buckets) still gets its request one node ahead in time.
+     */
+    public static void setRunAheadGate(boolean on) {
+        runAheadGate = on;
+    }
+
+    /** Returns whether the run-ahead buffer gates collection on the planners. */
+    public static boolean isRunAheadGate() {
+        return runAheadGate;
     }
 
     /** Sets how many doc IDs the run-ahead buffer keeps between the scorer and the collectors. */
@@ -556,8 +571,17 @@ public final class DocValuesPrefetch {
         private Ahead ahead;
         /** When a read doc reaches it, the doc is in a node not planned from yet: request the following one. */
         private int trigger;
-        /** When >= 0, the next read is not known yet: search from here when more matches are known. */
+        /** When >= 0, the next read is not known yet: plan from here when more matches are known. */
         private int pendingFrom = -1;
+        /**
+         * Searches for the next read only move forward: no read is needed below {@code cursor} (at or after the last
+         * target, every doc below it was checked), and {@code found} is the first read at or after it, if known (-1
+         * otherwise). Searching again from a doc the filter already passed could see a doc in an interval it skipped.
+         */
+        private int cursor;
+        private int found = -1;
+        /** First doc of the node after {@link #trigger}'s, once computed for the gate (-1: not yet). */
+        private int gateTarget = -1;
 
         private Planner(Field field, Matches matches, ReadFilter filter, long nodeBytes) {
             this.field = field;
@@ -570,13 +594,29 @@ public final class DocValuesPrefetch {
             plan(0);
         }
 
+        /** The first read at or after {@code from}, NO_MORE_DOCS, or {@link Matches#UNKNOWN}. */
+        private int find(int from) throws IOException {
+            if (found != -1 && found >= from) {
+                return found;
+            }
+            found = -1;
+            cursor = Math.max(cursor, from);
+            final int next = filter.nextRead(cursor, matches);
+            if (next == Matches.UNKNOWN) {
+                cursor = Math.max(cursor, matches.resumeFrom());
+                return next;
+            }
+            found = next;
+            return next;
+        }
+
         /** Requests the node of the first doc at or after {@code from} that will be read, once it is known. */
         private void plan(int from) throws IOException {
-            final int next = filter.nextRead(from, matches);
+            final int next = find(from);
             if (next == Matches.UNKNOWN) {
-                pendingFrom = matches.resumeFrom();
+                pendingFrom = from;
                 trigger = DocIdSetIterator.NO_MORE_DOCS;
-                ahead.pending(pendingFrom);
+                ahead.pending(cursor);
                 return;
             }
             pendingFrom = -1;
@@ -587,6 +627,7 @@ public final class DocValuesPrefetch {
             field.prefetch(next, nodeBytes);
             requests.increment();
             trigger = next;
+            gateTarget = -1;
         }
 
         /** More matches are known: plan if waiting for them. */
@@ -594,6 +635,24 @@ public final class DocValuesPrefetch {
             if (pendingFrom >= 0) {
                 plan(pendingFrom);
             }
+        }
+
+        /**
+         * Whether collection may reach {@link #trigger}: the read after the trigger's node is known (or there is none),
+         * so the planner can request it as soon as collection gets there.
+         */
+        private boolean gateOpen() throws IOException {
+            if (trigger == DocIdSetIterator.NO_MORE_DOCS) {
+                return true;
+            }
+            if (gateTarget < 0) {
+                final int nodeEnd = field.nextNodeDoc(trigger, nodeBytes);
+                gateTarget = nodeEnd < 0 ? DocIdSetIterator.NO_MORE_DOCS : nodeEnd;
+            }
+            if (gateTarget == DocIdSetIterator.NO_MORE_DOCS) {
+                return true;
+            }
+            return find(gateTarget) != Matches.UNKNOWN;
         }
 
         /**
@@ -677,7 +736,7 @@ public final class DocValuesPrefetch {
         if (enabled == false || runAhead == false || CURRENT.get() != null) {
             return null;
         }
-        final RunAhead ra = new RunAhead(runAheadDocs);
+        final RunAhead ra = new RunAhead(runAheadDocs, runAheadGate);
         CURRENT.set(ra);
         return ra;
     }
@@ -719,9 +778,17 @@ public final class DocValuesPrefetch {
         private final BufferStream stream = new BufferStream();
         private final int[] first = new int[1];
 
+        private final boolean gate;
+
         RunAhead(int lag) {
+            this(lag, false);
+        }
+
+        RunAhead(int lag, boolean gate) {
             this.lag = lag;
-            this.capacity = (2 * lag + 4 * WINDOW + 63) & ~63;
+            this.gate = gate;
+            // with the gate, delivery can wait at a planner's trigger while the scorer runs further ahead
+            this.capacity = ((gate ? 4 : 2) * lag + 4 * WINDOW + 63) & ~63;
             this.bits = new FixedBitSet(capacity);
             this.words = bits.getBits();
         }
@@ -737,7 +804,46 @@ public final class DocValuesPrefetch {
             return i == DocIdSetIterator.NO_MORE_DOCS ? i : base + i;
         }
 
+        // Arrival runs: the scorer hands docs one at a time (PER_DOC), as streams (STREAM) or as ranges of matching docs
+        // (RANGE). They are handed on in the same form, so the collectors run the same code path as without the buffer.
+        private static final byte STREAM = 0, PER_DOC = 1, RANGE = 2;
+        private static final int RUNS = 1024;
+        private final int[] runEnd = new int[RUNS];
+        /** First doc of a RANGE run (every doc from it to the run's end matches). */
+        private final int[] runStart = new int[RUNS];
+        private final byte[] runKind = new byte[RUNS];
+        private int runHead, runCount;
+        /** Docs that arrived one at a time, in order. */
+        private static final int RING = 1 << 14;
+        private final int[] ring = new int[RING];
+        private int ringHead, ringCount;
+
+        /** Starts a run of {@code kind} unless the current run has that kind (ranges always start a run). */
+        private void startRun(byte kind) throws IOException {
+            if (kind != RANGE && runCount > 0 && runKind[(runHead + runCount - 1) & (RUNS - 1)] == kind) {
+                return;
+            }
+            if (runCount == RUNS) {
+                deliver(arrived); // frees every closed run
+            }
+            final int r = (runHead + runCount) & (RUNS - 1);
+            runKind[r] = kind;
+            runEnd[r] = arrived;
+            runStart[r] = arrived;
+            runCount++;
+        }
+
+        /** The current run covers every doc below {@link #arrived}. */
+        private void endRun() {
+            runEnd[(runHead + runCount - 1) & (RUNS - 1)] = arrived;
+        }
+
         private void arriveDoc(int doc) throws IOException {
+            startRun(PER_DOC);
+            if (ringCount == RING) {
+                endRun();
+                deliver(arrived);
+            }
             if (doc - base >= capacity - WINDOW) {
                 makeRoom(doc);
             }
@@ -745,10 +851,10 @@ public final class DocValuesPrefetch {
             words[i >> 6] |= 1L << i;
             lastSet = doc;
             arrived = doc + 1;
+            ring[(ringHead + ringCount++) & (RING - 1)] = doc;
+            endRun();
             afterArrival();
-            if (arrived - lag - delivered >= WINDOW) {
-                deliver(arrived - lag);
-            }
+            deliverReady();
         }
 
         private void arriveStream(DocIdStream s) throws IOException {
@@ -756,6 +862,7 @@ public final class DocValuesPrefetch {
             if (s.intoArray(first) == 0) {
                 return;
             }
+            startRun(STREAM);
             arriveDoc0(first[0]);
             while (s.mayHaveRemaining()) {
                 final int end = base + capacity;
@@ -769,13 +876,13 @@ public final class DocValuesPrefetch {
                 }
                 // matches remain at or after end, so every doc below end is known
                 arrived = end;
+                endRun();
                 afterArrival();
                 makeRoom(end);
             }
+            endRun();
             afterArrival();
-            if (arrived - lag - delivered >= WINDOW) {
-                deliver(arrived - lag);
-            }
+            deliverReady();
         }
 
         /** Sets {@code doc}, making room first; no delivery. */
@@ -787,9 +894,13 @@ public final class DocValuesPrefetch {
             words[i >> 6] |= 1L << i;
             lastSet = doc;
             arrived = doc + 1;
+            endRun();
         }
 
         private void arriveRange(int min, int max) throws IOException {
+            // a new run per range: delivery hands each run on as one range
+            startRun(RANGE);
+            runStart[(runHead + runCount - 1) & (RUNS - 1)] = min;
             int from = min;
             while (from < max) {
                 if (from - base >= capacity - WINDOW) {
@@ -799,17 +910,32 @@ public final class DocValuesPrefetch {
                 bits.set(from - base, to - base);
                 lastSet = to - 1;
                 arrived = to;
+                endRun();
                 afterArrival();
                 from = to;
             }
-            if (arrived - lag - delivered >= WINDOW) {
-                deliver(arrived - lag);
+            deliverReady();
+        }
+
+        /** Delivers what is {@link #lag} doc IDs behind the scorer (and, with the gate, not past a closed gate). */
+        private void deliverReady() throws IOException {
+            int to = arrived - lag;
+            if (gate) {
+                for (Planner p : planners) {
+                    if (p.trigger < to && p.gateOpen() == false) {
+                        to = p.trigger;
+                    }
+                }
+            }
+            if (to - delivered >= WINDOW) {
+                deliver(to);
             }
         }
 
         /** Every doc below {@code doc} is known: deliver up to {@code doc - lag} and move the buffer so it has room. */
         private void makeRoom(int doc) throws IOException {
             arrived = Math.max(arrived, doc);
+            endRun();
             afterArrival();
             deliver(doc - lag);
             final int newBase = delivered & ~63;
@@ -827,22 +953,53 @@ public final class DocValuesPrefetch {
             base = newBase;
         }
 
-        /** Hands the buffered matches below {@code to} to the collectors. */
+        /** Hands the buffered matches below {@code to} to the collectors, run by run, in their arrival form. */
         private void deliver(int to) throws IOException {
-            if (to <= delivered) {
-                return;
+            to = Math.min(to, arrived);
+            while (delivered < to && runCount > 0) {
+                final int r = runHead;
+                final int end = Math.min(runEnd[r], to);
+                if (end > delivered) {
+                    if (runKind[r] == RANGE) {
+                        // every buffered doc of a range run matches; the run starts at its first doc
+                        final int lo = Math.max(delivered, runStart[r]);
+                        final int hi = Math.min(end, lastSet + 1);
+                        if (hi > lo) {
+                            out.collectRange(lo, hi);
+                        }
+                    } else if (runKind[r] == STREAM) {
+                        final int hi = Math.min(end, lastSet + 1);
+                        if (hi > delivered) {
+                            stream.reset(delivered, hi);
+                            // planners advanced by the collectors may look at buffered docs not delivered yet: keep
+                            // delivered unchanged until the stream is consumed
+                            out.collect(stream, 0);
+                        }
+                    } else {
+                        while (ringCount > 0 && ring[ringHead] < end) {
+                            final int doc = ring[ringHead];
+                            ringHead = (ringHead + 1) & (RING - 1);
+                            ringCount--;
+                            out.collect(doc, 0);
+                        }
+                    }
+                    delivered = end;
+                }
+                if (runEnd[r] <= delivered && runCount > 1) {
+                    runHead = (runHead + 1) & (RUNS - 1);
+                    runCount--;
+                } else {
+                    break;
+                }
             }
-            if (lastSet >= delivered) {
-                stream.reset(delivered, Math.min(to, lastSet + 1));
-                // planners advanced by the collectors may look at buffered docs not delivered yet: keep delivered
-                // unchanged until the stream is consumed
-                out.collect(stream, 0);
-            }
-            delivered = to;
+            delivered = Math.max(delivered, to);
         }
 
         private void finishLeaf() throws IOException {
             finishArrivals();
+            if (runCount > 0) {
+                endRun();
+            }
             deliver(Integer.MAX_VALUE);
         }
 
@@ -928,16 +1085,37 @@ public final class DocValuesPrefetch {
 
             @Override
             public int intoArray(int upTo, int[] array) {
-                if (upTo > this.upTo) {
-                    upTo = Math.min(upTo, max);
-                    final int count = bits.intoArray(this.upTo - base, upTo - base, base, array);
-                    if (count == array.length) {
-                        upTo = array[array.length - 1] + 1;
-                    }
-                    this.upTo = upTo;
-                    return count;
+                if (upTo <= this.upTo) {
+                    return 0;
                 }
-                return 0;
+                upTo = Math.min(upTo, max);
+                // the buffer can be sparse (a selective query): skip empty words in a tight loop instead of decoding
+                // every word of the range
+                final int end = upTo - base;
+                final int lastWord = (end - 1) >> 6;
+                int wordIndex = (this.upTo - base) >> 6;
+                long word = words[wordIndex] & (-1L << (this.upTo - base));
+                int count = 0;
+                while (true) {
+                    while (word == 0) {
+                        if (++wordIndex > lastWord) {
+                            this.upTo = upTo;
+                            return count;
+                        }
+                        word = words[wordIndex];
+                    }
+                    final int bit = (wordIndex << 6) + Long.numberOfTrailingZeros(word);
+                    if (bit >= end) {
+                        this.upTo = upTo;
+                        return count;
+                    }
+                    if (count == array.length) {
+                        this.upTo = base + bit;
+                        return count;
+                    }
+                    array[count++] = base + bit;
+                    word &= word - 1;
+                }
             }
         }
     }
