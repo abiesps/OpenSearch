@@ -249,7 +249,7 @@ public class XContentMapValues {
         return createAutomatonFilter(includes, excludes, caseSensitive);
     }
 
-    private static boolean hasNoWildcardsOrDots(String[] fields) {
+    static boolean hasNoWildcardsOrDots(String[] fields) {
         if (fields == null || fields.length == 0) {
             return true;
         }
@@ -296,6 +296,32 @@ public class XContentMapValues {
             set.add(caseSensitive ? field : field.toLowerCase(Locale.ROOT));
         }
         return set;
+    }
+
+    /**
+     * Builds the automata used by {@link #createAutomatonFilter}: {include, exclude, matchAll}.
+     * Shared with {@link JsonSourceBytesFilter} so both filters apply exactly the same rules.
+     */
+    static CharacterRunAutomaton[] filterAutomata(String[] includes, String[] excludes, boolean caseSensitive) {
+        Set<String> includeSet = (includes == null || includes.length == 0) ? null : toSet(includes, caseSensitive);
+        Set<String> excludeSet = (excludes == null || excludes.length == 0) ? Collections.emptySet() : toSet(excludes, caseSensitive);
+        CharacterRunAutomaton matchAllAutomaton = new CharacterRunAutomaton(Automata.makeAnyString());
+        CharacterRunAutomaton include;
+        if (includeSet == null || includeSet.isEmpty()) {
+            include = matchAllAutomaton;
+        } else {
+            Automaton includeA = Regex.simpleMatchToAutomaton(includeSet.toArray(new String[0]));
+            includeA = makeMatchDotsInFieldNames(includeA);
+            include = new CharacterRunAutomaton(includeA);
+        }
+        Automaton excludeA;
+        if (excludeSet.isEmpty()) {
+            excludeA = Automata.makeEmpty();
+        } else {
+            excludeA = Regex.simpleMatchToAutomaton(excludeSet.toArray(new String[0]));
+            excludeA = makeMatchDotsInFieldNames(excludeA);
+        }
+        return new CharacterRunAutomaton[] { include, new CharacterRunAutomaton(excludeA), matchAllAutomaton };
     }
 
     /**
@@ -347,7 +373,7 @@ public class XContentMapValues {
         );
     }
 
-    private static int step(CharacterRunAutomaton automaton, String key, int state) {
+    static int step(CharacterRunAutomaton automaton, String key, int state) {
         for (int i = 0; state != -1 && i < key.length(); ++i) {
             state = automaton.step(state, key.charAt(i));
         }

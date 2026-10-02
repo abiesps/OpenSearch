@@ -35,6 +35,7 @@ package org.opensearch.search.fetch.subphase;
 import org.opensearch.common.Booleans;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.logging.DeprecationLogger;
+import org.opensearch.common.xcontent.support.JsonSourceBytesFilter;
 import org.opensearch.common.xcontent.support.XContentMapValues;
 import org.opensearch.core.ParseField;
 import org.opensearch.core.common.ParsingException;
@@ -77,6 +78,7 @@ public class FetchSourceContext implements Writeable, ToXContentObject {
     private final String[] includes;
     private final String[] excludes;
     private Function<Map<String, ?>, Map<String, Object>> filter;
+    private JsonSourceBytesFilter bytesFilter;
 
     public FetchSourceContext(boolean fetchSource, String[] includes, String[] excludes) {
         this.fetchSource = fetchSource;
@@ -374,5 +376,16 @@ public class FetchSourceContext implements Writeable, ToXContentObject {
             filter = XContentMapValues.filter(includes, excludes, true);
         }
         return filter;
+    }
+
+    /**
+     * Returns a filter that works on the stored JSON bytes and produces the same result as {@link #getFilter()},
+     * without building the source map.
+     */
+    JsonSourceBytesFilter getBytesFilter() {
+        if (bytesFilter == null) {
+            bytesFilter = new JsonSourceBytesFilter(includes, excludes);
+        }
+        return bytesFilter;
     }
 }

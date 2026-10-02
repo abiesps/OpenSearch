@@ -52,6 +52,7 @@ import java.io.Reader;
 import java.util.Set;
 
 import tools.jackson.core.JsonEncoding;
+import tools.jackson.core.JsonParser;
 import tools.jackson.core.StreamReadConstraints;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.StreamWriteConstraints;
@@ -69,7 +70,18 @@ public class JsonXContent implements XContent, XContentConstraints {
         return XContentBuilder.builder(jsonXContent);
     }
 
+    /**
+     * Creates a raw Jackson parser over JSON bytes that were already validated when they were indexed (for example a stored
+     * {@code _source}). It skips the duplicate-key check. Token byte offsets are relative to {@code offset}.
+     */
+    public static JsonParser createRawParserWithoutDuplicateCheck(byte[] data, int offset, int length) {
+        return jsonFactoryNoDuplicateCheck.createParser(XObjectReadContext.create(), data, offset, length);
+    }
+
     private static final JsonFactory jsonFactory;
+
+    /** Same configuration as {@link #jsonFactory}, without the duplicate-key check (for re-reading stored, already validated JSON). */
+    private static final JsonFactory jsonFactoryNoDuplicateCheck;
 
     public static final JsonXContent jsonXContent;
 
@@ -93,6 +105,7 @@ public class JsonXContent implements XContent, XContentConstraints {
         builder.recyclerPool(XContentRecyclerPools.recyclerPool());
 
         jsonFactory = builder.build();
+        jsonFactoryNoDuplicateCheck = jsonFactory.rebuild().disable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
         jsonXContent = new JsonXContent();
     }
 

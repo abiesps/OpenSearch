@@ -35,6 +35,7 @@ package org.opensearch.search.fetch.subphase;
 import org.apache.lucene.index.LeafReaderContext;
 import org.opensearch.OpenSearchException;
 import org.opensearch.common.io.stream.BytesStreamOutput;
+import org.opensearch.common.xcontent.support.JsonSourceBytesFilter;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.search.SearchHit;
@@ -94,6 +95,15 @@ public final class FetchSourcePhase implements FetchSubPhase {
         if (nestedHit == false && containsFilters(fetchSourceContext) == false) {
             hitContext.hit().sourceRef(source.internalSourceRef());
             return;
+        }
+
+        // A parent document whose source has not been parsed yet: filter the JSON bytes directly, without building a map.
+        if (nestedHit == false && source.source() == null && JsonSourceBytesFilter.ENABLED) {
+            BytesReference filtered = fetchSourceContext.getBytesFilter().filter(source.internalSourceRef());
+            if (filtered != null) {
+                hitContext.hit().sourceRef(filtered);
+                return;
+            }
         }
 
         // Otherwise, filter the source and add it to the hit.
