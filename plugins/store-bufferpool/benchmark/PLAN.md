@@ -708,7 +708,8 @@ Run (10), terms queries again at low load:
 
 Status after (10) (pfwc):
 - **Warm: within noise of vecdec on all 11 queries.** dh / dh_avg in (9): -0.4 to +0.9 ms, except dh_avg:s50:7d
-  +2.5 ms (+4%*), which was -0.8 ms interleaved (5 x 10 runs; this change does not touch it, (8) had +0.3 ms);
+  +2.5 ms (+4%*), which was -0.8 ms interleaved over 5 x 10 runs and +0.3 ms over 10 x 10 (this change does not
+  touch it; (8) had +0.3 ms);
   dh:s1:7d +0.2 ms interleaved (10 x 10). terms in (10): s50 7d +2.0 ms (+1%), s10 7d +0.1 ms, s1 7d +0.2 ms, s10 1d
   +0.2 ms. In the same runs pfsl is up to +77% and pfwg up to +30%.
 - **Cold: equal to pfsl and pfwg**: dh 7-day -41/-42%, dh_avg 7-day -59%, terms 7-day -42% to -51%, 1-day -17% to
@@ -717,6 +718,7 @@ Status after (10) (pfwc):
   sparse dh and +8 to +16 ms on terms s50 7d; pass-through removes the main-collection part when the read nodes are
   cached ((8): dh within noise); replay pass-through removes the replay part ((10): terms s50 7d +10.4 -> +2.0 ms).
 - A partly cached leaf: pass-through until the first uncached read node, buffering from there on (no switch back).
+- Pippin doc updated: section "Phase 5 (C3e, done)", status line, appendix tables for runs (4)-(10).
 - Next: microbenchmark of the per-node planner and pass-through cost; then points (`.kdd`) prefetch for 1-day ranges.
 
 ## Parked
