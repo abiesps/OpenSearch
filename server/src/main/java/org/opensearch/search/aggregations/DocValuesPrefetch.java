@@ -1224,16 +1224,22 @@ public final class DocValuesPrefetch {
      * decoded twice.
      */
     public static final class Replay extends Ahead {
-        static final int CHUNKS = 16;
+        /**
+         * Up to 128 chunks of 1,024 docs (1 MiB, allocated as needed): a dense replay needs about lag x density docs in
+         * the ring to keep a node of lead (16 chunks gave terms s50 7d only half of the cold gain).
+         */
+        static final int CHUNKS = 128;
         private final int lag;
         private final int[][] docs = new int[CHUNKS][];
-        private final long[][] buckets = new long[CHUNKS][];
+        /** Buckets as ints: the batch replay rebases them into a table of at most 2^20 buckets. */
+        private final int[][] buckets = new int[CHUNKS][];
+        private final long[] deliverBuckets = new long[BatchCollection.CHUNK];
         private final int[] counts = new int[CHUNKS];
         /** Oldest sealed chunk and number of sealed chunks; the chunk after them is being filled. */
         private int head, sealed;
         private int n;
         private int[] fillDocs;
-        private long[] fillBuckets;
+        private int[] fillBuckets;
 
         Replay(int lag) {
             this.lag = lag;
@@ -1248,7 +1254,7 @@ public final class DocValuesPrefetch {
             final int c = (head + sealed) % CHUNKS;
             if (docs[c] == null) {
                 docs[c] = new int[BatchCollection.CHUNK];
-                buckets[c] = new long[BatchCollection.CHUNK];
+                buckets[c] = new int[BatchCollection.CHUNK];
             }
             fillDocs = docs[c];
             fillBuckets = buckets[c];
@@ -1261,8 +1267,9 @@ public final class DocValuesPrefetch {
                 runAheadReplays.increment();
                 startFill();
             }
+            assert bucket >= 0 && bucket <= Integer.MAX_VALUE : bucket;
             fillDocs[n] = doc;
-            fillBuckets[n++] = bucket;
+            fillBuckets[n++] = (int) bucket;
             if (n == fillDocs.length) {
                 seal(leaf);
             }
@@ -1282,7 +1289,12 @@ public final class DocValuesPrefetch {
 
         private void deliverHead(LeafBucketCollector leaf) throws IOException {
             // the chunk stays in the ring while it is collected: its planners may still look at it
-            leaf.collectBatch(docs[head], buckets[head], counts[head]);
+            final int count = counts[head];
+            final int[] b = buckets[head];
+            for (int i = 0; i < count; i++) {
+                deliverBuckets[i] = b[i];
+            }
+            leaf.collectBatch(docs[head], deliverBuckets, count);
             head = (head + 1) % CHUNKS;
             sealed--;
         }
