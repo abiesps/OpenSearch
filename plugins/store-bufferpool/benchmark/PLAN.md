@@ -155,7 +155,7 @@ result as an upper bound.
 | T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
 | T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
 
-## Phase C: aggregations on doc values (C0-C2, C3a, C3c, C3d done)
+## Phase C: aggregations on doc values (C0-C2, C3a, C3c, C3d done; C3e in progress)
 
 Decisions (user):
 - **Vectorization first.** Batch and vectorize collection, measure it, and only then build doc-values prefetch.
@@ -458,6 +458,36 @@ Findings:
   candidate: run the range intersection once per search for the main query and the look-ahead (for example, the main
   query reads the same per-search clause cache, or the look-ahead reuses the main scorer's doc set). Expected: warm
   1-day within about 1 ms of vecdec.
+
+### Status after C3d: look-ahead scorer rejected for the hot path
+- Decision (user): no noticeable regression on the hot (warm) path is acceptable. C3c/C3d fail this: warm 1-day
+  queries are +62% to +84% (+13 to +16 ms) vs vecdec with both fixes, and pf itself adds +2 to +3 ms warm on
+  dh:s10:7d and dh:s1:7d. The cold gains (-43% to -60% on 7-day, -17% to -28% on 1-day) are not worth that.
+- Root cause: the proof of a read came from a second scorer of the query. It re-runs the query (one points
+  intersection, 14 ms on 1-day ranges) and advances it. The OR prefetch never needed this, because there the
+  prefetched data (postings) is read by the iterator that owns it, so the structure alone proves the read. Doc values
+  are read only at docs chosen by the query, so the proof needs future matches, and the main scorer only produces the
+  current 4,096-doc window while a 128 KiB node spans 13-32 windows (~52k docs for `@timestamp`, ~85k `latency`,
+  ~131k `service`).
+- The pf/pfs/pfl/pfsl code stays in the branch behind its switches, so the C3c/C3d numbers stay reproducible.
+
+### C3e plan: the main scorer runs ahead (no second scorer)
+Same idea as the OR prefetch hook in `BooleanScorer`: hook the bulk scorer's window loop.
+1. The bulk scorer computes window bit sets as today (`DenseConjunctionBulkScorer`, `ConstantScoreBulkScorer`), but
+   keeps a small queue: it computes windows until it has seen matches up to the end of the next node, then collects
+   the oldest window. Same windows, computed once, in a different order: no extra query work.
+2. Each computed window is shown to the collector's planners through a new experimental `LeafCollector` call. A
+   planner finds the first match in the next node of its field and requests that node: one node ahead, doc-ID
+   aligned, proven by the query's own matches.
+3. Residency check before each request: if the next node is already cached, no prefetch call is made, so a warm query
+   only pays the check (per node, not per doc).
+4. Per-doc bulk scorers (`DefaultBulkScorer`, sparse `ConjunctionBulkScorer`): buffer doc IDs ahead in an int array.
+   The date_histogram skip-list collector keeps its skipper check and reads windows from the queue. Deleted docs and
+   two-phase clauses are resolved when the windows are built, so matches stay exact.
+- Memory: at most one node of windows per leaf (about 32 x 512 bytes = 16 KiB).
+- Acceptance bar: every warm query within noise of vecdec (CI includes 0, or at most +1 ms); cold gains at least at
+  the pfsl level; 0 prefetched-but-unread blocks; a microbenchmark of the per-node planner cost.
+- Mode `pfw` (vecdec + window-driven prefetch), measured against vecdec and pfsl.
 
 ## Parked
 
