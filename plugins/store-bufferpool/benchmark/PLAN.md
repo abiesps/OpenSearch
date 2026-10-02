@@ -155,7 +155,7 @@ result as an upper bound.
 | T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
 | T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
 
-## Phase C: aggregations on doc values (C0-C2, C3a, C3c, C3d done; C3e in progress)
+## Phase C: aggregations on doc values (C0-C2, C3a, C3c, C3d done; C3e in progress: warm 1-day solved, dense 7-day open)
 
 Decisions (user):
 - **Vectorization first.** Batch and vectorize collection, measure it, and only then build doc-values prefetch.
@@ -488,6 +488,98 @@ Same idea as the OR prefetch hook in `BooleanScorer`: hook the bulk scorer's win
 - Acceptance bar: every warm query within noise of vecdec (CI includes 0, or at most +1 ms); cold gains at least at
   the pfsl level; 0 prefetched-but-unread blocks; a microbenchmark of the per-node planner cost.
 - Mode `pfw` (vecdec + window-driven prefetch), measured against vecdec and pfsl.
+
+### C3e progress: prefetch proven by the main scorer (run-ahead)
+Code (all pushed): Lucene fork `7460f3d5a5`, `4cbc71ac96` (`DocIdStream#intoBitSet`), `4574e3d861` (`FixedBitSet#intoArray`
+fix); OpenSearch `cf9ac6c51e5` (pfw), `a2d98a1d078` (date_histogram fix), `97168906ca8` (form-preserving delivery, gate).
+- **Design as built** (no Lucene bulk-scorer change). `AggregatorBase.getLeafCollector` of a top-level aggregation opens a
+  `DocValuesPrefetch.RunAhead`; planners of that leaf tree register with it, and if any does, the leaf collector is
+  wrapped. The wrapper copies each scorer window into a bit set (`DocIdStream#intoBitSet`, 64 words per window) and
+  hands the docs to the real collectors `docs` doc IDs later (default 131,072). Planners find the first match at or
+  after the next node in the buffer (`Matches.next`, or UNKNOWN until arrivals reach it, then a retry on arrival).
+  Docs are handed on in the form the scorer used: one at a time, as streams or as ranges, so the collectors keep the
+  stock code path. Memory: 2 x lag bits (32 KiB; 64 KiB with the gate) plus a 16k-doc ring for single docs.
+- Deferred replay (terms -> avg): `BestBucketsDeferringCollector.replayBatch` replays through a ring of 16 replay chunks
+  (`DocValuesPrefetch.Replay`), so the avg planner sees replayed docs ahead; no doc is decoded twice.
+- **Gate (mode `pfwg`)**: collection waits at a planner's next requested doc until the read after that doc's node is known
+  (up to the buffer capacity). Needed for date_histogram without a sub-aggregation, which reads `@timestamp` only in
+  skipper intervals that span two buckets (1h buckets: about one read every 178k docs, more than the lag): without the
+  gate the request for the next read goes out only lag docs before it, and there is almost no collection time in
+  between, so no IO overlap.
+- Planners search forward only (one cursor and a cached next read per planner), so a search never restarts inside a
+  skipper interval the filter already skipped.
+- Modes: `pfw` = vecdec + run-ahead; `pfwg` = pfw + gate (`POST /_bufferpool/agg_batch?mode=pfw|pfwg[&docs=N]`). The
+  look-ahead-scorer modes (pf, pfs, pfl, pfsl) stay for comparison.
+- Tests: `DocValuesRunAheadTests` (random windows, single docs and ranges; every match collected once, in order, in its
+  arrival form; requests are exactly the first match of every node and go out before that doc is collected; replay
+  ring), `BatchCollectionTests` randomizes run-ahead, lag and gate, plus `testShuffledTimeRuns` and
+  `testPaddedWindowStreams`.
+
+**Found on the way**
+1. **Stock date_histogram bug (upstream).** `HistogramSkiplistLeafCollector.collect(DocIdStream)` advanced its skipper to
+   the end of the docs it had consumed whenever `stream.mayHaveRemaining()` was true. Lucene's window streams are backed by
+   4,096-bit sets and report remaining docs past the end of a shorter window; the next window can start there, and its
+   first docs were counted in the bucket of a later skipper interval. On logs_v1 `dh:s50:7d` stock moved 6 docs between
+   two buckets (checked against the same histogram with `hard_bounds`, which turns the skip list off). The code comes from
+   upstream `da18cc6e635` (#19573). Fix `a2d98a1d078`: position the skipper at the stream's next doc;
+   `testPaddedWindowStreams` fails 8 of 10 times without it. pfw found it because its streams end exactly at the last doc.
+   All modes now match the no-skip-list reference on all dh queries. Worth an upstream issue.
+2. **Lucene `FixedBitSet#intoArray`** scanned every word to the end of the range even when the array was full: O(range)
+   per call. Fixed in the fork (`4574e3d861`); results unchanged.
+3. **Flaky C2 test**: `BatchCollectionTests`' stream-run assertion failed about 2.5% of seeds because a random merge
+   policy shuffled doc order (no skipper interval in one bucket). The test index now uses `newLogMergePolicy()`.
+- Validation (`validate/dv_trace.py --mode pfw --compare trace_vecdec2.json`, cold, all 11 queries,
+  `results/c3e/trace_pfw.json`): loaded blocks are exactly vecdec's (no extra `.doc` / `.kdd` block, unlike pfsl);
+  prefetched but never read: 0.
+
+**Measurements so far** (5 runs; each column is measured against vecdec in its own run, because machine load differed
+between runs; `*` = bootstrap 95% CI excludes 0; wall-clock medians):
+- (1) `aggs_20261001_203753.json`: first pfw, with the date_histogram fix, load average 8-9.
+- (2) `aggs_20261001_204746.json`: + Lucene `FixedBitSet#intoArray` fix, load average 7-10.
+- (3) `aggs_20261001_211753.json`: + form-preserving delivery and the word-skipping reader, and pfwg; load average
+  9-20 (noisy).
+
+| Query | Mode | vecdec (3) ms | pfsl (3) | pfw (1) | pfw (2) | pfw (3) | pfwg (3) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| dh:s50:7d | cold | 1,271.6 | -41%* (-524.0 ms) | -16%* (-204.2 ms) | -17%* (-219.2 ms) | -16%* (-199.4 ms) | -41%* (-516.6 ms) |
+| dh:s10:7d | cold | 1,188.0 | -44%* (-521.0 ms) | -13%* (-154.3 ms) | -12%* (-149.6 ms) | -13%* (-149.7 ms) | -39%* (-468.3 ms) |
+| dh:s1:7d | cold | 1,091.7 | -45%* (-491.4 ms) | -8%* (-84.8 ms) | -8%* (-92.0 ms) | -9%* (-92.9 ms) | -40%* (-440.6 ms) |
+| dh:s10:1d | cold | 1,115.6 | -18%* (-203.0 ms) | -18%* (-202.0 ms) | -18%* (-211.5 ms) | -19%* (-207.6 ms) | -18%* (-200.1 ms) |
+| dh_avg:s50:7d | cold | 3,191.8 | -59%* (-1898.5 ms) | -59%* (-1849.1 ms) | -59%* (-1931.1 ms) | -58%* (-1844.8 ms) | -59%* (-1884.9 ms) |
+| dh_avg:s10:7d | cold | 2,970.8 | -60%* (-1771.7 ms) | -59%* (-1744.2 ms) | -59%* (-1745.2 ms) | -58%* (-1732.8 ms) | -59%* (-1765.8 ms) |
+| dh_avg:s10:1d | cold | 1,385.7 | -29%* (-398.5 ms) | -31%* (-415.4 ms) | -31%* (-438.3 ms) | -31%* (-424.3 ms) | -31%* (-430.2 ms) |
+| terms:s50:7d | cold | 3,613.3 | -46%* (-1651.6 ms) | -25%* (-935.4 ms) | -27%* (-1053.1 ms) | -20%* (-739.1 ms) | -20%* (-739.6 ms) |
+| terms:s10:7d | cold | 3,245.1 | -47%* (-1516.4 ms) | -47%* (-1686.8 ms) | -47%* (-1491.0 ms) | -47%* (-1528.3 ms) | -47%* (-1516.1 ms) |
+| terms:s1:7d | cold | 2,972.6 | -43%* (-1271.3 ms) | -43%* (-1264.7 ms) | -43%* (-1280.3 ms) | -42%* (-1261.1 ms) | -43%* (-1265.7 ms) |
+| terms:s10:1d | cold | 1,190.9 | -17%* (-208.3 ms) | -19%* (-212.1 ms) | -18%* (-205.1 ms) | -20%* (-240.4 ms) | -20%* (-239.1 ms) |
+| dh:s50:7d | warm | 11.5 | +65%* (+7.4 ms) | +41%* (+4.6 ms) | +0% (+0.0 ms) | +24%* (+2.8 ms) | +18%* (+2.1 ms) |
+| dh:s10:7d | warm | 13.1 | +19%* (+2.5 ms) | +8%* (+1.1 ms) | +3% (+0.3 ms) | +6% (+0.8 ms) | +3% (+0.4 ms) |
+| dh:s1:7d | warm | 7.5 | +28% (+2.1 ms) | -2% (-0.1 ms) | -4% (-0.3 ms) | +29% (+2.2 ms) | +37% (+2.8 ms) |
+| dh:s10:1d | warm | 17.8 | +86%* (+15.4 ms) | +1% (+0.2 ms) | +1% (+0.2 ms) | +6%* (+1.1 ms) | +3% (+0.5 ms) |
+| dh_avg:s50:7d | warm | 63.2 | +5% (+3.3 ms) | +11%* (+6.6 ms) | +4% (+2.0 ms) | +29%* (+18.1 ms) | +31%* (+19.4 ms) |
+| dh_avg:s10:7d | warm | 29.7 | +9%* (+2.5 ms) | +8%* (+2.3 ms) | +5%* (+1.4 ms) | -1% (-0.4 ms) | -1% (-0.3 ms) |
+| dh_avg:s10:1d | warm | 20.1 | +68%* (+13.7 ms) | +3% (+0.7 ms) | +2% (+0.4 ms) | +4% (+0.8 ms) | +4% (+0.7 ms) |
+| terms:s50:7d | warm | 221.4 | +3% (+6.2 ms) | +8%* (+16.4 ms) | +6% (+13.2 ms) | +11%* (+24.3 ms) | +13%* (+28.6 ms) |
+| terms:s10:7d | warm | 58.0 | +6% (+3.8 ms) | +5%* (+2.8 ms) | +3%* (+1.6 ms) | +2% (+1.3 ms) | +1% (+0.5 ms) |
+| terms:s1:7d | warm | 10.8 | +6% (+0.6 ms) | +34%* (+4.2 ms) | +39%* (+4.9 ms) | +19%* (+2.1 ms) | +19%* (+2.1 ms) |
+| terms:s10:1d | warm | 22.9 | +57%* (+13.0 ms) | -1% (-0.4 ms) | -2% (-0.6 ms) | +1% (+0.2 ms) | +1% (+0.1 ms) |
+
+Findings so far:
+- **Warm 1-day: solved.** All three 1-day queries are within noise of vecdec in pfw and pfwg (+0.1 to +1.1 ms), against
+  +13 to +15 ms for pfsl.
+- **Cold: the gate brings dh back to the pfsl level** (-39% to -41% on dh 7-day, against -8% to -16% without it), and
+  pfw/pfwg match pfsl on dh_avg and terms s10/s1 and on every 1-day query. Open: `terms:s50:7d` cold is -20% (pfsl -46%).
+- **Each overhead fix, separately**:
+  - Lucene `intoArray` fix ((1) -> (2)): dh:s50:7d warm +4.6 ms -> 0.0 ms. The skip-list collector reads one doc per
+    skipper interval with a 1-element `intoArray`, which scanned the rest of the run-ahead range each time.
+  - Form-preserving delivery + word-skipping reader ((2) -> (3)): terms:s1:7d warm +4.9 -> +2.1 ms (single docs were sent
+    through the bulk path, which is slower for sparse docs). But the bit-by-bit reader made dense 7-day queries slower:
+    dh_avg:s50:7d +2.0 -> +18 ms, terms:s50:7d +13 -> +24 ms (15M and 9.8M docs read one bit at a time instead of
+    Lucene's branch-free dense word decoder).
+- **Not yet acceptable**: warm dense 7-day queries (dh_avg s50 +18 ms, terms s50 +24 ms, dh s50 +2 ms) and terms s1 7d
+  (+2 ms).
+- Next: decode dense words branch-free in the run-ahead reader (in progress, uncommitted), re-measure; find the
+  terms:s50:7d cold gap; JFR of pfw vs vecdec on the dense 7-day queries; microbenchmark of the per-node planner cost.
 
 ## Parked
 
