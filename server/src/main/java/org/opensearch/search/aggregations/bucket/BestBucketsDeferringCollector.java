@@ -283,7 +283,7 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
      * ring's, so planners of the replayed collectors see the docs ahead of collection. Its own method, so the JIT compiles
      * the loop as tightly as the plain one.
      */
-    private static void replayAhead(
+    static void replayAhead(
         LeafBucketCollector leafCollector,
         long size,
         PackedLongValues.Iterator docDeltaIterator,
@@ -291,11 +291,70 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
         long[] rebase,
         DocValuesPrefetch.Replay replay
     ) throws IOException {
-        int[] docs = replay.docsToFill();
-        long[] rebased = replay.bucketsToFill();
+        long start = 0;
+        int doc = 0;
+        if (replay.isPassThrough()) {
+            start = replayPassThrough(leafCollector, size, docDeltaIterator, buckets, rebase, replay);
+            if (start == size) {
+                return;
+            }
+            // left pass-through right after a full chunk: its last doc is the last one decoded
+            doc = replay.resumeDoc();
+        }
+        replayRing(leafCollector, start, size, doc, docDeltaIterator, buckets, rebase, replay);
+    }
+
+    /**
+     * The plain {@link #replayBatch} loop, through {@link DocValuesPrefetch.Replay#passThrough}: while the data is cached
+     * the ring is not used. Returns the number of recorded docs consumed: {@code size}, or fewer if a planner left
+     * pass-through, then the rest goes through the ring.
+     */
+    private static long replayPassThrough(
+        LeafBucketCollector leafCollector,
+        long size,
+        PackedLongValues.Iterator docDeltaIterator,
+        PackedLongValues.Iterator buckets,
+        long[] rebase,
+        DocValuesPrefetch.Replay replay
+    ) throws IOException {
+        final int[] docs = new int[BatchCollection.CHUNK];
+        final long[] rebased = new long[BatchCollection.CHUNK];
         int doc = 0;
         int n = 0;
         for (long i = 0; i < size; ++i) {
+            doc += (int) docDeltaIterator.next();
+            final long rebasedBucket = rebase[(int) buckets.next()];
+            if (rebasedBucket != -1) {
+                docs[n] = doc;
+                rebased[n++] = rebasedBucket;
+                if (n == docs.length) {
+                    replay.passThrough(docs, rebased, n, leafCollector);
+                    n = 0;
+                    if (replay.isPassThrough() == false) {
+                        return i + 1;
+                    }
+                }
+            }
+        }
+        replay.passThrough(docs, rebased, n, leafCollector);
+        return size;
+    }
+
+    /** Replays recorded docs {@code start} to {@code size} - 1 through the ring; {@code doc} is the doc before them. */
+    private static void replayRing(
+        LeafBucketCollector leafCollector,
+        long start,
+        long size,
+        int doc,
+        PackedLongValues.Iterator docDeltaIterator,
+        PackedLongValues.Iterator buckets,
+        long[] rebase,
+        DocValuesPrefetch.Replay replay
+    ) throws IOException {
+        int[] docs = replay.docsToFill();
+        long[] rebased = replay.bucketsToFill();
+        int n = 0;
+        for (long i = start; i < size; ++i) {
             doc += (int) docDeltaIterator.next();
             final long rebasedBucket = rebase[(int) buckets.next()];
             if (rebasedBucket != -1) {

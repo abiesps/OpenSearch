@@ -1381,6 +1381,35 @@ public final class DocValuesPrefetch {
             return planners.isEmpty() == false;
         }
 
+        /**
+         * Whether docs go straight to the collectors (pass-through, see {@link #setRunAheadBypass}): the replay loop
+         * then uses its own chunk and {@link #passThrough}, without the ring, until this turns false.
+         */
+        public boolean isPassThrough() {
+            return bypass;
+        }
+
+        /**
+         * Pass-through: hands {@code count} docs straight to {@code leaf}. Planners called from {@code leaf} may leave
+         * pass-through ({@link #isPassThrough()} turns false); the replay loop then fills the ring from the next doc on.
+         */
+        public void passThrough(int[] docs, long[] buckets, int count, LeafBucketCollector leaf) throws IOException {
+            if (count == 0) {
+                return;
+            }
+            if (arrived == 0) {
+                runAheadReplays.increment();
+            }
+            // the docs below are known: a planner that leaves pass-through waits for the docs after them
+            arrived = docs[count - 1] + 1;
+            leaf.collectBatch(docs, buckets, count);
+        }
+
+        /** The last doc handed over by {@link #passThrough}: the ring continues after it. */
+        public int resumeDoc() {
+            return arrived - 1;
+        }
+
         private void startFill() {
             final int c = (head + sealed) % CHUNKS;
             if (docs[c] == null) {
@@ -1399,7 +1428,9 @@ public final class DocValuesPrefetch {
          */
         public int[] docsToFill() {
             if (fillDocs == null) {
-                runAheadReplays.increment();
+                if (arrived == 0) {
+                    runAheadReplays.increment();
+                }
                 startFill();
             }
             return fillDocs;
@@ -1425,7 +1456,9 @@ public final class DocValuesPrefetch {
         /** Adds one doc to replay into {@code bucket}; may hand older chunks to {@code leaf}. */
         public void add(int doc, long bucket, LeafBucketCollector leaf) throws IOException {
             if (fillDocs == null) {
-                runAheadReplays.increment();
+                if (arrived == 0) {
+                    runAheadReplays.increment();
+                }
                 startFill();
             }
             fillDocs[n] = doc;
