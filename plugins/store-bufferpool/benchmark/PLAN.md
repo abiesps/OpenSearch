@@ -581,6 +581,59 @@ Findings so far:
 - Next: decode dense words branch-free in the run-ahead reader (in progress, uncommitted), re-measure; find the
   terms:s50:7d cold gap; JFR of pfw vs vecdec on the dense 7-day queries; microbenchmark of the per-node planner cost.
 
+**C3e continued: overhead fixes, each measured** (OpenSearch `1d10d60d8b8`, `02b54288848`, `747abd4dd75`, `8f47295980b`)
+- (4) `aggs_20261001_220507.json`, `1d10d60d8b8`, load 4-5: dense words decoded branch-free (same decoder as Lucene's
+  `FixedBitSet`), and the stream position never moves past its end (a bug the tests caught). dh_avg:s50:7d warm +18 ->
+  +7 ms, dh:s50:7d +2.8 -> +0.2 ms.
+- (5) `aggs_20261001_222504.json`, `02b54288848`, load 5-8: single-doc arrivals take a fast path (set the bit, append to
+  the ring; run bookkeeping only when a planner waits, a delivery is due or the buffer needs room), and the wrapper takes
+  the scorer's `collect(doc)` directly. JFR before: arrival + delivery were about 20% of dh:s1:7d. terms:s1:7d warm
+  +3.8 -> +0.8 ms, dh_avg:s50:7d +7 -> +0.7 ms.
+- `747abd4dd75`: the replay ring may hold up to 128 chunks (allocated as needed, 1.5 MiB at most). With 16 chunks a dense
+  replay (terms s50) had only about 32k doc IDs of lead, less than one `latency` node: terms:s50:7d cold -26% -> -48%
+  (checked alone with 96 chunks before the commit).
+- (6) `aggs_20261001_225751.json`, `8f47295980b`, load 5-8: the replay loop fills the ring's arrays itself, in its own
+  method (as tight as the plain loop; JFR showed `PackedLongValues.Iterator.next` no longer inlined in the shared loop).
+  terms:s50:7d warm, interleaved 5 x 10 runs: +12.5 -> +9.7 ms; independent of the lag (4,096 to 131,072 docs: +9 ms),
+  so not a cache-footprint effect. Planner code is 0.1% of samples.
+
+| Query | Mode | vecdec (6) ms | pfsl (6) | pfwg (4) | pfwg (5) | pfw (6) | pfwg (6) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| dh:s50:7d | cold | 1,430.9 | -43%* (-609.8 ms) | -41%* (-520.1 ms) | -41%* (-527.8 ms) | -17%* (-238.1 ms) | -40%* (-576.4 ms) |
+| dh:s10:7d | cold | 1,323.8 | -42%* (-557.4 ms) | -41%* (-485.4 ms) | -41%* (-484.8 ms) | -11%* (-149.5 ms) | -40%* (-523.0 ms) |
+| dh:s1:7d | cold | 1,224.9 | -44%* (-539.0 ms) | -40%* (-440.8 ms) | -41%* (-442.8 ms) | -8%* (-94.6 ms) | -40%* (-489.6 ms) |
+| dh:s10:1d | cold | 1,260.4 | -17%* (-219.7 ms) | -18%* (-200.2 ms) | -18%* (-205.9 ms) | -18%* (-229.6 ms) | -18%* (-222.8 ms) |
+| dh_avg:s50:7d | cold | 3,584.2 | -59%* (-2105.5 ms) | -60%* (-1998.9 ms) | -60%* (-1895.8 ms) | -58%* (-2092.4 ms) | -60%* (-2136.8 ms) |
+| dh_avg:s10:7d | cold | 3,350.0 | -60%* (-2004.4 ms) | -60%* (-1809.8 ms) | -59%* (-1734.8 ms) | -58%* (-1942.3 ms) | -59%* (-1993.1 ms) |
+| dh_avg:s10:1d | cold | 1,539.8 | -29%* (-439.7 ms) | -31%* (-420.8 ms) | -32%* (-444.9 ms) | -30%* (-464.7 ms) | -30%* (-454.4 ms) |
+| terms:s50:7d | cold | 4,280.3 | -49%* (-2077.3 ms) | -26%* (-998.0 ms) | -28%* (-1130.9 ms) | -48%* (-2050.4 ms) | -47%* (-2030.9 ms) |
+| terms:s10:7d | cold | 3,605.5 | -47%* (-1712.4 ms) | -48%* (-1552.4 ms) | -47%* (-1517.1 ms) | -47%* (-1696.0 ms) | -47%* (-1703.8 ms) |
+| terms:s1:7d | cold | 2,987.3 | -44%* (-1318.8 ms) | -43%* (-1268.3 ms) | -43%* (-1271.3 ms) | -42%* (-1257.0 ms) | -44%* (-1303.0 ms) |
+| terms:s10:1d | cold | 1,112.1 | -17%* (-186.3 ms) | -18%* (-204.2 ms) | -19%* (-217.0 ms) | -17%* (-194.4 ms) | -19%* (-205.9 ms) |
+| dh:s50:7d | warm | 10.2 | +19%* (+1.9 ms) | +7% (+0.7 ms) | +14% (+1.6 ms) | +8% (+0.9 ms) | +8% (+0.9 ms) |
+| dh:s10:7d | warm | 11.0 | +24%* (+2.6 ms) | +7% (+0.9 ms) | -2% (-0.2 ms) | +14%* (+1.5 ms) | +13%* (+1.4 ms) |
+| dh:s1:7d | warm | 6.5 | +22%* (+1.4 ms) | +78%* (+4.6 ms) | +27%* (+2.0 ms) | +32%* (+2.1 ms) | +27%* (+1.7 ms) |
+| dh:s10:1d | warm | 16.0 | +83%* (+13.3 ms) | +0% (+0.1 ms) | +1% (+0.1 ms) | +7% (+1.1 ms) | +4% (+0.6 ms) |
+| dh_avg:s50:7d | warm | 54.6 | +4%* (+2.0 ms) | +12%* (+6.7 ms) | +1% (+0.7 ms) | +4%* (+2.0 ms) | +4%* (+2.1 ms) |
+| dh_avg:s10:7d | warm | 26.8 | +5%* (+1.5 ms) | -0% (-0.1 ms) | -2% (-0.7 ms) | -7% (-1.8 ms) | -8% (-2.0 ms) |
+| dh_avg:s10:1d | warm | 19.7 | +68%* (+13.4 ms) | +3% (+0.7 ms) | +1% (+0.3 ms) | +2% (+0.5 ms) | -1% (-0.2 ms) |
+| terms:s50:7d | warm | 214.2 | +2% (+4.4 ms) | +5% (+11.3 ms) | +4%* (+8.0 ms) | +3%* (+5.5 ms) | +4% (+7.8 ms) |
+| terms:s10:7d | warm | 56.7 | +2% (+0.9 ms) | +0% (+0.2 ms) | -0% (-0.2 ms) | -1% (-0.4 ms) | -1% (-0.3 ms) |
+| terms:s1:7d | warm | 13.1 | +17%* (+2.2 ms) | +36%* (+4.6 ms) | +6% (+0.8 ms) | +10%* (+1.3 ms) | +9%* (+1.1 ms) |
+| terms:s10:1d | warm | 23.5 | +52%* (+12.1 ms) | -0% (-0.0 ms) | +1% (+0.2 ms) | +0% (+0.1 ms) | -3% (-0.6 ms) |
+
+Status after (6):
+- **Cold: pfwg now matches pfsl on every query** (dh 7-day -40%, dh_avg -59/-60%, terms -44/-47%, 1-day -18/-30%), with
+  exactly vecdec's loads and no unread prefetch.
+- **Warm 1-day: within noise** (-0.6 to +0.6 ms).
+- **Warm residuals (pfwg)**: dh:s1:7d +1.7 ms (+27%*), dh:s10:7d +1.4 ms (+13%*), terms:s1:7d +1.1 ms (+9%*), dh_avg:s50:7d
+  +2.1 ms (+4%*), dh:s50:7d +0.9 ms, terms:s50:7d +7.8 ms (+4%, CI includes 0). These are the buffer's own cost: copying
+  matches in and out (about 1 ns per doc for windows, a few ns per doc for single docs), which shows on queries whose
+  per-doc work is small. Not yet within the bar.
+- Next: skip the buffer when the data is already cached. When collection enters a node, check (without IO) whether the
+  next node of the field is in the cache; while it is, hand docs straight to the collectors (no copy, no delay), and
+  start buffering at the first node that is not cached. Warm queries then pay one residency check per node.
+
 ## Parked
 
 - Cost model in code: `IOCost` interface on `IndexInput` (block size, miss cost, residency via sampled
