@@ -11,17 +11,34 @@ package org.opensearch.search.aggregations;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.BoostQuery;
+import org.apache.lucene.search.ConjunctionUtils;
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.FilterDocIdSetIterator;
 import org.apache.lucene.search.FilteredDocIdSetIterator;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.LRUQueryCache;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.QueryCachingPolicy;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.ScorerSupplier;
+import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
 import org.opensearch.search.internal.SearchContext;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -41,9 +58,17 @@ import java.util.concurrent.atomic.LongAdder;
 public final class DocValuesPrefetch {
 
     private static volatile boolean enabled;
+    private static volatile boolean shareLookahead;
+    private static volatile boolean leapfrogLookahead;
     private static volatile long nodeBytes = 128 * 1024;
     private static final LongAdder planners = new LongAdder();
     private static final LongAdder requests = new LongAdder();
+    private static final LongAdder lookaheads = new LongAdder();
+    private static final LongAdder leapfrogs = new LongAdder();
+    private static final LongAdder sharedHits = new LongAdder();
+    private static final LongAdder sharedMisses = new LongAdder();
+    /** Per search: a searcher over the same reader that caches the look-ahead's non-term clauses per segment. */
+    private static final Map<Object, IndexSearcher> SHARED = Collections.synchronizedMap(new WeakHashMap<>());
 
     private DocValuesPrefetch() {}
 
@@ -55,6 +80,34 @@ public final class DocValuesPrefetch {
     /** Returns whether planners are created. */
     public static boolean isEnabled() {
         return enabled;
+    }
+
+    /**
+     * Sets whether the planners of one search share the look-ahead's expensive per-segment work: every clause of the query
+     * that is not a term query (for example a points range, whose scorer intersects the BKD tree) is evaluated once per
+     * segment and cached for the other planners of the same search, instead of once per planner.
+     */
+    public static void setShareLookahead(boolean on) {
+        shareLookahead = on;
+    }
+
+    /** Returns whether look-ahead clauses are shared. */
+    public static boolean isShareLookahead() {
+        return shareLookahead;
+    }
+
+    /**
+     * Sets whether a look-ahead over a pure conjunction is built as a leapfrog conjunction of its clauses: bit-set clauses
+     * are advanced with {@code nextSetBit} instead of being tested doc by doc while another clause is iterated (Lucene's
+     * bit-set conjunction walks its lead clause with {@code nextDoc}).
+     */
+    public static void setLeapfrogLookahead(boolean on) {
+        leapfrogLookahead = on;
+    }
+
+    /** Returns whether look-aheads leapfrog. */
+    public static boolean isLeapfrogLookahead() {
+        return leapfrogLookahead;
     }
 
     /** Sets the node size, e.g. the cache block size. */
@@ -80,10 +133,113 @@ public final class DocValuesPrefetch {
         return requests.sum();
     }
 
+    /** Look-ahead iterators built since the last {@link #resetCounters()}. */
+    public static long lookaheads() {
+        return lookaheads.sum();
+    }
+
+    /** Look-aheads built as a leapfrog conjunction since the last {@link #resetCounters()}. */
+    public static long leapfrogs() {
+        return leapfrogs.sum();
+    }
+
+    /** Look-ahead clauses served from the shared per-segment cache since the last {@link #resetCounters()}. */
+    public static long sharedHits() {
+        return sharedHits.sum();
+    }
+
+    /** Look-ahead clauses evaluated and put in the shared cache since the last {@link #resetCounters()}. */
+    public static long sharedMisses() {
+        return sharedMisses.sum();
+    }
+
     /** Sets the counters to zero. */
     public static void resetCounters() {
         planners.reset();
         requests.reset();
+        lookaheads.reset();
+        leapfrogs.reset();
+        sharedHits.reset();
+        sharedMisses.reset();
+    }
+
+    private static IndexSearcher lookaheadSearcher(Object search, IndexSearcher base) {
+        if (shareLookahead == false) {
+            return base;
+        }
+        return SHARED.computeIfAbsent(search, c -> {
+            final IndexSearcher searcher = new IndexSearcher(base.getIndexReader());
+            searcher.setQueryCache(new LRUQueryCache(256, 256L << 20, leaf -> true, Float.POSITIVE_INFINITY) {
+                @Override
+                protected void onHit(Object readerCoreKey, Query query) {
+                    super.onHit(readerCoreKey, query);
+                    sharedHits.increment();
+                }
+
+                @Override
+                protected void onMiss(Object readerCoreKey, Query query) {
+                    super.onMiss(readerCoreKey, query);
+                    sharedMisses.increment();
+                }
+            });
+            searcher.setQueryCachingPolicy(new QueryCachingPolicy() {
+                @Override
+                public void onUse(Query query) {}
+
+                @Override
+                public boolean shouldCache(Query query) {
+                    // a term query's iterator is its postings: caching it would read them all up front
+                    return (query instanceof TermQuery) == false && (query instanceof BooleanQuery) == false;
+                }
+            });
+            return searcher;
+        });
+    }
+
+    /** The FILTER / MUST clauses of a pure conjunction (no SHOULD, no MUST_NOT), unwrapping constant-score wrappers. */
+    private static List<Query> conjunctionClauses(Query query) {
+        while (true) {
+            if (query instanceof ConstantScoreQuery csq) {
+                query = csq.getQuery();
+            } else if (query instanceof BoostQuery bq) {
+                query = bq.getQuery();
+            } else {
+                break;
+            }
+        }
+        if (query instanceof BooleanQuery == false) {
+            return null;
+        }
+        final BooleanQuery bool = (BooleanQuery) query;
+        final List<Query> clauses = new ArrayList<>();
+        for (BooleanClause c : bool.clauses()) {
+            if (c.occur() != BooleanClause.Occur.FILTER && c.occur() != BooleanClause.Occur.MUST) {
+                return null;
+            }
+            clauses.add(c.query());
+        }
+        return clauses.size() >= 2 ? clauses : null;
+    }
+
+    /** Leapfrog conjunction of the clauses' iterators, or null when a clause is two-phase. */
+    private static DocIdSetIterator leapfrog(IndexSearcher searcher, List<Query> clauses, LeafReaderContext ctx) throws IOException {
+        final List<DocIdSetIterator> iterators = new ArrayList<>();
+        for (Query clause : clauses) {
+            final Weight weight = searcher.createWeight(searcher.rewrite(clause), ScoreMode.COMPLETE_NO_SCORES, 1f);
+            final ScorerSupplier supplier = weight.scorerSupplier(ctx);
+            if (supplier == null) {
+                return DocIdSetIterator.empty();
+            }
+            // lead cost "unbounded": the clause's own index structure, never a doc-values scan, which would read values
+            final Scorer scorer = supplier.get(Long.MAX_VALUE);
+            if (scorer.twoPhaseIterator() != null) {
+                return null;
+            }
+            final DocIdSetIterator it = scorer.iterator();
+            // hide the bit-set type, so the conjunction advances it with nextSetBit instead of testing every lead doc
+            iterators.add(it instanceof BitSetIterator ? new FilterDocIdSetIterator(it) : it);
+        }
+        return ConjunctionUtils.intersectIterators(iterators);
     }
 
     /**
@@ -91,19 +247,43 @@ public final class DocValuesPrefetch {
      * the query), skipping deleted docs.
      */
     public static DocIdSetIterator queryMatches(SearchContext context, LeafReaderContext ctx) throws IOException {
-        final Query query = context.searcher().rewrite(context.query());
-        final Weight weight = context.searcher().createWeight(query, ScoreMode.COMPLETE_NO_SCORES, 1f);
-        final Scorer scorer = weight.scorer(ctx);
-        if (scorer == null) {
-            return DocIdSetIterator.empty();
+        return queryMatches(context, context.searcher(), context.query(), ctx);
+    }
+
+    /**
+     * Same as {@link #queryMatches(SearchContext, LeafReaderContext)}, for {@code query} on {@code base}; look-aheads
+     * with the same {@code search} key share their per-segment work when {@link #isShareLookahead()}.
+     */
+    public static DocIdSetIterator queryMatches(Object search, IndexSearcher base, Query original, LeafReaderContext ctx)
+        throws IOException {
+        lookaheads.increment();
+        final IndexSearcher searcher = lookaheadSearcher(search, base);
+        final Query query = searcher.rewrite(original);
+        DocIdSetIterator matches = null;
+        if (leapfrogLookahead) {
+            final List<Query> clauses = conjunctionClauses(query);
+            if (clauses != null) {
+                matches = leapfrog(searcher, clauses, ctx);
+                if (matches != null) {
+                    leapfrogs.increment();
+                }
+            }
         }
-        final TwoPhaseIterator twoPhase = scorer.twoPhaseIterator();
-        final DocIdSetIterator matches = twoPhase == null ? scorer.iterator() : TwoPhaseIterator.asDocIdSetIterator(twoPhase);
+        if (matches == null) {
+            final Weight weight = searcher.createWeight(query, ScoreMode.COMPLETE_NO_SCORES, 1f);
+            final Scorer scorer = weight.scorer(ctx);
+            if (scorer == null) {
+                return DocIdSetIterator.empty();
+            }
+            final TwoPhaseIterator twoPhase = scorer.twoPhaseIterator();
+            matches = twoPhase == null ? scorer.iterator() : TwoPhaseIterator.asDocIdSetIterator(twoPhase);
+        }
         final Bits live = ctx.reader().getLiveDocs();
         if (live == null) {
             return matches;
         }
-        return new FilteredDocIdSetIterator(matches) {
+        final DocIdSetIterator all = matches;
+        return new FilteredDocIdSetIterator(all) {
             @Override
             protected boolean match(int doc) {
                 return live.get(doc);

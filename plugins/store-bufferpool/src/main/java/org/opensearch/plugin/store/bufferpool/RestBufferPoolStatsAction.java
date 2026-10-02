@@ -55,7 +55,8 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       doc ID run end instead of recomputing it per window (see Lucene's {@code CollectExperiments}); {@code vec}:
  *       runend plus OpenSearch batch aggregation collection ({@code BatchCollection}); {@code vecdec}: vec plus Lucene
  *       bulk doc-values reads that decode a span of packed values in one pass; {@code pf}: vecdec plus doc-values prefetch
- *       one node ahead, doc-ID aligned ({@code DocValuesPrefetch}); {@code off} is stock</li>
+ *       one node ahead, doc-ID aligned ({@code DocValuesPrefetch}); {@code pfs}, {@code pfl}, {@code pfsl}: pf with the
+ *       look-ahead shared per segment (s), built as a leapfrog conjunction (l), or both; {@code off} is stock</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -86,6 +87,8 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
 
     private static void setAggBatch(boolean cacheRunEnd, boolean batchCollection, boolean bulkDecode) {
         DocValuesPrefetch.setEnabled(false);
+        DocValuesPrefetch.setShareLookahead(false);
+        DocValuesPrefetch.setLeapfrogLookahead(false);
         CollectExperiments.setCacheRunEnd(cacheRunEnd);
         BatchCollection.setEnabled(batchCollection);
         CollectExperiments.setBulkDecode(bulkDecode);
@@ -129,12 +132,16 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                 case "runend" -> setAggBatch(true, false, false);
                 case "vec" -> setAggBatch(true, true, false);
                 case "vecdec" -> setAggBatch(true, true, true);
-                case "pf" -> {
+                case "pf", "pfs", "pfl", "pfsl" -> {
                     setAggBatch(true, true, true);
                     DocValuesPrefetch.setNodeBytes(cache.blockSize());
+                    DocValuesPrefetch.setShareLookahead(mode.contains("s"));
+                    DocValuesPrefetch.setLeapfrogLookahead(mode.contains("l"));
                     DocValuesPrefetch.setEnabled(true);
                 }
-                default -> throw new IllegalArgumentException("[mode] must be off, runend, vec, vecdec or pf, got [" + mode + "]");
+                default -> throw new IllegalArgumentException(
+                    "[mode] must be off, runend, vec, vecdec, pf, pfs, pfl or pfsl, got [" + mode + "]"
+                );
             }
         } else if (path.endsWith("/disjunction_prefetch")) {
             final int blocks = request.paramAsInt("blocks", -1);
@@ -165,6 +172,12 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("agg_prefetch", DocValuesPrefetch.isEnabled());
             builder.field("agg_prefetch_planners", DocValuesPrefetch.planners());
             builder.field("agg_prefetch_requests", DocValuesPrefetch.requests());
+            builder.field("agg_prefetch_share_lookahead", DocValuesPrefetch.isShareLookahead());
+            builder.field("agg_prefetch_leapfrog_lookahead", DocValuesPrefetch.isLeapfrogLookahead());
+            builder.field("agg_prefetch_lookaheads", DocValuesPrefetch.lookaheads());
+            builder.field("agg_prefetch_leapfrogs", DocValuesPrefetch.leapfrogs());
+            builder.field("agg_prefetch_shared_hits", DocValuesPrefetch.sharedHits());
+            builder.field("agg_prefetch_shared_misses", DocValuesPrefetch.sharedMisses());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {

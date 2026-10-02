@@ -69,7 +69,11 @@ WINDOWS = {"7d": (0, SPAN_MS, "1h"), "1d": (3 * 86_400_000, 4 * 86_400_000, "10m
 #           (CollectExperiments.setBulkDecode)
 #   pf      vecdec + doc-values prefetch, one node ahead, doc-ID aligned, proven by a look-ahead iterator of the query
 #           (DocValuesPrefetch)
-VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec", "vecdec"), ("pf", "pf")]
+#   pfs     pf + look-ahead clauses other than terms evaluated once per segment and shared by the planners
+#   pfl     pf + look-ahead built as a leapfrog conjunction (bit-set clauses advanced, not tested doc by doc)
+#   pfsl    pf + both
+VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec", "vecdec"), ("pf", "pf"), ("pfs", "pfs"),
+                ("pfl", "pfl"), ("pfsl", "pfsl")]
 VARIANTS = VARIANTS_ALL[:1]
 DEFAULT_QUERIES = [
     "dh:s50:7d", "dh:s10:7d", "dh:s1:7d", "dh:s10:1d",

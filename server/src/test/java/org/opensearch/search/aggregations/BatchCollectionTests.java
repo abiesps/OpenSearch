@@ -73,6 +73,8 @@ public class BatchCollectionTests extends AggregatorTestCase {
     public void tearDown() throws Exception {
         BatchCollection.setEnabled(false);
         DocValuesPrefetch.setEnabled(false);
+        DocValuesPrefetch.setShareLookahead(false);
+        DocValuesPrefetch.setLeapfrogLookahead(false);
         super.tearDown();
     }
 
@@ -122,6 +124,8 @@ public class BatchCollectionTests extends AggregatorTestCase {
         BatchCollection.setEnabled(batch);
         DocValuesPrefetch.setEnabled(batch && prefetch);
         DocValuesPrefetch.setNodeBytes(1L << randomIntBetween(10, 17));
+        DocValuesPrefetch.setShareLookahead(randomBoolean());
+        DocValuesPrefetch.setLeapfrogLookahead(randomBoolean());
         try {
             return searchAndReduce(searcher, query, agg, false, tsType, vType, svcType);
         } finally {
