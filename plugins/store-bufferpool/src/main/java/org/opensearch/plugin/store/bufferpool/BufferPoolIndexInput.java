@@ -18,6 +18,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
+import java.util.Optional;
 
 /**
  * {@link IndexInput} that serves every read from blocks of the shared {@link BlockCache}.
@@ -265,6 +266,21 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         final long firstBlock = (sliceOffset + offset) >>> blockSizePower;
         final long lastBlock = (sliceOffset + offset + len - 1) >>> blockSizePower;
         cache.prefetch(file, fileId, channel, fileLength, firstBlock << blockSizePower, lastBlock - firstBlock + 1, stats);
+    }
+
+    @Override
+    public Optional<Boolean> isLoaded(long offset, long len) {
+        if (offset < 0 || len < 0 || offset > length - len) {
+            throw new IllegalArgumentException(
+                "isLoaded out of bounds: offset=" + offset + ",length=" + len + ",fileLength=" + length + ": " + this
+            );
+        }
+        if (len == 0) {
+            return Optional.of(true);
+        }
+        final long firstBlock = (sliceOffset + offset) >>> blockSizePower;
+        final long lastBlock = (sliceOffset + offset + len - 1) >>> blockSizePower;
+        return Optional.of(cache.contains(file, fileId, firstBlock << blockSizePower, lastBlock - firstBlock + 1));
     }
 
     @Override

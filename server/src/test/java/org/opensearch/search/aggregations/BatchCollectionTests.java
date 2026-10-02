@@ -97,6 +97,7 @@ public class BatchCollectionTests extends AggregatorTestCase {
         DocValuesPrefetch.setLeapfrogLookahead(false);
         DocValuesPrefetch.setRunAhead(false);
         DocValuesPrefetch.setRunAheadGate(false);
+        DocValuesPrefetch.setRunAheadBypass(false);
         super.tearDown();
     }
 
@@ -171,6 +172,7 @@ public class BatchCollectionTests extends AggregatorTestCase {
         DocValuesPrefetch.setLeapfrogLookahead(randomBoolean());
         DocValuesPrefetch.setRunAhead(forceRunAhead || randomBoolean());
         DocValuesPrefetch.setRunAheadGate(randomBoolean());
+        DocValuesPrefetch.setRunAheadBypass(randomBoolean());
         DocValuesPrefetch.setRunAheadDocs(randomFrom(4096, 8192, 65_536, 1 << 17));
         try {
             return searchAndReduce(searcher, query, agg, false, tsType, vType, svcType);
@@ -259,7 +261,11 @@ public class BatchCollectionTests extends AggregatorTestCase {
     private void assertPrefetched(boolean expectPlanners) {
         if (prefetch && expectPlanners) {
             assertTrue("planners", DocValuesPrefetch.planners() > 0);
-            assertTrue("requests", DocValuesPrefetch.requests() > 0);
+            if (DocValuesPrefetch.isRunAheadBypass() == false) {
+                // pass-through requests nothing for the node being read when it starts buffering, and a small
+                // segment may have no other node
+                assertTrue("requests", DocValuesPrefetch.requests() > 0);
+            }
             if (DocValuesPrefetch.isRunAhead()) {
                 // planners took their matches from the run-ahead buffer (or the replay ring), not a second scorer
                 assertTrue("run-ahead used", DocValuesPrefetch.runAheadLeaves() + DocValuesPrefetch.runAheadReplays() > 0);

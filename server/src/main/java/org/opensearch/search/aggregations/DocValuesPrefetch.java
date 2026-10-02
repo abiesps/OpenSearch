@@ -74,6 +74,8 @@ public final class DocValuesPrefetch {
     private static volatile boolean runAhead;
     private static volatile int runAheadDocs = 1 << 17;
     private static volatile boolean runAheadGate;
+    private static volatile boolean runAheadBypass;
+    private static final LongAdder runAheadSwitches = new LongAdder();
     private static final LongAdder runAheadLeaves = new LongAdder();
     private static final LongAdder runAheadReplays = new LongAdder();
     /** The run-ahead buffer of the leaf collector tree being built on this thread, see {@link #beginLeaf()}. */
@@ -150,6 +152,25 @@ public final class DocValuesPrefetch {
      */
     public static void setRunAheadGate(boolean on) {
         runAheadGate = on;
+    }
+
+    /**
+     * Sets whether the run-ahead buffer starts as a pass-through: docs go straight to the collectors (no copy, no delay)
+     * while, at each node a planner enters, that node and the next one of its field are cached. At the first node that is
+     * not cached the buffer starts buffering, and stays so for the leaf.
+     */
+    public static void setRunAheadBypass(boolean on) {
+        runAheadBypass = on;
+    }
+
+    /** Returns whether the run-ahead buffer passes docs through while the data is cached. */
+    public static boolean isRunAheadBypass() {
+        return runAheadBypass;
+    }
+
+    /** Leaves (and replays) whose run-ahead buffer started buffering after passing docs through. */
+    public static long runAheadSwitches() {
+        return runAheadSwitches.sum();
     }
 
     /** Returns whether the run-ahead buffer gates collection on the planners. */
@@ -233,6 +254,7 @@ public final class DocValuesPrefetch {
         sharedMisses.reset();
         runAheadLeaves.reset();
         runAheadReplays.reset();
+        runAheadSwitches.reset();
     }
 
     private static IndexSearcher lookaheadSearcher(Object search, IndexSearcher base) {
@@ -471,6 +493,11 @@ public final class DocValuesPrefetch {
 
         /** Requests the node(s) holding {@code doc}'s value. */
         void prefetch(int doc, long nodeBytes) throws IOException;
+
+        /** Whether the node(s) holding {@code doc}'s value are cached, so reading it needs no IO (false if unknown). */
+        default boolean isLoaded(int doc, long nodeBytes) throws IOException {
+            return false;
+        }
     }
 
     /** Planning view of a numeric field, or null if its codec does not support node planning. */
@@ -487,6 +514,11 @@ public final class DocValuesPrefetch {
             @Override
             public void prefetch(int doc, long nodeBytes) throws IOException {
                 values.prefetchNodes(doc, doc + 1, nodeBytes);
+            }
+
+            @Override
+            public boolean isLoaded(int doc, long nodeBytes) throws IOException {
+                return values.isNodeLoaded(doc, nodeBytes);
             }
         };
     }
@@ -505,6 +537,11 @@ public final class DocValuesPrefetch {
             @Override
             public void prefetch(int doc, long nodeBytes) throws IOException {
                 values.prefetchNodes(doc, doc + 1, nodeBytes);
+            }
+
+            @Override
+            public boolean isLoaded(int doc, long nodeBytes) throws IOException {
+                return values.isNodeLoaded(doc, nodeBytes);
             }
         };
     }
@@ -591,6 +628,10 @@ public final class DocValuesPrefetch {
         }
 
         private void start() throws IOException {
+            if (ahead != null && ahead.bypass) {
+                trigger = 0; // check the cache at the first read
+                return;
+            }
             plan(0);
         }
 
@@ -630,6 +671,25 @@ public final class DocValuesPrefetch {
             gateTarget = -1;
         }
 
+        /**
+         * Pass-through: while this node and the next one are cached nothing is planned; otherwise the buffer starts
+         * buffering and this planner plans from the next node with the matches that arrive from now on.
+         */
+        private void bypassAdvance(int doc) throws IOException {
+            final int nodeEnd = field.nextNodeDoc(doc, nodeBytes);
+            final boolean last = nodeEnd == DocIdSetIterator.NO_MORE_DOCS || nodeEnd < 0;
+            if (field.isLoaded(doc, nodeBytes) && (last || field.isLoaded(nodeEnd, nodeBytes))) {
+                trigger = last ? DocIdSetIterator.NO_MORE_DOCS : nodeEnd;
+                return;
+            }
+            ahead.startBuffering();
+            if (last) {
+                trigger = DocIdSetIterator.NO_MORE_DOCS;
+                return;
+            }
+            plan(nodeEnd);
+        }
+
         /** More matches are known: plan if waiting for them. */
         private void retry() throws IOException {
             if (pendingFrom >= 0) {
@@ -663,6 +723,10 @@ public final class DocValuesPrefetch {
             if (doc < trigger) {
                 return;
             }
+            if (ahead != null && ahead.bypass) {
+                bypassAdvance(doc);
+                return;
+            }
             final int nodeEnd = field.nextNodeDoc(doc, nodeBytes);
             if (nodeEnd == DocIdSetIterator.NO_MORE_DOCS || nodeEnd < 0) {
                 trigger = DocIdSetIterator.NO_MORE_DOCS;
@@ -679,6 +743,17 @@ public final class DocValuesPrefetch {
     /** Matches known ahead of collection, and the planners waiting on them. */
     abstract static class Ahead implements Matches {
         final List<Planner> planners = new ArrayList<>(2);
+        /** Pass-through while the data is cached, see {@link #setRunAheadBypass}. */
+        boolean bypass;
+
+        /** Leaves pass-through: docs that arrive from now on are buffered. */
+        void startBuffering() {
+            if (bypass) {
+                bypass = false;
+                runAheadSwitches.increment();
+            }
+        }
+
         /** Docs below it are known: matches are in the buffer, other docs do not match. */
         int arrived;
         boolean finished;
@@ -741,7 +816,7 @@ public final class DocValuesPrefetch {
         if (enabled == false || runAhead == false || CURRENT.get() != null) {
             return null;
         }
-        final RunAhead ra = new RunAhead(runAheadDocs, runAheadGate);
+        final RunAhead ra = new RunAhead(runAheadDocs, runAheadGate, runAheadBypass);
         CURRENT.set(ra);
         return ra;
     }
@@ -790,8 +865,14 @@ public final class DocValuesPrefetch {
         }
 
         RunAhead(int lag, boolean gate) {
+            this(lag, gate, false);
+        }
+
+        RunAhead(int lag, boolean gate, boolean bypass) {
             this.lag = lag;
             this.gate = gate;
+            this.bypass = bypass;
+            this.buffering = bypass == false;
             // with the gate, delivery can wait at a planner's trigger while the scorer runs further ahead
             this.capacity = ((gate ? 4 : 2) * lag + 4 * WINDOW + 63) & ~63;
             this.bits = new FixedBitSet(capacity);
@@ -874,7 +955,32 @@ public final class DocValuesPrefetch {
             fastUpTo = (int) Math.min(Math.min((long) retryAt(), (long) delivered + lag + WINDOW - 1), (long) base + capacity - WINDOW);
         }
 
+        /** Set when pass-through ends: the next arrival starts the buffer at its first doc. */
+        private boolean startPending;
+        /** Whether docs were buffered (so finish must hand them over). */
+        private boolean buffering;
+
+        @Override
+        void startBuffering() {
+            if (bypass) {
+                super.startBuffering();
+                startPending = true;
+            }
+        }
+
+        /** Starts the buffer at {@code doc}: every earlier doc went straight to the collectors. */
+        private void startAt(int doc) {
+            startPending = false;
+            buffering = true;
+            base = doc & ~63;
+            delivered = doc;
+            arrived = doc;
+        }
+
         private void arriveDocSlow(int doc) throws IOException {
+            if (startPending) {
+                startAt(doc);
+            }
             startRun(PER_DOC);
             if (ringCount == RING) {
                 endRun();
@@ -897,6 +1003,9 @@ public final class DocValuesPrefetch {
             // the first doc tells where the window starts, which may be far after the buffer
             if (s.intoArray(first) == 0) {
                 return;
+            }
+            if (startPending) {
+                startAt(first[0]);
             }
             startRun(STREAM);
             arriveDoc0(first[0]);
@@ -934,6 +1043,9 @@ public final class DocValuesPrefetch {
         }
 
         private void arriveRange(int min, int max) throws IOException {
+            if (startPending) {
+                startAt(min);
+            }
             // a new run per range: delivery hands each run on as one range
             startRun(RANGE);
             runStart[(runHead + runCount - 1) & (RUNS - 1)] = min;
@@ -1032,6 +1144,9 @@ public final class DocValuesPrefetch {
         }
 
         private void finishLeaf() throws IOException {
+            if (buffering == false) {
+                return;
+            }
             fastUpTo = 0;
             if (runCount > 0) {
                 endRun();
@@ -1053,13 +1168,17 @@ public final class DocValuesPrefetch {
 
                 @Override
                 public void collect(int doc) throws IOException {
+                    if (bypass) {
+                        out.collect(doc, 0);
+                        return;
+                    }
                     // the scorer's per-doc call, without the hop through collect(doc, 0)
                     arriveDoc(doc);
                 }
 
                 @Override
                 public void collect(int doc, long owningBucketOrd) throws IOException {
-                    if (owningBucketOrd != 0) {
+                    if (bypass || owningBucketOrd != 0) {
                         // not a top-level call: hand over everything buffered, then this doc, in order
                         finishFlush();
                         out.collect(doc, owningBucketOrd);
@@ -1070,7 +1189,7 @@ public final class DocValuesPrefetch {
 
                 @Override
                 public void collect(DocIdStream s, long owningBucketOrd) throws IOException {
-                    if (owningBucketOrd != 0) {
+                    if (bypass || owningBucketOrd != 0) {
                         finishFlush();
                         out.collect(s, owningBucketOrd);
                         return;
@@ -1080,6 +1199,10 @@ public final class DocValuesPrefetch {
 
                 @Override
                 public void collectRange(int min, int max) throws IOException {
+                    if (bypass) {
+                        out.collectRange(min, max);
+                        return;
+                    }
                     arriveRange(min, max);
                 }
 
@@ -1092,6 +1215,9 @@ public final class DocValuesPrefetch {
         }
 
         private void finishFlush() throws IOException {
+            if (buffering == false) {
+                return;
+            }
             fastUpTo = 0;
             if (runCount > 0) {
                 endRun();
@@ -1213,7 +1339,7 @@ public final class DocValuesPrefetch {
         if (enabled == false || runAhead == false || CURRENT.get() != null) {
             return null;
         }
-        final Replay r = new Replay(runAheadDocs);
+        final Replay r = new Replay(runAheadDocs, runAheadBypass);
         CURRENT.set(r);
         return r;
     }
@@ -1240,7 +1366,12 @@ public final class DocValuesPrefetch {
         private long[] fillBuckets;
 
         Replay(int lag) {
+            this(lag, false);
+        }
+
+        Replay(int lag, boolean bypass) {
             this.lag = lag;
+            this.bypass = bypass;
         }
 
         /** Whether a planner uses this ring; if not, replay as usual. */
@@ -1308,7 +1439,8 @@ public final class DocValuesPrefetch {
             sealed++;
             arrived = fillDocs[n - 1] + 1;
             afterArrival();
-            while (sealed > 0 && (sealed == CHUNKS - 1 || arrived - docs[head][counts[head] - 1] > lag)) {
+            // pass-through (bypass): every sealed chunk goes to the collectors right away, as without the ring
+            while (sealed > 0 && (bypass || sealed == CHUNKS - 1 || arrived - docs[head][counts[head] - 1] > lag)) {
                 deliverHead(leaf);
             }
             startFill();

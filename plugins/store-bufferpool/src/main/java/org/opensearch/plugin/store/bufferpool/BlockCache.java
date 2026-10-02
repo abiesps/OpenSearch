@@ -144,6 +144,19 @@ final class BlockCache {
     }
 
     /**
+     * Whether all {@code blockCount} blocks that start at {@code firstBlockOffset} are cached (a block still loading is
+     * not). Does not count as an access.
+     */
+    boolean contains(Path file, long fileId, long firstBlockOffset, long blockCount) {
+        for (long i = 0; i < blockCount; i++) {
+            if (cache.asMap().containsKey(new BlockKey(file, fileId, firstBlockOffset + (i << blockSizePower))) == false) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Loads the missing blocks among {@code blockCount} blocks that start at {@code firstBlockOffset}, asynchronously.
      * Best effort: the request is dropped when the prefetch queue is full, and load failures are only logged.
      */

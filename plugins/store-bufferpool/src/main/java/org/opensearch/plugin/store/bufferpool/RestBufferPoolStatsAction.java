@@ -50,7 +50,7 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       cache blocks ahead (N * block size doc IDs, for 1-byte norms), in whole blocks, only for doc windows whose max
  *       score can beat the current threshold unless {@code filter=false} (JVM-wide, see Lucene's {@code TopKPrefetch});
  *       0 disables it</li>
- *   <li>{@code POST /_bufferpool/agg_batch?mode=off|runend|vec|vecdec|pf|pfs|pfl|pfsl|pfw|pfwg[&docs=N]}: batch collection experiments for scorers and
+ *   <li>{@code POST /_bufferpool/agg_batch?mode=off|runend|vec|vecdec|pf|pfs|pfl|pfsl|pfw|pfwg|pfwc[&docs=N]}: batch collection experiments for scorers and
  *       leaf collectors created from now on (JVM-wide). {@code runend}: Lucene's dense conjunction keeps each clause's
  *       doc ID run end instead of recomputing it per window (see Lucene's {@code CollectExperiments}); {@code vec}:
  *       runend plus OpenSearch batch aggregation collection ({@code BatchCollection}); {@code vecdec}: vec plus Lucene
@@ -59,7 +59,8 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       look-ahead shared per segment (s), built as a leapfrog conjunction (l), or both; {@code pfw}: vecdec plus
  *       doc-values prefetch proven by the main scorer's own matches, buffered {@code docs} doc IDs (default 131072)
  *       ahead of collection (run-ahead, no second scorer); {@code pfwg}: pfw plus the gate (collection waits at a
- *       planner's next requested doc until the read after its node is known); {@code off} is stock</li>
+ *       planner's next requested doc until the read after its node is known); {@code pfwc}: pfwg that passes docs
+ *       straight through while the nodes planners enter (and the next ones) are cached; {@code off} is stock</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -94,6 +95,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
         DocValuesPrefetch.setLeapfrogLookahead(false);
         DocValuesPrefetch.setRunAhead(false);
         DocValuesPrefetch.setRunAheadGate(false);
+        DocValuesPrefetch.setRunAheadBypass(false);
         CollectExperiments.setCacheRunEnd(cacheRunEnd);
         BatchCollection.setEnabled(batchCollection);
         CollectExperiments.setBulkDecode(bulkDecode);
@@ -144,16 +146,17 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                     DocValuesPrefetch.setLeapfrogLookahead(mode.contains("l"));
                     DocValuesPrefetch.setEnabled(true);
                 }
-                case "pfw", "pfwg" -> {
+                case "pfw", "pfwg", "pfwc" -> {
                     setAggBatch(true, true, true);
                     DocValuesPrefetch.setNodeBytes(cache.blockSize());
                     DocValuesPrefetch.setRunAheadDocs(request.paramAsInt("docs", 1 << 17));
-                    DocValuesPrefetch.setRunAheadGate(mode.equals("pfwg"));
+                    DocValuesPrefetch.setRunAheadGate(mode.equals("pfwg") || mode.equals("pfwc"));
+                    DocValuesPrefetch.setRunAheadBypass(mode.equals("pfwc"));
                     DocValuesPrefetch.setRunAhead(true);
                     DocValuesPrefetch.setEnabled(true);
                 }
                 default -> throw new IllegalArgumentException(
-                    "[mode] must be off, runend, vec, vecdec, pf, pfs, pfl, pfsl, pfw or pfwg, got [" + mode + "]"
+                    "[mode] must be off, runend, vec, vecdec, pf, pfs, pfl, pfsl, pfw, pfwg or pfwc, got [" + mode + "]"
                 );
             }
         } else if (path.endsWith("/disjunction_prefetch")) {
@@ -195,6 +198,8 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("agg_prefetch_run_ahead", DocValuesPrefetch.isRunAhead());
             builder.field("agg_prefetch_run_ahead_docs", DocValuesPrefetch.runAheadDocs());
             builder.field("agg_prefetch_run_ahead_gate", DocValuesPrefetch.isRunAheadGate());
+            builder.field("agg_prefetch_run_ahead_bypass", DocValuesPrefetch.isRunAheadBypass());
+            builder.field("agg_prefetch_run_ahead_switches", DocValuesPrefetch.runAheadSwitches());
             builder.field("agg_prefetch_run_ahead_leaves", DocValuesPrefetch.runAheadLeaves());
             builder.field("agg_prefetch_run_ahead_replays", DocValuesPrefetch.runAheadReplays());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));

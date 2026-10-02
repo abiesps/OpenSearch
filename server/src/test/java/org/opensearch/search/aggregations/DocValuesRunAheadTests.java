@@ -38,6 +38,8 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
         final List<Integer> requested = new ArrayList<>();
         final List<Integer> collectedBefore = new ArrayList<>();
         int collected;
+        /** Values of docs below it are cached. */
+        int loadedUpTo;
 
         FakeField(int nodeDocs, int maxDoc) {
             this.nodeDocs = nodeDocs;
@@ -54,6 +56,11 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
         public void prefetch(int doc, long nodeBytes) {
             requested.add(doc);
             collectedBefore.add(collected);
+        }
+
+        @Override
+        public boolean isLoaded(int doc, long nodeBytes) {
+            return doc < loadedUpTo;
         }
     }
 
@@ -136,13 +143,24 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
     }
 
     public void testRunAhead() throws IOException {
+        runAhead(false);
+    }
+
+    /** Pass-through while cached: docs below the cached prefix go straight through, then the buffer starts. */
+    public void testRunAheadBypass() throws IOException {
+        runAhead(true);
+    }
+
+    private void runAhead(boolean bypass) throws IOException {
         DocValuesPrefetch.setEnabled(true);
+        DocValuesPrefetch.resetCounters();
         for (int iter = 0; iter < 20; iter++) {
             final int maxDoc = randomIntBetween(1, 1_500_000);
             final FixedBitSet matches = randomMatches(maxDoc);
             final int lag = randomFrom(4096, 10_000, 65_536, 1 << 17);
-            final DocValuesPrefetch.RunAhead ra = new DocValuesPrefetch.RunAhead(lag, randomBoolean());
+            final DocValuesPrefetch.RunAhead ra = new DocValuesPrefetch.RunAhead(lag, randomBoolean(), bypass);
             final FakeField field = new FakeField(randomIntBetween(500, 200_000), maxDoc);
+            field.loadedUpTo = bypass ? randomFrom(0, maxDoc / 2, maxDoc + 1) : 0;
             final DocValuesPrefetch.Planner planner = DocValuesPrefetch.planner(field, ra, DocValuesPrefetch.ALL_MATCHES);
             final List<Integer> delivered = new ArrayList<>();
             // docs the scorer handed over one at a time, and docs the collector got one at a time (not in a stream)
@@ -233,7 +251,24 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
             in.finish();
             assertDelivered(matches, delivered);
             assertEquals("docs handed over one at a time are collected one at a time", perDocIn, perDocOut);
-            assertPlanned(matches, field);
+            if (bypass) {
+                // nothing planned while cached; once buffering, every request is a doc that is read, in a node of its
+                // own, in order, before the doc is collected (the first docs of the node where buffering started may
+                // have gone straight through, so a request need not be the first match of its node)
+                int lastNode = -1;
+                for (int req : field.requested) {
+                    assertTrue("requested doc " + req + " is read", matches.get(req));
+                    int node = req / field.nodeDocs;
+                    assertTrue("one request per node, in order", node > lastNode);
+                    lastNode = node;
+                }
+                assertRequestedBeforeCollected(matches, field);
+                if (field.loadedUpTo > maxDoc) {
+                    assertTrue("nothing requested while everything is cached", field.requested.isEmpty());
+                }
+            } else {
+                assertPlanned(matches, field);
+            }
         }
     }
 
@@ -273,7 +308,7 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
             assertDelivered(matches, delivered);
             // batches advance the planner only at their first and last doc: a node may be skipped inside a batch,
             // but every request is still the first match of a node, in order, before it is collected
-            assertRequestsAreFirstMatches(matches, field);
+            assertRequestsAreFirstMatches(matches, field, true);
         }
     }
 
@@ -304,7 +339,7 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
         assertRequestedBeforeCollected(matches, field);
     }
 
-    private static void assertRequestsAreFirstMatches(FixedBitSet matches, FakeField field) {
+    private static void assertRequestsAreFirstMatches(FixedBitSet matches, FakeField field, boolean firstRequested) {
         List<Integer> first = firstMatches(matches, field);
         int j = 0;
         for (int doc : field.requested) {
@@ -314,7 +349,7 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
             assertTrue("requested doc " + doc + " is not the first match of its node", j < first.size() && first.get(j) == doc);
             j++;
         }
-        if (first.isEmpty() == false) {
+        if (firstRequested && first.isEmpty() == false) {
             assertEquals(first.get(0), field.requested.get(0));
         }
         assertRequestedBeforeCollected(matches, field);
