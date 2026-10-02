@@ -278,6 +278,40 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
      * Replays one segment in chunks of {@link BatchCollection#CHUNK} docs with
      * {@link LeafBucketCollector#collectBatch}, and rebases buckets with a dense table instead of a hash lookup per doc.
      */
+    /**
+     * {@link #replayBatch} through a run-ahead ring ({@link DocValuesPrefetch.Replay}): same loop, but the chunks are the
+     * ring's, so planners of the replayed collectors see the docs ahead of collection. Its own method, so the JIT compiles
+     * the loop as tightly as the plain one.
+     */
+    private static void replayAhead(
+        LeafBucketCollector leafCollector,
+        long size,
+        PackedLongValues.Iterator docDeltaIterator,
+        PackedLongValues.Iterator buckets,
+        long[] rebase,
+        DocValuesPrefetch.Replay replay
+    ) throws IOException {
+        int[] docs = replay.docsToFill();
+        long[] rebased = replay.bucketsToFill();
+        int doc = 0;
+        int n = 0;
+        for (long i = 0; i < size; ++i) {
+            doc += (int) docDeltaIterator.next();
+            final long rebasedBucket = rebase[(int) buckets.next()];
+            if (rebasedBucket != -1) {
+                docs[n] = doc;
+                rebased[n++] = rebasedBucket;
+                if (n == docs.length) {
+                    replay.sealFull(leafCollector);
+                    docs = replay.docsToFill();
+                    rebased = replay.bucketsToFill();
+                    n = 0;
+                }
+            }
+        }
+        replay.finish(n, leafCollector);
+    }
+
     private void replayBatch(
         LeafBucketCollector leafCollector,
         long size,
@@ -293,15 +327,7 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
         }
         final long[] rebase = rebaseTable;
         if (replay != null) {
-            int doc = 0;
-            for (long i = 0; i < size; ++i) {
-                doc += (int) docDeltaIterator.next();
-                final long rebasedBucket = rebase[(int) buckets.next()];
-                if (rebasedBucket != -1) {
-                    replay.add(doc, rebasedBucket, leafCollector);
-                }
-            }
-            replay.finish(leafCollector);
+            replayAhead(leafCollector, size, docDeltaIterator, buckets, rebase, replay);
             return;
         }
         final int[] docs = new int[BatchCollection.CHUNK];

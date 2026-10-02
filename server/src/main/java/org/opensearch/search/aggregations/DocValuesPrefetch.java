@@ -1225,21 +1225,19 @@ public final class DocValuesPrefetch {
      */
     public static final class Replay extends Ahead {
         /**
-         * Up to 128 chunks of 1,024 docs (1 MiB, allocated as needed): a dense replay needs about lag x density docs in
+         * Up to 128 chunks of 1,024 docs (1.5 MiB, allocated as needed): a dense replay needs about lag x density docs in
          * the ring to keep a node of lead (16 chunks gave terms s50 7d only half of the cold gain).
          */
         static final int CHUNKS = 128;
         private final int lag;
         private final int[][] docs = new int[CHUNKS][];
-        /** Buckets as ints: the batch replay rebases them into a table of at most 2^20 buckets. */
-        private final int[][] buckets = new int[CHUNKS][];
-        private final long[] deliverBuckets = new long[BatchCollection.CHUNK];
+        private final long[][] buckets = new long[CHUNKS][];
         private final int[] counts = new int[CHUNKS];
         /** Oldest sealed chunk and number of sealed chunks; the chunk after them is being filled. */
         private int head, sealed;
         private int n;
         private int[] fillDocs;
-        private int[] fillBuckets;
+        private long[] fillBuckets;
 
         Replay(int lag) {
             this.lag = lag;
@@ -1254,11 +1252,41 @@ public final class DocValuesPrefetch {
             final int c = (head + sealed) % CHUNKS;
             if (docs[c] == null) {
                 docs[c] = new int[BatchCollection.CHUNK];
-                buckets[c] = new int[BatchCollection.CHUNK];
+                buckets[c] = new long[BatchCollection.CHUNK];
             }
             fillDocs = docs[c];
             fillBuckets = buckets[c];
             n = 0;
+        }
+
+        /**
+         * The doc array of the chunk to fill: the replay loop writes docs (and {@link #bucketsToFill()} buckets) at
+         * positions 0 to {@link BatchCollection#CHUNK} - 1 itself, then calls {@link #sealFull} or {@link #finish(int,
+         * LeafBucketCollector)}. Keeps the replay loop as tight as without the ring.
+         */
+        public int[] docsToFill() {
+            if (fillDocs == null) {
+                runAheadReplays.increment();
+                startFill();
+            }
+            return fillDocs;
+        }
+
+        /** The bucket array of the chunk to fill, see {@link #docsToFill()}. */
+        public long[] bucketsToFill() {
+            return fillBuckets;
+        }
+
+        /** The chunk being filled is full; may hand older chunks to {@code leaf}. */
+        public void sealFull(LeafBucketCollector leaf) throws IOException {
+            n = fillDocs.length;
+            seal(leaf);
+        }
+
+        /** The chunk being filled holds {@code count} docs and no more will come: hands every doc to {@code leaf}. */
+        public void finish(int count, LeafBucketCollector leaf) throws IOException {
+            n = count;
+            finish(leaf);
         }
 
         /** Adds one doc to replay into {@code bucket}; may hand older chunks to {@code leaf}. */
@@ -1267,9 +1295,8 @@ public final class DocValuesPrefetch {
                 runAheadReplays.increment();
                 startFill();
             }
-            assert bucket >= 0 && bucket <= Integer.MAX_VALUE : bucket;
             fillDocs[n] = doc;
-            fillBuckets[n++] = (int) bucket;
+            fillBuckets[n++] = bucket;
             if (n == fillDocs.length) {
                 seal(leaf);
             }
@@ -1289,12 +1316,7 @@ public final class DocValuesPrefetch {
 
         private void deliverHead(LeafBucketCollector leaf) throws IOException {
             // the chunk stays in the ring while it is collected: its planners may still look at it
-            final int count = counts[head];
-            final int[] b = buckets[head];
-            for (int i = 0; i < count; i++) {
-                deliverBuckets[i] = b[i];
-            }
-            leaf.collectBatch(docs[head], deliverBuckets, count);
+            leaf.collectBatch(docs[head], buckets[head], counts[head]);
             head = (head + 1) % CHUNKS;
             sealed--;
         }
