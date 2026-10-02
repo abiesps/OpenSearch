@@ -690,6 +690,11 @@ public final class DocValuesPrefetch {
             retryAt = Math.min(retryAt, from);
         }
 
+        /** Smallest doc at which a waiting planner must retry, or MAX_VALUE. */
+        final int retryAt() {
+            return retryAt;
+        }
+
         /** Lets waiting planners plan if matches at or after their resume doc arrived. */
         final void afterArrival() throws IOException {
             if (arrived > retryAt) {
@@ -820,6 +825,12 @@ public final class DocValuesPrefetch {
 
         /** Starts a run of {@code kind} unless the current run has that kind (ranges always start a run). */
         private void startRun(byte kind) throws IOException {
+            if (kind != PER_DOC) {
+                fastUpTo = 0;
+            }
+            if (runCount > 0) {
+                endRun();
+            }
             if (kind != RANGE && runCount > 0 && runKind[(runHead + runCount - 1) & (RUNS - 1)] == kind) {
                 return;
             }
@@ -838,7 +849,32 @@ public final class DocValuesPrefetch {
             runEnd[(runHead + runCount - 1) & (RUNS - 1)] = arrived;
         }
 
+        /**
+         * Single docs below it need no bookkeeping: no planner waits on them, no delivery is due, the buffer has room
+         * (0 when the current run is not a single-doc run). The end of the current run is then updated lazily.
+         */
+        private int fastUpTo;
+
+        @Override
+        void pending(int from) {
+            super.pending(from);
+            fastUpTo = 0;
+        }
+
         private void arriveDoc(int doc) throws IOException {
+            if (doc < fastUpTo && ringCount < RING) {
+                final int i = doc - base;
+                words[i >> 6] |= 1L << i;
+                lastSet = doc;
+                arrived = doc + 1;
+                ring[(ringHead + ringCount++) & (RING - 1)] = doc;
+                return;
+            }
+            arriveDocSlow(doc);
+            fastUpTo = (int) Math.min(Math.min((long) retryAt(), (long) delivered + lag + WINDOW - 1), (long) base + capacity - WINDOW);
+        }
+
+        private void arriveDocSlow(int doc) throws IOException {
             startRun(PER_DOC);
             if (ringCount == RING) {
                 endRun();
@@ -996,6 +1032,10 @@ public final class DocValuesPrefetch {
         }
 
         private void finishLeaf() throws IOException {
+            fastUpTo = 0;
+            if (runCount > 0) {
+                endRun();
+            }
             finishArrivals();
             if (runCount > 0) {
                 endRun();
@@ -1009,6 +1049,12 @@ public final class DocValuesPrefetch {
                 @Override
                 public void setScorer(Scorable scorer) throws IOException {
                     out.setScorer(scorer);
+                }
+
+                @Override
+                public void collect(int doc) throws IOException {
+                    // the scorer's per-doc call, without the hop through collect(doc, 0)
+                    arriveDoc(doc);
                 }
 
                 @Override
@@ -1046,6 +1092,10 @@ public final class DocValuesPrefetch {
         }
 
         private void finishFlush() throws IOException {
+            fastUpTo = 0;
+            if (runCount > 0) {
+                endRun();
+            }
             deliver(arrived);
         }
 
