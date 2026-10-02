@@ -60,7 +60,7 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       doc-values prefetch proven by the main scorer's own matches, buffered {@code docs} doc IDs (default 131072)
  *       ahead of collection (run-ahead, no second scorer); {@code pfwg}: pfw plus the gate (collection waits at a
  *       planner's next requested doc until the read after its node is known); {@code pfwc}: pfwg that passes docs
- *       straight through while the nodes planners enter (and the next ones) are cached; {@code off} is stock</li>
+ *       straight through while every node the collectors read from is cached; {@code off} is stock</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {

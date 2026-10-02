@@ -156,8 +156,8 @@ public final class DocValuesPrefetch {
 
     /**
      * Sets whether the run-ahead buffer starts as a pass-through: docs go straight to the collectors (no copy, no delay)
-     * while, at each node a planner enters, that node and the next one of its field are cached. At the first node that is
-     * not cached the buffer starts buffering, and stays so for the leaf.
+     * while every node a planner's collector reads from is cached. At the first read node that is not cached the buffer
+     * starts buffering, and stays so for the leaf.
      */
     public static void setRunAheadBypass(boolean on) {
         runAheadBypass = on;
@@ -672,13 +672,15 @@ public final class DocValuesPrefetch {
         }
 
         /**
-         * Pass-through: while this node and the next one are cached nothing is planned; otherwise the buffer starts
-         * buffering and this planner plans from the next node with the matches that arrive from now on.
+         * Pass-through: while each node collection reads from is cached nothing is planned. At the first read node that
+         * is not cached (its read is a miss either way) the buffer starts buffering, and this planner plans from the
+         * next node with the matches that arrive from now on. The node checked is the one being read, not the next one
+         * by position: a field read far apart (date_histogram) never reads, and so never caches, most nodes.
          */
         private void bypassAdvance(int doc) throws IOException {
             final int nodeEnd = field.nextNodeDoc(doc, nodeBytes);
             final boolean last = nodeEnd == DocIdSetIterator.NO_MORE_DOCS || nodeEnd < 0;
-            if (field.isLoaded(doc, nodeBytes) && (last || field.isLoaded(nodeEnd, nodeBytes))) {
+            if (field.isLoaded(doc, nodeBytes)) {
                 trigger = last ? DocIdSetIterator.NO_MORE_DOCS : nodeEnd;
                 return;
             }
