@@ -155,7 +155,7 @@ result as an upper bound.
 | T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
 | T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
 
-## Phase C: aggregations on doc values (C0-C2, C3a, C3c, C3d done; C3e in progress: warm 1-day solved, dense 7-day open)
+## Phase C: aggregations on doc values (C0-C2, C3a, C3c, C3d done; C3e done: pfwc within noise warm, pfsl-level cold)
 
 Decisions (user):
 - **Vectorization first.** Batch and vectorize collection, measure it, and only then build doc-values prefetch.
@@ -633,6 +633,91 @@ Status after (6):
 - Next: skip the buffer when the data is already cached. When collection enters a node, check (without IO) whether the
   next node of the field is in the cache; while it is, hand docs straight to the collectors (no copy, no delay), and
   start buffering at the first node that is not cached. Warm queries then pay one residency check per node.
+
+**C3e: pass-through while cached (mode `pfwc` = pfwg + pass-through)** (Lucene fork `1373677cfb`; OpenSearch
+`ff59b07d23a`, `f86006df955`, `8f0436bef13`)
+- **Residency API (Lucene `1373677cfb`)**: `RandomAccessInput#isLoaded(offset, length)` returns `Optional<Boolean>`
+  (empty = the input cannot tell); `NumericDocValues` / `SortedDocValues#isNodeLoaded(doc, nodeBytes)` answer for the
+  node(s) holding a doc's value (`DocValuesNodes.isLoaded`; the Filter wrappers forward it). The bufferpool answers from
+  its block cache (`BlockCache.contains`, `BufferPoolIndexInput.isLoaded`), no IO and no cache-entry touch. Default:
+  unknown, which planners treat as not cached (so stock directories always buffer).
+- **Design**: a run-ahead leaf (and a replay ring) starts in pass-through: docs go straight to the collectors in their
+  arrival form, nothing is copied or delayed. Each planner checks, once per node it reads from, whether that node is
+  cached. At the first read node that is not, the leaf starts buffering for good (that read is a miss either way) and the
+  planner plans from the next node with the matches that arrive from then on.
+- **Rejected: checking the next node by position** (first pfwc version, `ff59b07d23a`, run (7)): date_histogram reads
+  `@timestamp` once per skipper interval that spans two buckets, so most `@timestamp` nodes are never read and never
+  cached. The next node by position was then almost always "not cached", and every warm dh query switched to buffering
+  (dh:s1:7d +28%*, dh:s10:7d +13%). Fix `f86006df955`: check the node being read. Warm run-ahead switches went from many
+  to 0 on all 11 queries.
+- **Replay without the ring in pass-through** (`8f0436bef13`): in run (8) the only residual was warm terms 7d (s50
+  +10.4 ms / +5%*, s10 +4.1 ms). JFR (interleaved with vecdec, terms:s50:7d, about 7,500 samples each): the main
+  collection was equal (+1.6 samples per query, noise), the deferred replay was +5.9 samples per query, all of it in
+  the replay loop (`replayBatch` 31.4 -> `replayAhead` + `Replay.sealFull` 37.0): in pass-through every 1,024-doc chunk
+  was still sealed in the ring and handed over at once. Now pass-through runs the plain replay loop
+  (`replayPassThrough`, `Replay.passThrough` sets `arrived` and hands the chunk over); when a planner leaves
+  pass-through, the rest of the segment continues in the ring loop from the next recorded doc. JFR after: replay
+  71.1 vs 71.5 and collection 86.9 vs 86.4 samples per query (vecdec vs pfwc), equal. Interleaved 5 x 10:
+  terms:s50:7d +9 ms -> +1.6 ms, terms:s10:7d +2 ms -> +0.3 ms. Test: `BestBucketsDeferringCollectorTests
+  .testReplayAheadPassThrough` (random cached prefix, switch in the middle of a segment: every selected doc once, in
+  order, rebased; requests are read docs, one per node, before collection).
+- Validation (`validate/dv_trace.py --mode pfwc`, cold, `results/c3e/trace_pfwc2.json` after `8f0436bef13`): loads
+  equal vecdec's on all 11 queries, prefetched but never read: 0.
+- Runs: (7) `aggs_20261001_235736.json` (`ff59b07d23a`, load 14-109, noisy); (8) `aggs_20261002_001203.json`
+  (`f86006df955`, load 5-9); (9) `aggs_20261002_022618.json` (node built from the `8f0436bef13` tree before the commit,
+  so the file records `f86006df955`; load 5 until terms:s50:7d, then 260-290: the last three terms queries of (9) are not
+  usable); (10) `aggs_20261002_104605.json` (`8f0436bef13`, terms queries only, load 3-6).
+
+| Query | Mode | vecdec (9) ms | pfsl (9) | pfwg (9) | pfwc (7) | pfwc (8) | pfwc (9) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| dh:s50:7d | cold | 1,271.6 | -44%* (-563.4 ms) | -42%* (-538.2 ms) | -40%* (-511.3 ms) | -40%* (-512.8 ms) | -41%* (-526.7 ms) |
+| dh:s10:7d | cold | 1,177.2 | -44%* (-520.2 ms) | -41%* (-481.4 ms) | -41%* (-484.5 ms) | -41%* (-490.6 ms) | -42%* (-489.2 ms) |
+| dh:s1:7d | cold | 1,074.5 | -45%* (-480.3 ms) | -41%* (-440.3 ms) | -41%* (-454.5 ms) | -41%* (-452.0 ms) | -42%* (-449.9 ms) |
+| dh:s10:1d | cold | 1,124.0 | -17%* (-192.0 ms) | -19%* (-213.3 ms) | -18%* (-199.2 ms) | -18%* (-202.0 ms) | -17%* (-190.5 ms) |
+| dh_avg:s50:7d | cold | 3,231.6 | -59%* (-1916.4 ms) | -60%* (-1930.4 ms) | -59%* (-1791.4 ms) | -60%* (-1977.9 ms) | -59%* (-1921.0 ms) |
+| dh_avg:s10:7d | cold | 2,988.7 | -60%* (-1784.4 ms) | -60%* (-1781.5 ms) | -59%* (-1737.3 ms) | -59%* (-2007.0 ms) | -59%* (-1767.5 ms) |
+| dh_avg:s10:1d | cold | 1,376.9 | -27%* (-378.3 ms) | -30%* (-418.6 ms) | -30%* (-415.1 ms) | -29%* (-463.6 ms) | -30%* (-409.0 ms) |
+| terms:s50:7d | cold | 3,857.4 | -50%* (-1919.9 ms) | -49%* (-1872.2 ms) | -51%* (-2017.1 ms) | -53%* (-2337.0 ms) | -49%* (-1877.5 ms) |
+| terms:s10:7d | cold | 3,696.2 | -47%* (-1749.4 ms) | -47%* (-1741.4 ms) | -47%* (-1514.1 ms) | -46%* (-1690.3 ms) | -47%* (-1736.0 ms) |
+| terms:s1:7d | cold | 3,373.1 | -42% (-1404.1 ms) | -34% (-1133.1 ms) | -43%* (-1274.2 ms) | -42%* (-1433.9 ms) | -35% (-1173.1 ms) |
+| terms:s10:1d | cold | 1,249.3 | -18%* (-227.8 ms) | -20%* (-251.6 ms) | -19%* (-217.9 ms) | -17%* (-214.2 ms) | -21%* (-260.2 ms) |
+| dh:s50:7d | warm | 10.7 | +14% (+1.5 ms) | +8% (+0.9 ms) | +8% (+0.9 ms) | +1% (+0.1 ms) | -2% (-0.2 ms) |
+| dh:s10:7d | warm | 13.2 | +12%* (+1.6 ms) | +3% (+0.3 ms) | +13% (+1.5 ms) | -2% (-0.2 ms) | -2% (-0.3 ms) |
+| dh:s1:7d | warm | 7.0 | +62%* (+4.3 ms) | +30% (+2.1 ms) | +28%* (+2.0 ms) | +5% (+0.4 ms) | +4% (+0.3 ms) |
+| dh:s10:1d | warm | 17.7 | +77%* (+13.7 ms) | +3% (+0.6 ms) | +0% (+0.0 ms) | +2% (+0.4 ms) | -2% (-0.4 ms) |
+| dh_avg:s50:7d | warm | 57.2 | +6%* (+3.6 ms) | +11%* (+6.5 ms) | +5%* (+2.5 ms) | +0% (+0.3 ms) | +4%* (+2.5 ms) |
+| dh_avg:s10:7d | warm | 26.8 | +9%* (+2.5 ms) | +5%* (+1.4 ms) | -2% (-0.5 ms) | -1% (-0.3 ms) | +3% (+0.9 ms) |
+| dh_avg:s10:1d | warm | 19.9 | +67%* (+13.4 ms) | +0% (+0.0 ms) | +3% (+0.6 ms) | +0% (+0.1 ms) | -2% (-0.3 ms) |
+| terms:s50:7d | warm | 211.4 | +1% (+2.2 ms) | +8%* (+15.9 ms) | +2% (+3.4 ms) | +5%* (+10.4 ms) | +1% (+1.8 ms) |
+| terms:s10:7d | warm | 143.5 | +6%* (+8.5 ms) | +8%* (+11.4 ms) | +5% (+3.1 ms) | +7% (+4.1 ms) | +5% (+6.7 ms) |
+| terms:s1:7d | warm | 24.8 | +2% (+0.5 ms) | -0% (-0.1 ms) | +10% (+1.0 ms) | +2% (+0.3 ms) | +24% (+5.9 ms) |
+| terms:s10:1d | warm | 40.2 | +54%* (+21.8 ms) | -1% (-0.3 ms) | +0% (+0.0 ms) | -1% (-0.3 ms) | -1% (-0.2 ms) |
+
+Run (10), terms queries again at low load:
+
+| Query | Mode | vecdec (10) ms | pfsl (10) | pfwg (10) | pfwc (10) |
+|---|---|---:|---:|---:|---:|
+| terms:s50:7d | cold | 4,037.8 | -51%* (-2069.7 ms) | -51%* (-2063.4 ms) | -51%* (-2055.1 ms) |
+| terms:s10:7d | cold | 3,284.4 | -47%* (-1554.2 ms) | -47%* (-1554.9 ms) | -47%* (-1558.6 ms) |
+| terms:s1:7d | cold | 2,973.6 | -43%* (-1283.9 ms) | -43%* (-1273.0 ms) | -42%* (-1262.1 ms) |
+| terms:s10:1d | cold | 1,160.4 | -15%* (-179.6 ms) | -18%* (-213.7 ms) | -18%* (-207.0 ms) |
+| terms:s50:7d | warm | 208.4 | +2%* (+4.6 ms) | +5%* (+11.0 ms) | +1%* (+2.0 ms) |
+| terms:s10:7d | warm | 55.0 | +3% (+1.5 ms) | +3% (+1.7 ms) | +0% (+0.1 ms) |
+| terms:s1:7d | warm | 9.4 | +18%* (+1.7 ms) | +19%* (+1.8 ms) | +2% (+0.2 ms) |
+| terms:s10:1d | warm | 21.3 | +60%* (+12.7 ms) | +1% (+0.3 ms) | +1% (+0.2 ms) |
+
+Status after (10) (pfwc):
+- **Warm: within noise of vecdec on all 11 queries.** dh / dh_avg in (9): -0.4 to +0.9 ms, except dh_avg:s50:7d
+  +2.5 ms (+4%*), which was -0.8 ms interleaved (5 x 10 runs; this change does not touch it, (8) had +0.3 ms);
+  dh:s1:7d +0.2 ms interleaved (10 x 10). terms in (10): s50 7d +2.0 ms (+1%), s10 7d +0.1 ms, s1 7d +0.2 ms, s10 1d
+  +0.2 ms. In the same runs pfsl is up to +77% and pfwg up to +30%.
+- **Cold: equal to pfsl and pfwg**: dh 7-day -41/-42%, dh_avg 7-day -59%, terms 7-day -42% to -51%, 1-day -17% to
+  -30%; same loads as vecdec, no unread prefetch.
+- Attribution of the C3e steps (warm, against vecdec of the same run): buffer copy-in/out (pfw/pfwg) cost up to +2 ms on
+  sparse dh and +8 to +16 ms on terms s50 7d; pass-through removes the main-collection part when the read nodes are
+  cached ((8): dh within noise); replay pass-through removes the replay part ((10): terms s50 7d +10.4 -> +2.0 ms).
+- A partly cached leaf: pass-through until the first uncached read node, buffering from there on (no switch back).
+- Next: microbenchmark of the per-node planner and pass-through cost; then points (`.kdd`) prefetch for 1-day ranges.
 
 ## Parked
 
