@@ -206,9 +206,15 @@ public abstract class AggregatorBase extends Aggregator {
         if (tryPrecomputeAggregationForLeaf(ctx)) {
             throw new CollectionTerminatedException();
         }
-        preGetSubLeafCollectors(ctx);
-        final LeafBucketCollector sub = collectableSubAggregators.getLeafCollector(ctx);
-        return getLeafCollector(ctx, sub);
+        // run-ahead doc-values prefetch: the planners of this tree see the scorer's matches through a buffer
+        final DocValuesPrefetch.RunAhead runAhead = parent == null ? DocValuesPrefetch.beginLeaf() : null;
+        try {
+            preGetSubLeafCollectors(ctx);
+            final LeafBucketCollector sub = collectableSubAggregators.getLeafCollector(ctx);
+            return DocValuesPrefetch.endLeaf(runAhead, getLeafCollector(ctx, sub));
+        } finally {
+            DocValuesPrefetch.clear(runAhead);
+        }
     }
 
     /**

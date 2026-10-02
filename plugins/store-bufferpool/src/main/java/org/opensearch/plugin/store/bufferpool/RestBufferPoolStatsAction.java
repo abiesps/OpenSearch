@@ -50,13 +50,15 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       cache blocks ahead (N * block size doc IDs, for 1-byte norms), in whole blocks, only for doc windows whose max
  *       score can beat the current threshold unless {@code filter=false} (JVM-wide, see Lucene's {@code TopKPrefetch});
  *       0 disables it</li>
- *   <li>{@code POST /_bufferpool/agg_batch?mode=off|runend|vec|vecdec}: batch collection experiments for scorers and
+ *   <li>{@code POST /_bufferpool/agg_batch?mode=off|runend|vec|vecdec|pf|pfs|pfl|pfsl|pfw[&docs=N]}: batch collection experiments for scorers and
  *       leaf collectors created from now on (JVM-wide). {@code runend}: Lucene's dense conjunction keeps each clause's
  *       doc ID run end instead of recomputing it per window (see Lucene's {@code CollectExperiments}); {@code vec}:
  *       runend plus OpenSearch batch aggregation collection ({@code BatchCollection}); {@code vecdec}: vec plus Lucene
  *       bulk doc-values reads that decode a span of packed values in one pass; {@code pf}: vecdec plus doc-values prefetch
  *       one node ahead, doc-ID aligned ({@code DocValuesPrefetch}); {@code pfs}, {@code pfl}, {@code pfsl}: pf with the
- *       look-ahead shared per segment (s), built as a leapfrog conjunction (l), or both; {@code off} is stock</li>
+ *       look-ahead shared per segment (s), built as a leapfrog conjunction (l), or both; {@code pfw}: vecdec plus
+ *       doc-values prefetch proven by the main scorer's own matches, buffered {@code docs} doc IDs (default 131072)
+ *       ahead of collection (run-ahead, no second scorer); {@code off} is stock</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -89,6 +91,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
         DocValuesPrefetch.setEnabled(false);
         DocValuesPrefetch.setShareLookahead(false);
         DocValuesPrefetch.setLeapfrogLookahead(false);
+        DocValuesPrefetch.setRunAhead(false);
         CollectExperiments.setCacheRunEnd(cacheRunEnd);
         BatchCollection.setEnabled(batchCollection);
         CollectExperiments.setBulkDecode(bulkDecode);
@@ -139,8 +142,15 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                     DocValuesPrefetch.setLeapfrogLookahead(mode.contains("l"));
                     DocValuesPrefetch.setEnabled(true);
                 }
+                case "pfw" -> {
+                    setAggBatch(true, true, true);
+                    DocValuesPrefetch.setNodeBytes(cache.blockSize());
+                    DocValuesPrefetch.setRunAheadDocs(request.paramAsInt("docs", 1 << 17));
+                    DocValuesPrefetch.setRunAhead(true);
+                    DocValuesPrefetch.setEnabled(true);
+                }
                 default -> throw new IllegalArgumentException(
-                    "[mode] must be off, runend, vec, vecdec, pf, pfs, pfl or pfsl, got [" + mode + "]"
+                    "[mode] must be off, runend, vec, vecdec, pf, pfs, pfl, pfsl or pfw, got [" + mode + "]"
                 );
             }
         } else if (path.endsWith("/disjunction_prefetch")) {
@@ -179,6 +189,10 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("agg_prefetch_shared_hits", DocValuesPrefetch.sharedHits());
             builder.field("agg_prefetch_shared_misses", DocValuesPrefetch.sharedMisses());
             builder.field("agg_prefetch_shared_searches", DocValuesPrefetch.sharedSearches());
+            builder.field("agg_prefetch_run_ahead", DocValuesPrefetch.isRunAhead());
+            builder.field("agg_prefetch_run_ahead_docs", DocValuesPrefetch.runAheadDocs());
+            builder.field("agg_prefetch_run_ahead_leaves", DocValuesPrefetch.runAheadLeaves());
+            builder.field("agg_prefetch_run_ahead_replays", DocValuesPrefetch.runAheadReplays());
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {

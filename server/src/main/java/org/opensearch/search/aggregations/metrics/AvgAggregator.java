@@ -158,7 +158,7 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue implements Star
             ? null
             : DocValuesPrefetch.planner(
                 DocValuesPrefetch.of(BatchCollection.exactLongs(valuesSource, ctx)),
-                DocValuesPrefetch.queryMatches(context, ctx),
+                DocValuesPrefetch.matches(context, ctx),
                 DocValuesPrefetch.ALL_MATCHES
             );
 

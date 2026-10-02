@@ -47,6 +47,7 @@ import org.opensearch.common.util.LongHash;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.BatchCollection;
 import org.opensearch.search.aggregations.BucketCollector;
+import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.LeafBucketCollector;
 import org.opensearch.search.aggregations.MultiBucketCollector;
@@ -217,7 +218,14 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
         for (Entry entry : entries) {
             assert entry.docDeltas.size() > 0 : "segment should have at least one document to replay, got 0";
             try {
-                final LeafBucketCollector leafCollector = collector.getLeafCollector(entry.context);
+                // run-ahead doc-values prefetch: planners of the replayed collectors see the replayed docs ahead
+                final DocValuesPrefetch.Replay replay = needsScores ? null : DocValuesPrefetch.beginReplay();
+                final LeafBucketCollector leafCollector;
+                try {
+                    leafCollector = collector.getLeafCollector(entry.context);
+                } finally {
+                    DocValuesPrefetch.clear(replay);
+                }
                 DocIdSetIterator scoreIt = null;
                 if (needsScores) {
                     Scorer scorer = weight.scorer(entry.context);
@@ -229,7 +237,13 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
                 final PackedLongValues.Iterator docDeltaIterator = entry.docDeltas.iterator();
                 final PackedLongValues.Iterator buckets = entry.buckets.iterator();
                 if (needsScores == false && BatchCollection.isEnabled() && maxBucket < MAX_REBASE_TABLE) {
-                    replayBatch(leafCollector, entry.docDeltas.size(), docDeltaIterator, buckets);
+                    replayBatch(
+                        leafCollector,
+                        entry.docDeltas.size(),
+                        docDeltaIterator,
+                        buckets,
+                        replay != null && replay.hasPlanners() ? replay : null
+                    );
                     continue;
                 }
                 int doc = 0;
@@ -268,7 +282,8 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
         LeafBucketCollector leafCollector,
         long size,
         PackedLongValues.Iterator docDeltaIterator,
-        PackedLongValues.Iterator buckets
+        PackedLongValues.Iterator buckets,
+        DocValuesPrefetch.Replay replay
     ) throws IOException {
         if (rebaseTable == null) {
             rebaseTable = new long[Math.toIntExact(maxBucket + 1)];
@@ -277,6 +292,18 @@ public class BestBucketsDeferringCollector extends DeferringBucketCollector {
             }
         }
         final long[] rebase = rebaseTable;
+        if (replay != null) {
+            int doc = 0;
+            for (long i = 0; i < size; ++i) {
+                doc += (int) docDeltaIterator.next();
+                final long rebasedBucket = rebase[(int) buckets.next()];
+                if (rebasedBucket != -1) {
+                    replay.add(doc, rebasedBucket, leafCollector);
+                }
+            }
+            replay.finish(leafCollector);
+            return;
+        }
         final int[] docs = new int[BatchCollection.CHUNK];
         final long[] rebased = new long[BatchCollection.CHUNK];
         int doc = 0;

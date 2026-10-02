@@ -272,7 +272,7 @@ public class GlobalOrdinalsStringTermsAggregator extends AbstractStringTermsAggr
                 final DocValuesPrefetch.Planner planner = DocValuesPrefetch.isEnabled()
                     ? DocValuesPrefetch.planner(
                         DocValuesPrefetch.of(singleValues),
-                        DocValuesPrefetch.queryMatches(context, ctx),
+                        DocValuesPrefetch.matches(context, ctx),
                         DocValuesPrefetch.ALL_MATCHES
                     )
                     : null;

@@ -115,11 +115,11 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
      * bucket (see {@link #advanceSkipper}), so the planner checks the same condition on its own skipper. Both skippers
      * are prefetched whole.
      *
-     * @param matches the query's matches, a new iterator that is only advanced
+     * @param matches the query's matches (null: no prefetch)
      * @param planSkipper a second skipper of the field, used only for planning
      */
-    public void prefetch(DocIdSetIterator matches, DocValuesSkipper planSkipper, Rounding.Prepared rounding) throws IOException {
-        if (planSkipper == null) {
+    public void prefetch(DocValuesPrefetch.Matches matches, DocValuesSkipper planSkipper, Rounding.Prepared rounding) throws IOException {
+        if (planSkipper == null || matches == null) {
             return;
         }
         skipper.prefetch();
@@ -127,8 +127,8 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
         planner = DocValuesPrefetch.planner(DocValuesPrefetch.of(values), matches, (target, it) -> {
             int t = target;
             while (true) {
-                final int m = DocValuesPrefetch.advanceTo(t, it);
-                if (m == DocIdSetIterator.NO_MORE_DOCS) {
+                final int m = it.next(t);
+                if (m == DocIdSetIterator.NO_MORE_DOCS || m == DocValuesPrefetch.Matches.UNKNOWN) {
                     return m;
                 }
                 if (m > planSkipper.maxDocID(0)) {

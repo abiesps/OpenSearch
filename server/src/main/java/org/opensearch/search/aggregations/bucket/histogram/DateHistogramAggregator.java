@@ -245,7 +245,7 @@ class DateHistogramAggregator extends BucketsAggregator implements SizedBucketAg
             );
             if (DocValuesPrefetch.isEnabled()) {
                 collector.prefetch(
-                    DocValuesPrefetch.queryMatches(context, ctx),
+                    DocValuesPrefetch.matches(context, ctx),
                     ctx.reader().getDocValuesSkipper(this.fieldName),
                     preparedRounding
                 );

@@ -75,6 +75,7 @@ public class BatchCollectionTests extends AggregatorTestCase {
         DocValuesPrefetch.setEnabled(false);
         DocValuesPrefetch.setShareLookahead(false);
         DocValuesPrefetch.setLeapfrogLookahead(false);
+        DocValuesPrefetch.setRunAhead(false);
         super.tearDown();
     }
 
@@ -86,7 +87,10 @@ public class BatchCollectionTests extends AggregatorTestCase {
     private Directory index(int numDocs, boolean allHaveV, long maxV) throws IOException {
         Directory dir = newDirectory();
         // the default codec, so doc values use Lucene90 (node planning and bulk reads)
-        IndexWriterConfig config = newIndexWriterConfig().setCodec(TestUtil.getDefaultCodec());
+        IndexWriterConfig config = newIndexWriterConfig().setCodec(TestUtil.getDefaultCodec())
+            // merges adjacent segments only, so the merged segment keeps ts in doc ID order (a random merge policy can
+            // merge segments out of order, and then no skipper interval falls in one bucket)
+            .setMergePolicy(newLogMergePolicy());
         try (IndexWriter w = new IndexWriter(dir, config)) {
             long ts = 1_700_000_000_000L;
             for (int i = 0; i < numDocs; i++) {
@@ -126,6 +130,8 @@ public class BatchCollectionTests extends AggregatorTestCase {
         DocValuesPrefetch.setNodeBytes(1L << randomIntBetween(10, 17));
         DocValuesPrefetch.setShareLookahead(randomBoolean());
         DocValuesPrefetch.setLeapfrogLookahead(randomBoolean());
+        DocValuesPrefetch.setRunAhead(randomBoolean());
+        DocValuesPrefetch.setRunAheadDocs(randomFrom(4096, 8192, 65_536, 1 << 17));
         try {
             return searchAndReduce(searcher, query, agg, false, tsType, vType, svcType);
         } finally {
@@ -214,6 +220,11 @@ public class BatchCollectionTests extends AggregatorTestCase {
         if (prefetch && expectPlanners) {
             assertTrue("planners", DocValuesPrefetch.planners() > 0);
             assertTrue("requests", DocValuesPrefetch.requests() > 0);
+            if (DocValuesPrefetch.isRunAhead()) {
+                // planners took their matches from the run-ahead buffer (or the replay ring), not a second scorer
+                assertTrue("run-ahead used", DocValuesPrefetch.runAheadLeaves() + DocValuesPrefetch.runAheadReplays() > 0);
+                assertEquals("no look-ahead scorer", 0, DocValuesPrefetch.lookaheads());
+            }
         } else if (prefetch == false) {
             assertEquals(0, DocValuesPrefetch.planners());
         }

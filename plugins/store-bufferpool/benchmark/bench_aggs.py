@@ -72,8 +72,10 @@ WINDOWS = {"7d": (0, SPAN_MS, "1h"), "1d": (3 * 86_400_000, 4 * 86_400_000, "10m
 #   pfs     pf + look-ahead clauses other than terms evaluated once per segment and shared by the planners
 #   pfl     pf + look-ahead built as a leapfrog conjunction (bit-set clauses advanced, not tested doc by doc)
 #   pfsl    pf + both
+#   pfw     vecdec + doc-values prefetch proven by the main scorer's own matches: a run-ahead buffer between the scorer
+#           and the aggregation collectors (131,072 doc IDs; no second scorer)
 VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec", "vecdec"), ("pf", "pf"), ("pfs", "pfs"),
-                ("pfl", "pfl"), ("pfsl", "pfsl")]
+                ("pfl", "pfl"), ("pfsl", "pfsl"), ("pfw", "pfw")]
 VARIANTS = VARIANTS_ALL[:1]
 DEFAULT_QUERIES = [
     "dh:s50:7d", "dh:s10:7d", "dh:s1:7d", "dh:s10:1d",
