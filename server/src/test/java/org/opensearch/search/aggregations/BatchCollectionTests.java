@@ -17,16 +17,31 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.BulkScorer;
+import org.apache.lucene.search.CheckedIntConsumer;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.DocIdStream;
+import org.apache.lucene.search.FilterWeight;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.QueryVisitor;
+import org.apache.lucene.search.Scorable;
+import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.Weight;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.tests.util.TestUtil;
+import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.index.mapper.DateFieldMapper;
 import org.opensearch.index.mapper.KeywordFieldMapper;
 import org.opensearch.index.mapper.MappedFieldType;
@@ -35,6 +50,7 @@ import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregat
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramInterval;
 import org.opensearch.search.aggregations.bucket.histogram.Histogram;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
+import org.opensearch.search.aggregations.bucket.histogram.LongBounds;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 import org.opensearch.search.aggregations.bucket.terms.Terms;
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
@@ -43,8 +59,10 @@ import org.opensearch.search.aggregations.metrics.InternalAvg;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Random;
 
 /**
  * Aggregation results must not depend on {@link BatchCollection}: the same searches run with it off and on.
@@ -62,6 +80,8 @@ public class BatchCollectionTests extends AggregatorTestCase {
 
     /** Whether {@link #run} turns doc-values prefetch on together with batch collection. */
     private boolean prefetch;
+    /** Makes {@link #run} use the run-ahead buffer. */
+    private boolean forceRunAhead;
 
     @Override
     public void setUp() throws Exception {
@@ -85,6 +105,14 @@ public class BatchCollectionTests extends AggregatorTestCase {
      * dense conjunction scorer and collects 4,096-doc windows as DocIdStreams.
      */
     private Directory index(int numDocs, boolean allHaveV, long maxV) throws IOException {
+        return index(numDocs, allHaveV, maxV, 1);
+    }
+
+    /**
+     * With {@code runs > 1}, doc IDs hold {@code runs} time runs in a shuffled order (as segment merges leave a log
+     * index): ts increases within a run and jumps between runs, so some skipper intervals span two runs.
+     */
+    private Directory index(int numDocs, boolean allHaveV, long maxV, int runs) throws IOException {
         Directory dir = newDirectory();
         // the default codec, so doc values use Lucene90 (node planning and bulk reads)
         IndexWriterConfig config = newIndexWriterConfig().setCodec(TestUtil.getDefaultCodec())
@@ -93,8 +121,18 @@ public class BatchCollectionTests extends AggregatorTestCase {
             .setMergePolicy(newLogMergePolicy());
         try (IndexWriter w = new IndexWriter(dir, config)) {
             long ts = 1_700_000_000_000L;
+            final List<Integer> shuffled = new ArrayList<>();
+            for (int r = 0; r < runs; r++) {
+                shuffled.add(r);
+            }
+            Collections.shuffle(shuffled, random());
+            final int runDocs = (numDocs + runs - 1) / runs;
             for (int i = 0; i < numDocs; i++) {
                 Document doc = new Document();
+                if (runs > 1 && i % runDocs == 0) {
+                    // each run covers its own stretch of time, about 100 ms per doc
+                    ts = 1_700_000_000_000L + (long) shuffled.get(i / runDocs) * runDocs * 120L;
+                }
                 // about 100 ms apart: a 4,096-doc skipper interval spans about 7 minutes
                 ts += randomIntBetween(0, 200);
                 doc.add(SortedNumericDocValuesField.indexedField(TS, ts));
@@ -130,7 +168,7 @@ public class BatchCollectionTests extends AggregatorTestCase {
         DocValuesPrefetch.setNodeBytes(1L << randomIntBetween(10, 17));
         DocValuesPrefetch.setShareLookahead(randomBoolean());
         DocValuesPrefetch.setLeapfrogLookahead(randomBoolean());
-        DocValuesPrefetch.setRunAhead(randomBoolean());
+        DocValuesPrefetch.setRunAhead(forceRunAhead || randomBoolean());
         DocValuesPrefetch.setRunAheadDocs(randomFrom(4096, 8192, 65_536, 1 << 17));
         try {
             return searchAndReduce(searcher, query, agg, false, tsType, vType, svcType);
@@ -228,6 +266,238 @@ public class BatchCollectionTests extends AggregatorTestCase {
         } else if (prefetch == false) {
             assertEquals(0, DocValuesPrefetch.planners());
         }
+    }
+
+    /**
+     * Shuffled time runs (the benchmark corpus layout): date_histogram with and without a sub-aggregation, with the
+     * run-ahead buffer, against stock.
+     */
+    public void testShuffledTimeRuns() throws IOException {
+        prefetch = true;
+        int numDocs = randomIntBetween(150_000, 400_000);
+        try (Directory dir = index(numDocs, true, 100_000, randomIntBetween(2, 7)); IndexReader reader = DirectoryReader.open(dir)) {
+            IndexSearcher searcher = new IndexSearcher(reader);
+            searcher.setQueryCache(null);
+            for (Query query : new Query[] { denseConjunction(), new TermQuery(new Term(TAG, "a")), new MatchAllDocsQuery() }) {
+                for (boolean withSub : new boolean[] { false, true }) {
+                    DateHistogramAggregationBuilder histogram = new DateHistogramAggregationBuilder("h").field(TS)
+                        .fixedInterval(new DateHistogramInterval(randomFrom("1m", "10m", "30m")));
+                    if (withSub) {
+                        histogram.subAggregation(new AvgAggregationBuilder("avg").field(V));
+                    }
+                    InternalDateHistogram stock = run(searcher, query, histogram, false);
+                    DocValuesPrefetch.resetCounters();
+                    forceRunAhead = true;
+                    InternalDateHistogram batch;
+                    try {
+                        batch = run(searcher, query, histogram, true);
+                    } finally {
+                        forceRunAhead = false;
+                    }
+                    assertTrue("run-ahead used", DocValuesPrefetch.runAheadLeaves() > 0);
+                    assertEquals(query + " sub=" + withSub, countsResult(stock), countsResult(batch));
+                }
+            }
+        }
+    }
+
+    /**
+     * date_histogram's skip-list collector must not trust {@link DocIdStream#mayHaveRemaining()}: Lucene's window streams
+     * are backed by 4,096-bit sets and report remaining docs up to the end of the bit set, past the end of a shorter
+     * window, and the next window may start there. Checked against the same histogram without the skip list
+     * (hard bounds turn it off), with stock collection and with batch collection plus run-ahead.
+     */
+    public void testPaddedWindowStreams() throws IOException {
+        int numDocs = randomIntBetween(150_000, 300_000);
+        try (Directory dir = index(numDocs, true, 100_000, randomIntBetween(2, 7)); IndexReader reader = DirectoryReader.open(dir)) {
+            IndexSearcher searcher = new IndexSearcher(reader);
+            searcher.setQueryCache(null);
+            for (Query inner : new Query[] { new MatchAllDocsQuery(), new TermQuery(new Term(TAG, "a")) }) {
+                Query query = new PaddedWindowsQuery(inner, randomLong());
+                String interval = randomFrom("1m", "10m", "30m");
+                DateHistogramAggregationBuilder skipList = new DateHistogramAggregationBuilder("h").field(TS)
+                    .fixedInterval(new DateHistogramInterval(interval));
+                DateHistogramAggregationBuilder noSkipList = new DateHistogramAggregationBuilder("h").field(TS)
+                    .fixedInterval(new DateHistogramInterval(interval))
+                    .hardBounds(new LongBounds(0L, Long.MAX_VALUE));
+                prefetch = false;
+                List<Object> expected = countsResult(run(searcher, query, noSkipList, false));
+                assertEquals(inner + " stock", expected, countsResult(run(searcher, query, skipList, false)));
+                assertEquals(inner + " batch", expected, countsResult(run(searcher, query, skipList, true)));
+                prefetch = true;
+                forceRunAhead = true;
+                try {
+                    assertEquals(inner + " run-ahead", expected, countsResult(run(searcher, query, skipList, true)));
+                } finally {
+                    forceRunAhead = false;
+                }
+            }
+        }
+    }
+
+    /** Collects the matches of {@code in} as window streams of random length whose bit sets are 4,096 bits long. */
+    private static final class PaddedWindowsQuery extends Query {
+        private final Query in;
+        private final long seed;
+
+        PaddedWindowsQuery(Query in, long seed) {
+            this.in = in;
+            this.seed = seed;
+        }
+
+        @Override
+        public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
+            Weight weight = in.createWeight(searcher, scoreMode, boost);
+            return new FilterWeight(this, weight) {
+                @Override
+                public ScorerSupplier scorerSupplier(LeafReaderContext ctx) throws IOException {
+                    ScorerSupplier supplier = weight.scorerSupplier(ctx);
+                    if (supplier == null) {
+                        return null;
+                    }
+                    return new ScorerSupplier() {
+                        @Override
+                        public Scorer get(long leadCost) throws IOException {
+                            return supplier.get(leadCost);
+                        }
+
+                        @Override
+                        public BulkScorer bulkScorer() throws IOException {
+                            return padded(supplier.get(Long.MAX_VALUE).iterator(), ctx.reader().maxDoc(), new Random(seed));
+                        }
+
+                        @Override
+                        public long cost() {
+                            return supplier.cost();
+                        }
+                    };
+                }
+
+                @Override
+                public boolean isCacheable(LeafReaderContext ctx) {
+                    return false;
+                }
+            };
+        }
+
+        private static BulkScorer padded(DocIdSetIterator it, int maxDoc, Random random) {
+            return new BulkScorer() {
+                @Override
+                public int score(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
+                    collector.setScorer(new Scorable() {
+                        @Override
+                        public float score() {
+                            return 1f;
+                        }
+                    });
+                    max = Math.min(max, maxDoc);
+                    int doc = it.docID() < min ? it.advance(min) : it.docID();
+                    FixedBitSet bits = new FixedBitSet(4096);
+                    while (doc < max) {
+                        int base = doc;
+                        int end = Math.min(max, base + 1 + random.nextInt(4096));
+                        bits.clear();
+                        for (; doc < end; doc = it.nextDoc()) {
+                            if (acceptDocs == null || acceptDocs.get(doc)) {
+                                bits.set(doc - base);
+                            }
+                        }
+                        collector.collect(new PaddedStream(bits, base));
+                    }
+                    return doc;
+                }
+
+                @Override
+                public long cost() {
+                    return it.cost();
+                }
+            };
+        }
+
+        @Override
+        public String toString(String field) {
+            return "padded(" + in.toString(field) + ")";
+        }
+
+        @Override
+        public void visit(QueryVisitor visitor) {
+            in.visit(visitor);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof PaddedWindowsQuery p && p.in.equals(in) && p.seed == seed;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(in, seed);
+        }
+    }
+
+    /** A window's matches over a 4,096-bit set, reporting remaining docs up to the end of the bit set. */
+    private static final class PaddedStream extends DocIdStream {
+        private final FixedBitSet bits;
+        private final int base;
+        private int upTo;
+
+        PaddedStream(FixedBitSet bits, int base) {
+            this.bits = bits;
+            this.base = base;
+            this.upTo = base;
+        }
+
+        private int max() {
+            return base + bits.length();
+        }
+
+        @Override
+        public boolean mayHaveRemaining() {
+            return upTo < max();
+        }
+
+        @Override
+        public void forEach(int upTo, CheckedIntConsumer<IOException> consumer) throws IOException {
+            upTo = Math.min(upTo, max());
+            if (upTo > this.upTo) {
+                bits.forEach(this.upTo - base, upTo - base, base, consumer);
+                this.upTo = upTo;
+            }
+        }
+
+        @Override
+        public int count(int upTo) {
+            upTo = Math.min(upTo, max());
+            if (upTo > this.upTo) {
+                int c = bits.cardinality(this.upTo - base, upTo - base);
+                this.upTo = upTo;
+                return c;
+            }
+            return 0;
+        }
+
+        @Override
+        public int intoArray(int upTo, int[] array) {
+            upTo = Math.min(upTo, max());
+            if (upTo > this.upTo) {
+                int c = bits.intoArray(this.upTo - base, upTo - base, base, array);
+                if (c == array.length) {
+                    upTo = array[array.length - 1] + 1;
+                }
+                this.upTo = upTo;
+                return c;
+            }
+            return 0;
+        }
+    }
+
+    private static List<Object> countsResult(InternalDateHistogram histogram) {
+        List<Object> out = new ArrayList<>();
+        for (Histogram.Bucket b : histogram.getBuckets()) {
+            InternalAvg avg = b.getAggregations().get("avg");
+            out.add(List.of(b.getKey(), b.getDocCount(), avg == null ? "" : avg.getValue()));
+        }
+        return out;
     }
 
     public void testAllDocsHaveValues() throws IOException {

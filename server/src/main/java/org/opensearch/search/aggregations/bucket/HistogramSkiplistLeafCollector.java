@@ -272,13 +272,19 @@ public class HistogramSkiplistLeafCollector extends LeafBucketCollector {
                 stream.forEach(upToExclusive, doc -> collect(doc, owningBucketOrd));
             }
 
-            if (stream.mayHaveRemaining()) {
-                advanceSkipper(upToExclusive, owningBucketOrd);
-            } else {
+            // Position the skipper at the stream's next doc, not at upToExclusive: a stream may report remaining docs it
+            // does not have (a window bit set longer than its window), and the next stream may then start below
+            // upToExclusive. Advancing the skipper to upToExclusive would collect those docs with the state of a later
+            // skipper interval, in that interval's bucket.
+            if (stream.intoArray(nextDoc) == 0) {
                 break;
             }
+            collect(nextDoc[0], owningBucketOrd);
         }
     }
+
+    /** The next doc of a stream, see {@link #collect(DocIdStream, long)}. */
+    private final int[] nextDoc = new int[1];
 
     /**
      * Call back for auto date histogram
