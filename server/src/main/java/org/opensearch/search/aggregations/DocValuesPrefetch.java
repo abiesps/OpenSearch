@@ -1049,6 +1049,25 @@ public final class DocValuesPrefetch {
             deliver(arrived);
         }
 
+        /**
+         * Writes the doc IDs of the set bits of a word with at least 32 set bits, without a branch per bit (as Lucene's
+         * FixedBitSet does); {@code docs} must have room for one more than the word's bit count.
+         */
+        private static int denseWordToArray(long word, int base, int[] docs, int offset) {
+            final int lWord = (int) word;
+            final int hWord = (int) (word >>> 32);
+            final int offset32 = offset + Integer.bitCount(lWord);
+            int hOffset = offset32;
+            for (int i = 0; i < 32; i++) {
+                docs[offset] = base + i;
+                docs[hOffset] = base + i + 32;
+                offset += (lWord >>> i) & 1;
+                hOffset += (hWord >>> i) & 1;
+            }
+            docs[offset32] = base + 32 + Integer.numberOfTrailingZeros(hWord);
+            return hOffset;
+        }
+
         /** The buffered matches in [from, to), as a stream for the collectors. */
         private final class BufferStream extends DocIdStream {
             private int upTo, max;
@@ -1085,36 +1104,52 @@ public final class DocValuesPrefetch {
 
             @Override
             public int intoArray(int upTo, int[] array) {
+                upTo = Math.min(upTo, max);
                 if (upTo <= this.upTo) {
                     return 0;
                 }
-                upTo = Math.min(upTo, max);
-                // the buffer can be sparse (a selective query): skip empty words in a tight loop instead of decoding
-                // every word of the range
+                // the buffer can be sparse (a selective query): skip empty words in a tight loop, and decode dense words
+                // without a branch per bit
                 final int end = upTo - base;
                 final int lastWord = (end - 1) >> 6;
                 int wordIndex = (this.upTo - base) >> 6;
                 long word = words[wordIndex] & (-1L << (this.upTo - base));
                 int count = 0;
                 while (true) {
-                    while (word == 0) {
-                        if (++wordIndex > lastWord) {
-                            this.upTo = upTo;
+                    if (wordIndex == lastWord && (end & 63) != 0) {
+                        word &= (1L << end) - 1;
+                    }
+                    if (word != 0) {
+                        final int wordBase = base + (wordIndex << 6);
+                        final int bitCount = Long.bitCount(word);
+                        if (array.length - count > bitCount) {
+                            if (bitCount >= 32) {
+                                count = denseWordToArray(word, wordBase, array, count);
+                            } else {
+                                do {
+                                    array[count++] = wordBase + Long.numberOfTrailingZeros(word);
+                                    word &= word - 1;
+                                } while (word != 0);
+                            }
+                        } else {
+                            // the array fills in this word
+                            while (count < array.length) {
+                                array[count++] = wordBase + Long.numberOfTrailingZeros(word);
+                                word &= word - 1;
+                            }
+                            if (word != 0) {
+                                this.upTo = wordBase + Long.numberOfTrailingZeros(word);
+                            } else {
+                                this.upTo = wordIndex == lastWord ? upTo : wordBase + 64;
+                            }
                             return count;
                         }
-                        word = words[wordIndex];
                     }
-                    final int bit = (wordIndex << 6) + Long.numberOfTrailingZeros(word);
-                    if (bit >= end) {
+                    if (++wordIndex > lastWord) {
                         this.upTo = upTo;
                         return count;
                     }
-                    if (count == array.length) {
-                        this.upTo = base + bit;
-                        return count;
-                    }
-                    array[count++] = base + bit;
-                    word &= word - 1;
+                    word = words[wordIndex];
                 }
             }
         }
