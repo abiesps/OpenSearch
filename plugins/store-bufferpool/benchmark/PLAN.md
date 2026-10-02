@@ -155,7 +155,7 @@ result as an upper bound.
 | T4 | `.doc` prefetch of the clauses in `MaxScoreBulkScorer`, node-aligned (Phase 3b planner), eligible windows only | measured on top of T3 |
 | T5 | Storage (later): impacts in their own small file; skip index over impacts | only if T3/T4 show `.nav` reads on the critical path |
 
-## Phase C: aggregations on doc values (C0-C2, C3a, C3c first version done)
+## Phase C: aggregations on doc values (C0-C2, C3a, C3c, C3d done)
 
 Decisions (user):
 - **Vectorization first.** Batch and vectorize collection, measure it, and only then build doc-values prefetch.
@@ -361,6 +361,103 @@ Findings:
   planners' first advance: with the range as a bit set, Lucene's `BitSetConjunctionDISI` walks the `sel` postings doc by
   doc from doc 0 to the start of the 1-day range. The main query avoids both.
 - Next for C3c: one shared look-ahead per segment, and a look-ahead that leapfrogs when a clause is a bit set.
+### C3d: cheaper look-ahead (OpenSearch `946b6994555`, leak fix `049e9aee851`; fork `ab8781e6f8`)
+Two fixes, each behind its own switch, so each one is measured alone and together
+(`POST /_bufferpool/agg_batch?mode=pf|pfs|pfl|pfsl`; all include vecdec and pf):
+- **shared (`pfs`)**: the planners of one search use a private `IndexSearcher` whose query cache keeps each non-term,
+  non-Boolean clause's docs per segment. The points range intersection runs once per search for all planners instead of
+  once per planner. A single shared iterator was rejected: planners advance to targets out of order, so one iterator
+  would lose exactness. Materializing all matches was rejected: too much CPU on 7-day queries.
+- **leapfrog (`pfl`)**: for a pure FILTER/MUST conjunction, build each clause's scorer with `get(Long.MAX_VALUE)` (its
+  index structure, never a doc-values scan) and hide `BitSetIterator` behind `FilterDocIdSetIterator`, so
+  `ConjunctionUtils.intersectIterators` leapfrogs with `advance` instead of `BitSetConjunctionDISI` walking the lead
+  postings doc by doc. Falls back to the whole-query scorer when a clause is two-phase.
+- Planners per query: `dh` 1 (timestamp), `dh_avg` 2 (timestamp, latency), `terms` 2 (service, latency). So shared can
+  only help `dh_avg` and `terms`.
+- Tests: `DocValuesPrefetchTests` (every share x leapfrog combination returns exactly the matches of the query under
+  random out-of-order advances; release leaves nothing behind), `BatchCollectionTests` randomizes both switches
+  (10 iterations each pass).
+Leak found and fixed (`049e9aee851`): the first version used one `LRUQueryCache` per search. `LRUQueryCache` registers a
+closed listener on each segment reader, so every per-search cache stayed reachable from the reader; the node ran out of
+its 4 GB heap during JFR profiling (class histogram after 142 searches: 145 retained caches). The fix is a small
+per-search cache with no reader listener, dropped when the search context closes (`SearchContext.addReleasable`).
+Gauge `agg_prefetch_shared_searches` is 0 after the full benchmark; the histogram shows no retained cache. Latency
+with the fix is the same as before it.
+Validation (`validate/dv_trace.py --mode pfsl --compare trace_vecdec2.json`, cold, all 11 queries): prefetched but
+never read: 0; no missing blocks; aggregation results equal in every mode. Extra loads vs vecdec: one `.doc` block in
+the 1-day queries (as with pf) and one `.kdd` block in `terms:s10:7d` and `terms:s1:7d` (the look-ahead's points scorer).
+Results (5 runs, `aggs_20261001_174255.json`, load average 5-6; p50 ms). A first run on the leaky build
+(`aggs_20261001_171401.json`) gave the same relative deltas within a few percent; absolute times differ by up to 15%
+between the runs because of machine load, so compare modes only within one run.
+| Query | Mode | vecdec | pf | pfs | pfl | pfsl | IOs (vecdec / pfsl) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| dh:s50:7d | cold | 1,444 | 824 | 829 | 817 | 830 | 251 / 251 |
+| dh:s10:7d | cold | 1,355 | 766 | 754 | 764 | 769 | 237 / 237 |
+| dh:s1:7d | cold | 1,216 | 664 | 662 | 663 | 665 | 220 / 220 |
+| dh:s10:1d | cold | 1,228 | 1,025 | 1,044 | 1,007 | 1,003 | 221 / 222 |
+| dh_avg:s50:7d | cold | 3,634 | 1,481 | 1,471 | 1,464 | 1,485 | 605 / 605 |
+| dh_avg:s10:7d | cold | 3,287 | 1,315 | 1,313 | 1,322 | 1,321 | 591 / 591 |
+| dh_avg:s10:1d | cold | 1,571 | 1,183 | 1,158 | 1,130 | 1,124 | 274 / 275 |
+| terms:s50:7d | cold | 4,466 | 2,228 | 2,240 | 2,174 | 2,254 | 625 / 625 |
+| terms:s10:7d | cold | 3,684 | 1,939 | 1,970 | 1,938 | 1,940 | 613 / 614 |
+| terms:s1:7d | cold | 3,398 | 1,908 | 1,933 | 1,935 | 1,919 | 597 / 598 |
+| terms:s10:1d | cold | 1,317 | 1,161 | 1,142 | 1,100 | 1,088 | 224 / 225 |
+| dh:s50:7d | warm | 9 | 9 | 10 | 10 | 10 | 0 |
+| dh:s10:7d | warm | 10 | 12 | 13 | 12 | 13 | 0 |
+| dh:s1:7d | warm | 4 | 5 | 5 | 6 | 6 | 0 |
+| dh:s10:1d | warm | 16 | 37 | 36 | 28 | 29 | 0 |
+| dh_avg:s50:7d | warm | 54 | 57 | 56 | 56 | 56 | 0 |
+| dh_avg:s10:7d | warm | 24 | 26 | 26 | 26 | 26 | 0 |
+| dh_avg:s10:1d | warm | 19 | 62 | 49 | 48 | 35 | 0 |
+| terms:s50:7d | warm | 209 | 210 | 210 | 212 | 213 | 0 |
+| terms:s10:7d | warm | 55 | 56 | 56 | 56 | 56 | 0 |
+| terms:s1:7d | warm | 10 | 11 | 11 | 11 | 11 | 0 |
+| terms:s10:1d | warm | 21 | 62 | 50 | 47 | 34 | 0 |
+Attribution: each change against the mode without it (median ratio; `*` = bootstrap 95% CI excludes 0; warm times
+below 15 ms have 1 ms resolution, so +10% to +25% there is one tick and not significant):
+| Query | Mode | pf vs vecdec | shared alone (pfs/pf) | leapfrog alone (pfl/pf) | shared after leapfrog (pfsl/pfl) | leapfrog after shared (pfsl/pfs) | both (pfsl/pf) | pfsl vs vecdec |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| dh:s10:1d | warm | +131%* | -3% | -24%* | +4% | -19%* | -22%* | +81%* |
+| dh_avg:s10:1d | warm | +226%* | -21%* | -23%* | -27%* | -29%* | -44%* | +84%* |
+| terms:s10:1d | warm | +195%* | -19%* | -24%* | -28%* | -32%* | -45%* | +62%* |
+| dh:s10:1d | cold | -17%* | +2% | -2% | -0% | -4%* | -2%* | -18%* |
+| dh_avg:s10:1d | cold | -25%* | -2% | -4%* | -1% | -3%* | -5%* | -28%* |
+| terms:s10:1d | cold | -12%* | -2% | -5%* | -1% | -5%* | -6%* | -17%* |
+| 7-day queries (8) | cold | -43% to -60%* | -2% to +2% | -2% to +1% | -0% to +4% | -2% to +2% | -0% to +1% | -43% to -60%* |
+| 7-day queries (8) | warm | +0% to +25% | -2% to +11% | -2% to +20% | 0% to +8% | 0% to +20% | -2% to +20% | +2% to +50% (from pf itself; largest dh:s10:7d +3 ms*) |
+Where the time goes (JFR, warm, 8 s loop per mode; search-thread samples split by stack: `build` = under
+`DocValuesPrefetch.queryMatches`, `advance` = under `Planner.start/advance`, `main` = the rest; ms = share x median;
+`validate/jfr_profile.py` + `validate/jfr_split.py`, files in `results/c3d/`; ratios from `validate/attribution.py`):
+| Query | Mode | median | main | build | advance | samples in points code |
+|---|---|---:|---:|---:|---:|---:|
+| dh:s10:1d | vecdec | 19.7 | 19.7 | 0 | 0 | 80% |
+| dh:s10:1d | pf | 39.3 | 17.0 | 13.8 | 8.5 | 70% |
+| dh:s10:1d | pfs | 38.3 | 16.4 | 13.7 | 8.2 | 70% |
+| dh:s10:1d | pfl | 32.2 | 17.4 | 14.3 | 0.5 | 89% |
+| dh:s10:1d | pfsl | 31.6 | 17.0 | 14.1 | 0.5 | 88% |
+| dh_avg:s10:1d | vecdec | 21.0 | 21.0 | 0 | 0 | 70% |
+| dh_avg:s10:1d | pf | 63.2 | 19.7 | 27.1 | 16.4 | 64% |
+| dh_avg:s10:1d | pfs | 50.4 | 19.7 | 14.1 | 16.6 | 54% |
+| dh_avg:s10:1d | pfl | 47.7 | 19.5 | 27.4 | 0.8 | 86% |
+| dh_avg:s10:1d | pfsl | 35.3 | 20.3 | 14.3 | 0.7 | 79% |
+| terms:s10:1d | vecdec | 23.6 | 23.6 | 0 | 0 | 60% |
+| terms:s10:1d | pf | 65.2 | 22.3 | 26.7 | 16.2 | 62% |
+| terms:s10:1d | pfs | 52.2 | 22.3 | 13.7 | 16.4 | 51% |
+| terms:s10:1d | pfl | 50.7 | 22.9 | 27.2 | 0.7 | 81% |
+| terms:s10:1d | pfsl | 37.2 | 22.5 | 13.9 | 0.8 | 73% |
+Findings:
+- **shared** removes one points intersection per extra planner: build 27 ms -> 14 ms on the 2-planner queries
+  (-19% to -21% warm), nothing on `dh` (1 planner). Its effect does not depend on leapfrog (-21% alone, -27% after).
+- **leapfrog** removes the doc-by-doc lead walk: advance 8-16 ms -> 0.5-0.8 ms on every 1-day query (-23% to -24%
+  warm alone, -19% to -32% combined). It also gives the small cold gain on 1-day queries (-2% to -5%): the planner
+  reaches the range sooner, so the first prefetch is issued earlier.
+- The two are independent and add up: both = -22% (dh) to -45% (dh_avg, terms) vs pf.
+- 7-day queries: no change from either fix, cold or warm (the walk and the intersect are small next to collection).
+- What is left on warm 1-day: +12 to +16 ms vs vecdec = exactly one points intersection (build, 14 ms) that the
+  look-ahead runs in addition to the main query's own. The main query does not use the look-ahead's cache. Next fix
+  candidate: run the range intersection once per search for the main query and the look-ahead (for example, the main
+  query reads the same per-search clause cache, or the look-ahead reuses the main scorer's doc set). Expected: warm
+  1-day within about 1 ms of vecdec.
 
 ## Parked
 
