@@ -16,6 +16,12 @@ Synthetic log corpus, reproducible from the seed (dataset logs_v1). One segment,
   status      keyword: 200 85%, 201 5%, 404 6%, 500 3%, 503 1%
   latency     long, log-normal milliseconds (median 50, sigma 1), at most 60,000
   sel         keyword without doc values, query terms only: s50 / s10 / s1 in 50% / 10% / 1% of docs (independent)
+Dataset logs_v3 is the same corpus (same values per doc) plus the twin field
+  @timestamp_split  date with the same value as @timestamp, skip list on, "meta": {"points_format": "Lucene90Split"}
+                    (the split BKD points format of the Lucene fork, picked by the plugin's PointsFormatSelectingCodec),
+and "index.search.concurrent_segment_search.mode": "none", so both fields run the same non-concurrent sort path
+(OpenSearch turns concurrent search off only for the name @timestamp). Its index name also carries a hash of the split
+format's writer sources, so a twin written by an older split writer is never benchmarked.
 
 Queries are size 0 aggregations behind a bool filter of a term on sel and a range on @timestamp, the shape of a
 Discover or dashboard panel. A term clause keeps date_histogram off the filter-rewrite (BKD) fast path, which only
@@ -67,6 +73,7 @@ average is above 10 and records it in each result row. Only the Python standard 
 import argparse
 import bisect
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -113,10 +120,16 @@ VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec"
 AGG_MODES = {name: mode for name, mode in VARIANTS_ALL}
 
 # Datasets (--dataset). An entry: whether the mapping has the twin field SPLIT_FIELD.
-DATASETS = {"logs_v1": {"twin": False}}
+DATASETS = {"logs_v1": {"twin": False}, "logs_v3": {"twin": True}}
 DEFAULT_DATASET = "logs_v1"
 TIME_FIELD = "@timestamp"
 SPLIT_FIELD = "@timestamp_split"
+# sources of the split points format's writer (under --fork): the logs_v3 index name carries their hash
+SPLIT_FORMAT_FILES = [
+    "lucene/core/src/java/org/apache/lucene/util/bkd/SplitBKDWriter.java",
+    "lucene/core/src/java/org/apache/lucene/codecs/lucene90/Lucene90SplitPointsWriter.java",
+    "lucene/core/src/java/org/apache/lucene/codecs/perfield/PerFieldPointsFormat.java",
+]
 
 # POST /_bufferpool/sort_opt parameters with their defaults (every switch off = stock).
 SORT_OPT_DEFAULTS = {
@@ -188,12 +201,33 @@ def resolve_variant(name, dataset):
             "agg_mode": modes[0] if modes else None, "sort_opt": sort_opt}
 
 
+def split_format_hash(fork):
+    """First 8 hex digits of the SHA-1 over SPLIT_FORMAT_FILES under fork (None if one is missing)."""
+    h = hashlib.sha1()
+    for rel in SPLIT_FORMAT_FILES:
+        path = os.path.join(fork, rel)
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()[:8]
+
+
 def index_name(dataset, docs, seed, fork):
-    """The index of a dataset; its name carries the postings format hash of --fork."""
+    """
+    The index of a dataset; its name carries the postings format hash of --fork, and for a dataset with the twin field
+    also the split points format hash.
+    """
     tag = bp.format_hash(fork)
     if tag is None:
         raise RuntimeError(f"cannot find the format sources under --fork {fork}")
-    return f"{dataset}_{docs}_{seed}_{tag}"
+    name = f"{dataset}_{docs}_{seed}_{tag}"
+    if DATASETS[dataset]["twin"]:
+        split_tag = split_format_hash(fork)
+        if split_tag is None:
+            raise RuntimeError(f"cannot find the split points format sources under --fork {fork}")
+        name += f"_{split_tag}"
+    return name
 
 
 VARIANTS = [resolve_variant("stock", DEFAULT_DATASET)]
@@ -237,8 +271,8 @@ def query_field(variant, spec):
     return spec_field(spec)[1] or variant["field"]
 
 
-def mapping():
-    return {
+def mapping(dataset=DEFAULT_DATASET):
+    m = {
         "dynamic": "strict",
         "_source": {"enabled": False},
         "properties": {
@@ -249,17 +283,25 @@ def mapping():
             "sel": {"type": "keyword", "doc_values": False},
         },
     }
+    if DATASETS[dataset]["twin"]:
+        # skip_list: the default skip list applies only to the name @timestamp (or the index sort field)
+        m["properties"][SPLIT_FIELD] = {"type": "date", "skip_list": True, "meta": {"points_format": "Lucene90Split"}}
+    return m
 
 
-def settings():
+def settings(dataset=DEFAULT_DATASET):
     s = bp.index_settings()
     # merges only join adjacent segments, so doc ID order stays ingest (time) order
     s["index.merge.policy"] = "log_byte_size"
+    if DATASETS[dataset]["twin"]:
+        # concurrent search is turned off only for the name @timestamp; the twin must run the same path
+        s["index.search.concurrent_segment_search.mode"] = "none"
     return s
 
 
-def bulk_bodies(index, num_docs, seed):
+def bulk_bodies(index, num_docs, seed, dataset=DEFAULT_DATASET):
     action = json.dumps({"index": {"_index": index}})
+    twin = DATASETS[dataset]["twin"]
     total_s = SERVICE_CUM[-1]
     step = SPAN_MS / num_docs
     for b in range(math.ceil(num_docs / BATCH)):
@@ -272,6 +314,8 @@ def bulk_bodies(index, num_docs, seed):
                 "status": STATUS[min(len(STATUS) - 1, bisect.bisect_left(STATUS_CUM, rng.random()))][0],
                 "latency": min(60_000, int(math.exp(rng.gauss(math.log(50), 1.0)))),
             }
+            if twin:
+                doc[SPLIT_FIELD] = doc["@timestamp"]
             sel = [t for t, p in SEL if rng.random() < p]
             if sel:
                 doc["sel"] = sel
@@ -280,12 +324,13 @@ def bulk_bodies(index, num_docs, seed):
         yield ("\n".join(lines) + "\n").encode()
 
 
-def ingest(client, index, num_docs, seed):
-    print(f"creating [{index}] and ingesting {num_docs:,} docs (seed {seed}, one bulk thread) ...", flush=True)
-    client.request("PUT", f"/{index}", {"settings": settings(), "mappings": mapping()})
+def ingest(client, index, num_docs, seed, dataset=DEFAULT_DATASET):
+    print(f"creating [{index}] and ingesting {num_docs:,} docs (seed {seed}, dataset {dataset}, one bulk thread) ...",
+          flush=True)
+    client.request("PUT", f"/{index}", {"settings": settings(dataset), "mappings": mapping(dataset)})
     start = last = time.time()
     done = 0
-    for body in bulk_bodies(index, num_docs, seed):
+    for body in bulk_bodies(index, num_docs, seed, dataset):
         resp = client.request("POST", "/_bulk", body, content_type="application/x-ndjson", timeout=1200)
         if resp.get("errors"):
             first = next(i for i in resp["items"] if "error" in i["index"])
@@ -567,6 +612,25 @@ def result_summary(spec, expected):
     return len(expected), sum(c for _, c, _ in expected)
 
 
+def io_type(key):
+    """
+    The file type of a stats key (BlockCache drops the segment name): its extension, but the split points format's
+    files (Lucene90Split_0.kdd, ...) count apart from the stock points files, as split.kdd, split.kdi, ...
+    """
+    ext = key.rsplit(".", 1)[-1]
+    return "split." + ext if key.startswith("Lucene90Split_") else ext
+
+
+def summarize_io(io):
+    """bench_postings.summarize_io with the file types of io_type."""
+    loads = sum(v["loads"] + v["prefetch_loads"] for v in io.values())
+    by_type = {}
+    for key, v in io.items():
+        t = io_type(key)
+        by_type[t] = by_type.get(t, 0) + v["loads"] + v["prefetch_loads"]
+    return loads, sum(v["bytes_loaded"] for v in io.values()), by_type
+
+
 def io_snapshot(client):
     files = client.request("GET", "/_bufferpool/stats")["files"]
     return {k: v for k, v in files.items() if v["requests"] or v["loads"] or v["prefetch_loads"]}
@@ -595,7 +659,7 @@ def measure(client, spec, runs, cold, expected):
             r = out[variant]
             r["tooks"].append(resp["took"])
             r["walls"].append(wall)
-            r["loads"].append(bp.summarize_io(io)[0])
+            r["loads"].append(summarize_io(io)[0])
             r["io"] = io
     return out
 
@@ -617,7 +681,7 @@ def run_matrix(client, specs, modes, latency, runs):
                 for v in VARIANTS:
                     variant = v["name"]
                     r = by_variant[variant]
-                    loads, bytes_loaded, by_type = bp.summarize_io(r["io"])
+                    loads, bytes_loaded, by_type = summarize_io(r["io"])
                     results.append({
                         "latency_ms": latency, "query": spec, "variant": variant, "mode": mode,
                         "index": v["index"], "field": query_field(v, spec), "agg_mode": v["agg_mode"],
@@ -691,6 +755,7 @@ def main():
     except RuntimeError as e:
         sys.exit(str(e))
     indices = {}
+    datasets = {main_index: args.dataset, **{v["index"]: v["dataset"] for v in VARIANTS}}
     for index in [main_index] + [v["index"] for v in VARIANTS]:
         if index in indices:
             continue
@@ -698,7 +763,7 @@ def main():
             if not (args.ingest or args.ingest_only):
                 existing = sorted(i["index"] for i in client.request("GET", "/_cat/indices/logs_*?format=json"))
                 sys.exit(f"index [{index}] does not exist; pass --ingest to build it. Existing logs_* indices: {existing}")
-            ingest(client, index, args.docs, args.seed)
+            ingest(client, index, args.docs, args.seed, datasets[index])
         else:
             print(f"reusing [{index}]", flush=True)
         count = client.request("GET", f"/{index}/_count")["count"]
