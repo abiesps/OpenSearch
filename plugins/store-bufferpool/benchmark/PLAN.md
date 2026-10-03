@@ -751,8 +751,10 @@ segment search, so prefetch is the main lever. Steps:
    and into a new `.kdv`); `.kdd` holds only docIDs, `.kdv` only values; `.kdm` adds the `.kdv` start and a flag.
    Traversal: prefetch the whole `.kdi` if it is at most 32-64 KB, otherwise child nodes as it descends; classify each
    leaf from the resident bounds (OUTSIDE: skip, INSIDE: docIDs only, CROSSES: docIDs + values); collect the surviving
-   leaves' pointers; one coalesced prefetch; then read only what is needed. Open question: the "never remove data from
-   stock files" rule (split `.kdd` vs keep stock `.kdd` and write the new files as duplicates).
+   leaves' pointers; one coalesced prefetch; then read only what is needed.
+   **Decision (user, POC): keep stock `.kdi`/`.kdd`/`.kdm` byte-identical** ("never remove data from stock files") and
+   write the leaf directory, a docIDs-only stream and a values-only stream as new files (duplicates). Points storage for
+   the field roughly doubles; needs a re-ingest (format change).
 
 ## Parked
 
