@@ -16,7 +16,12 @@ ords-values / skipper / ...) by the byte range of its block; other files are rep
 the codec and search frames that asked for the load, whether a field's loads come in increasing offset order (one
 stream), and how many loads were waited on.
 
-Usage: validate/dv_trace.py --layout LAYOUT.json [--queries dh:s50:7d,...] [--mode MODE] [--latency-ms 4]
+Sort queries (bench_aggs.py sort_*; --queries sort for all of them) have no aggregation, so only the request itself is
+traced. With --bkd-layout (validate/BkdLayout.java output) .kdi/.kdd loads are attributed to points fields too, and
+every load is kept in trace order with its callers ("load_list") for per-leaf attribution (validate/sort_attr.py).
+
+Usage: validate/dv_trace.py --layout LAYOUT.json [--bkd-layout BKD.json] [--queries dh:s50:7d,...|sort] [--mode MODE]
+       [--latency-ms 4]
 """
 
 import argparse
@@ -31,8 +36,11 @@ import bench_aggs as ba  # noqa: E402
 import bench_postings as bp  # noqa: E402
 
 
-def load_regions(path):
+def load_regions(path, *more):
     regions = json.load(open(path))["regions"]
+    for m in more:
+        if m:
+            regions = regions + json.load(open(m))["regions"]
     # most specific (smallest) region first, so a jump table inside its values region wins
     return sorted(regions, key=lambda r: r["end"] - r["start"])
 
@@ -90,8 +98,10 @@ def summarize(events, regions, block_size):
         order[region] = {"loads": len(offs), "increasing_pairs": ups, "pairs": max(0, len(offs) - 1),
                          "first_block": min(offs) // block_size, "last_block": max(offs) // block_size}
     blocks = sorted({(e["file"], e["offset"] // block_size, bool(e["prefetch"])) for e in loads})
+    # every load in trace order with its callers, for per-block attribution (sort queries: points blocks)
+    load_list = [[e["file"], e["offset"] // block_size, e["codec"], e["search"], bool(e["prefetch"])] for e in loads]
     return {"loads": len(loads), "by_region": dict(by_region.most_common()), "shared_blocks": shared,
-            "blocks": [[f, b, p] for f, b, p in blocks],
+            "blocks": [[f, b, p] for f, b, p in blocks], "load_list": load_list,
             "prefetched": dict(prefetched), "waited": waited, "order": order,
             "by_caller": [{"region": r, "codec": c, "search": s, "loads": n} for (r, c, s), n in by_caller.most_common()]}
 
@@ -99,9 +109,10 @@ def summarize(events, regions, block_size):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--layout", required=True)
+    parser.add_argument("--bkd-layout", help="BkdLayout.java JSON: also attribute .kdi/.kdd loads to points fields")
     parser.add_argument("--docs", type=int, default=30_000_000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--queries", default=",".join(ba.DEFAULT_QUERIES))
+    parser.add_argument("--queries", default=",".join(ba.DEFAULT_QUERIES), help="comma-separated; 'sort' = bench_aggs.SORT_QUERIES")
     parser.add_argument("--mode", default="vecdec", help="agg_batch mode (off = stock)")
     parser.add_argument("--latency-ms", type=float, default=4)
     parser.add_argument("--url", default="http://localhost:9200")
@@ -112,23 +123,33 @@ def main():
 
     client = bp.Client(args.url)
     index = f"{ba.DATASET}_{args.docs}_{args.seed}_{bp.format_hash(args.fork)}"
-    regions = load_regions(args.layout)
+    regions = load_regions(args.layout, args.bkd_layout)
     block_size = client.request("GET", "/_bufferpool/stats")["block_size"]
     results = []
     try:
         bp.set_latency(client, args.latency_ms)
-        for spec in args.queries.split(","):
+        specs = []
+        for s in args.queries.split(","):
+            specs.extend(ba.SORT_QUERIES if s == "sort" else [s])
+        for spec in specs:
             body = ba.query_body(spec)
-            query_only = {"size": 0, "track_total_hits": True, "query": body["query"]}
             resp, wall, events = traced_search(client, index, body, args.mode)
-            q_resp, q_wall, q_events = traced_search(client, index, query_only, args.mode)
             agg = summarize(events, regions, block_size)
-            qry = summarize(q_events, regions, block_size)
+            if ba.is_sort(spec):
+                # a sort query has no aggregation to separate; "query alone" is the same request
+                q_resp, qry = resp, agg
+                hits = (resp["hits"].get("total") or {}).get("value", -1)
+            else:
+                query_only = {"size": 0, "track_total_hits": True, "query": body["query"]}
+                q_resp, q_wall, q_events = traced_search(client, index, query_only, args.mode)
+                qry = summarize(q_events, regions, block_size)
+                hits = q_resp["hits"]["total"]["value"]
             results.append({"query": spec, "mode": args.mode, "took_ms": resp["took"], "wall_ms": wall,
-                            "hits": q_resp["hits"]["total"]["value"], "query_only_took_ms": q_resp["took"],
+                            "hits": hits, "query_only_took_ms": q_resp["took"],
+                            "sort_values": [h.get("sort") for h in resp["hits"]["hits"]] if ba.is_sort(spec) else None,
                             "aggregation": agg, "query_only": qry})
             print(f"\n## {spec} ({args.mode}): {agg['loads']} loads, took {resp['took']} ms; query alone "
-                  f"{qry['loads']} loads, took {q_resp['took']} ms, {q_resp['hits']['total']['value']:,} hits; "
+                  f"{qry['loads']} loads, took {q_resp['took']} ms, {hits:,} hits; "
                   f"shared blocks {agg['shared_blocks']}; {agg['waited']['waits']} waits, {agg['waited']['waited_ms']} ms waited")
             for region, n in agg["by_region"].items():
                 o = agg["order"][region]

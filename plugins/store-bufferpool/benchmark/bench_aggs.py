@@ -26,6 +26,18 @@ applies to a match-all or a lone range query without sub-aggregations.
 
 Before measuring, every variant must return the same aggregation result as the first variant.
 
+Sort queries (Stage 4; SORT_QUERIES, selected with --queries or --queries sort): top hits sorted on @timestamp, no
+aggregation, the shape of Discover. Spec sort_ORDER:SEL:WINDOW[:SIZE][:nt|:tt]
+  ORDER   desc or asc ("sort": [{"@timestamp": ORDER}])
+  SEL     s50 / s10 / s1: bool filter [term sel, range]; all: bool filter [range] only (match_all if WINDOW is all);
+          bare: the range as the top-level query (OpenSearch's approximation framework applies to it, and to match_all)
+  WINDOW  7d / 1d range on @timestamp, or all (no range)
+  SIZE    hits returned, default 10 (Discover asks for 500)
+  nt      "track_total_hits": false; default is OpenSearch's 10,000 (Lucene starts skipping non-competitive docs only
+          after that many hits are counted); tt: "track_total_hits": true (exact count: no skipping at all)
+Timed runs ask for no stored fields (the hits carry only their sort values), so the fetch phase reads no .fdt. Before
+measuring, every variant must return the same hits (_id and sort values) as the first variant.
+
 Usage:
   benchmark/bench_aggs.py --docs N                 # ingest once (reused afterwards), then measure
   benchmark/bench_aggs.py --docs N --ingest-only
@@ -83,6 +95,13 @@ DEFAULT_QUERIES = [
     "dh:s50:7d", "dh:s10:7d", "dh:s1:7d", "dh:s10:1d",
     "dh_avg:s50:7d", "dh_avg:s10:7d", "dh_avg:s10:1d",
     "terms:s50:7d", "terms:s10:7d", "terms:s1:7d", "terms:s10:1d",
+]
+SORT_QUERIES = [
+    f"sort_{order}:{sel}:{window}{size}{tth}"
+    for order in ("desc", "asc")
+    for sel, window in (("s10", "7d"), ("s10", "1d"), ("all", "7d"), ("all", "1d"), ("bare", "1d"), ("all", "all"))
+    for size in ("", ":500")
+    for tth in ("", ":nt")
 ]
 
 
@@ -190,14 +209,65 @@ def doc_order(client, index, num_docs, samples=5, size=5000):
     return {"adjacent_within_2s": local / max(1, total), "time_run_starts": breaks}
 
 
+def is_sort(spec):
+    return spec.startswith("sort_")
+
+
+def parse_sort(spec):
+    """sort_ORDER:SEL:WINDOW[:SIZE][:nt|:tt] -> (order, sel, window, size, track_total_hits or None for the default)."""
+    parts = spec.split(":")
+    order = parts[0][len("sort_"):]
+    if len(parts) < 3 or order not in ("desc", "asc"):
+        raise ValueError(f"bad query spec {spec}")
+    sel, window, rest = parts[1], parts[2], parts[3:]
+    size, tth = 10, None
+    for p in rest:
+        if p == "nt":
+            tth = False
+        elif p == "tt":
+            tth = True
+        elif p.isdigit():
+            size = int(p)
+        else:
+            raise ValueError(f"bad query spec {spec}")
+    sels = {t for t, _ in SEL} | {"all", "bare"}
+    if sel not in sels or window not in set(WINDOWS) | {"all"} or (sel == "bare" and window == "all"):
+        raise ValueError(f"bad query spec {spec}")
+    return order, sel, window, size, tth
+
+
 def parse_query(spec):
+    if is_sort(spec):
+        return parse_sort(spec)
     agg, sel, window = spec.split(":")
     if agg not in ("dh", "dh_avg", "terms") or sel not in {t for t, _ in SEL} or window not in WINDOWS:
         raise ValueError(f"bad query spec {spec}")
     return agg, sel, window
 
 
+def sort_body(spec, with_ids=False):
+    order, sel, window, size, tth = parse_sort(spec)
+    rng = None
+    if window != "all":
+        lo, hi, _ = WINDOWS[window]
+        rng = {"range": {"@timestamp": {"gte": START_MS + lo, "lt": START_MS + hi, "format": "epoch_millis"}}}
+    if sel == "bare":
+        query = rng
+    elif sel == "all":
+        query = {"bool": {"filter": [rng]}} if rng else {"match_all": {}}
+    else:
+        query = {"bool": {"filter": [{"term": {"sel": sel}}] + ([rng] if rng else [])}}
+    body = {"size": size, "query": query, "sort": [{"@timestamp": order}]}
+    if tth is not None:
+        body["track_total_hits"] = tth
+    if not with_ids:
+        body["stored_fields"] = "_none_"
+    return body
+
+
 def query_body(spec):
+    if is_sort(spec):
+        return sort_body(spec)
     agg, sel, window = parse_query(spec)
     lo, hi, interval = WINDOWS[window]
     query = {"bool": {"filter": [
@@ -233,7 +303,13 @@ def search(client, index, body):
 
 
 def result_of(resp):
-    """The aggregation result for comparison: bucket keys, doc counts and avg values, exactly as returned."""
+    """
+    The aggregation result for comparison: bucket keys, doc counts and avg values, exactly as returned. For a query
+    without aggregations: the total hits (value, relation) and the sort values of the hits, in order.
+    """
+    if "aggregations" not in resp:
+        total = resp["hits"].get("total")
+        return [(total["value"], total["relation"]) if total else None] + [tuple(h["sort"]) for h in resp["hits"]["hits"]]
     out = []
     for b in resp["aggregations"]["a"]["buckets"]:
         avg = b.get("avg_latency", {}).get("value")
@@ -247,14 +323,28 @@ def check_same_results(client, index, spec):
         set_variant(client, mode)
         resp, _ = search(client, index, query_body(spec))
         got = result_of(resp)
-        if not got:
+        if is_sort(spec):
+            # the same hits: _id and sort values, from a request that fetches _id (the timed one does not)
+            id_resp, _ = search(client, index, sort_body(spec, with_ids=True))
+            ids = [(h["_id"], tuple(h["sort"])) for h in id_resp["hits"]["hits"]]
+            if len(got) < 2 or [s for _, s in ids] != got[1:]:
+                raise RuntimeError(f"{variant} {spec}: no hits, or the hits with _id differ from the hits without")
+            got = (got, ids)
+        elif not got:
             raise RuntimeError(f"{variant} {spec}: no buckets")
         if ref is None:
             ref = got
         elif got != ref:
             diff = [(a, b) for a, b in zip(got, ref) if a != b][:5]
             raise RuntimeError(f"{variant} {spec}: result differs from {VARIANTS[0][0]}: {diff}")
-    return ref
+    return ref[0] if is_sort(spec) else ref
+
+
+def result_summary(spec, expected):
+    """(buckets, docs in buckets) of an aggregation; for a sort query (hits returned, total hits value)."""
+    if is_sort(spec):
+        return len(expected) - 1, expected[0][0] if expected[0] else -1
+    return len(expected), sum(c for _, c, _ in expected)
 
 
 def io_snapshot(client):
@@ -300,12 +390,13 @@ def run_matrix(client, index, specs, modes, latency, runs):
                 by_variant = measure(client, index, spec, runs, mode == "cold", expected)
                 metric = "tooks" if mode == "cold" else "walls"
                 base = by_variant[VARIANTS[0][0]][metric]
+                buckets, docs_in_buckets = result_summary(spec, expected)
                 for variant, vmode in VARIANTS:
                     r = by_variant[variant]
                     loads, bytes_loaded, by_type = bp.summarize_io(r["io"])
                     results.append({
                         "latency_ms": latency, "query": spec, "variant": variant, "mode": mode,
-                        "buckets": len(expected), "docs_in_buckets": sum(c for _, c, _ in expected),
+                        "buckets": buckets, "docs_in_buckets": docs_in_buckets,
                         "took_ms": r["tooks"], "wall_ms": r["walls"], "loads_per_run": r["loads"],
                         "took": bp.distribution(r["tooks"]), "wall": bp.distribution(r["walls"]),
                         "loads": loads, "bytes_loaded": bytes_loaded, "loads_by_type": by_type, "io": r["io"],
@@ -363,7 +454,9 @@ def main():
         if unknown:
             sys.exit(f"unknown variants {unknown}; known: {list(known)}")
         VARIANTS = [(w, known[w]) for w in wanted]
-    specs = args.queries.split(",")
+    specs = []
+    for s in args.queries.split(","):
+        specs.extend(SORT_QUERIES if s == "sort" else [s])
     for s in specs:
         parse_query(s)
     client = bp.Client(args.url)
