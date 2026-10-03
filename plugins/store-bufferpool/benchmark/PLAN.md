@@ -752,9 +752,13 @@ segment search, so prefetch is the main lever. Steps:
    Traversal: prefetch the whole `.kdi` if it is at most 32-64 KB, otherwise child nodes as it descends; classify each
    leaf from the resident bounds (OUTSIDE: skip, INSIDE: docIDs only, CROSSES: docIDs + values); collect the surviving
    leaves' pointers; one coalesced prefetch; then read only what is needed.
-   **Decision (user, POC): keep stock `.kdi`/`.kdd`/`.kdm` byte-identical** ("never remove data from stock files") and
-   write the leaf directory, a docIDs-only stream and a values-only stream as new files (duplicates). Points storage for
-   the field roughly doubles; needs a re-ingest (format change).
+   **Decision (user, POC, supersedes "keep stock files"): split as designed, behind a new field type.** Stock fields keep
+   the stock points format, unchanged. A new field type (mapping type in OpenSearch, per-field points format in Lucene)
+   writes the new layout: `.kdi` = inner-node tree + leaf directory, `.kdd` = docIDs only, `.kdv` = values only, `.kdm`
+   + `.kdv` start and a flag. The corpus gets a twin of `@timestamp` with identical values in the new type, so every
+   query can run on the stock field and on the new field over the same docs, same index, same segment. Needs a re-ingest.
+   Queries to compare: `sort` on the timestamp field, ascending AND descending (with and without filters, size 10 and
+   500), and the range filters of the aggregation queries (1-day and 7-day).
 
 ## Parked
 
