@@ -795,6 +795,36 @@ but never read = 0.
   do not reach it on the Discover shape (estimates: desc 7d 820-960 -> 300-500 ms, 1-day 1,320-1,780 -> 600-900 ms), so
   D, C and the comparator fixes are now in scope of step 2, each behind its own switch and measured separately.
 
+### Step 2 design (revision 3, `.agents/tasks/bkd-split-2026-10-03/design.md`; 3 review rounds; resumed as workflow `bkd-split-sort-cold-resume` to close the last review findings and implement)
+Each change behind its own switch, measured alone against stock, then stacked:
+
+| Id | Change | Where | Removes |
+|---|---|---|---|
+| A | coalesced, chunked leaf prefetch inside `PointValues.intersect`, stock format | Lucene | `.kdd` waits (not the loads) |
+| B | split points format (user design) for a new field type, uses A's hook | Lucene + plugin codec | 39% of `.kdd` loads + A's waits |
+| B+childpf | B + `.kdi` child-node prefetch during the descent | Lucene | `.kdi` waits (small) |
+| C | answer the time range with the doc-values skipper on time-clustered segments | OpenSearch | the range filter's 110 `.kdd` loads |
+| D-a | approximation (walk from the sort end) for a `bool` whose only required clause is the range on the sort field | OpenSearch | almost all IO of the Discover shape |
+| D-b | approximation for `bool` = range on the sort field + other required filters (exact tie handling) | OpenSearch | almost all IO of the s10 shapes |
+| E | doc-values prefetch for the comparator, look-ahead 1, proven by the main scorer's matches, pass-through while cached | OpenSearch | at most the warm CPU per value node |
+| K1 | comparator clamps its competitive range to the query's range on the sort field | Lucene + OpenSearch | asc 1-day value reads |
+| K2 | comparator update sampling by doc distance | Lucene | asc 7d size 500 value reads |
+| K3 | dense conjunction caps the competitive clause's run end at one window | Lucene | over-collection inside long runs |
+| K4 | comparator prunes with the doc-values skipper (live bound, updated on every new bottom) | Lucene | asc 7d value reads (240-574 -> about 5-10); desc 7d `.kdd` 66 -> 0 |
+
+- Expected (design section 9, estimates): every sort with `track_total_hits` default or false reaches 15x-190x cold (D
+  carries the Discover shapes, K4 the ascending 7-day rows when D does not apply).
+- **Rows that miss 4x: `track_total_hits: true`** (1.0x-2.9x expected). With `true` Lucene never prunes and the
+  approximation does not apply, so only E and C help; desc `all` rows are CPU-bound (warm 316-515 ms).
+- **Open decisions for the user** (not implemented):
+  - E8: look-ahead 8 for the comparator prefetch (still non-speculative: each node proven by a buffered match). It
+    overrides the recorded "look-ahead 1" decision. Estimates: `desc:all:7d:500:tt` 4,743 -> about 820 ms (5.8x),
+    `desc:s10:7d:500:tt` 3,704 -> about 420 ms (8.8x), `asc:all:1d:500:tt` -> about 110 ms with C (12x).
+  - F: desc top-k CPU (partial selection per window, then merge; identical results). Estimate `desc:all:1d:500:tt`
+    warm 515 -> about 150 ms, cold with C+E about 300 ms (5.7x).
+- Why warm desc is slower than warm asc: inside a time-ascending run every delivered doc beats the bottom in desc
+  (copy + heap update + competitive-iterator update per doc); JFR: `PriorityQueue.downHeap` 28.7%, compare 54.6%.
+
 ### Step 3 (after the 4x target is met): Big5 on EC2 (user's AWS account 823904838333, admin access)
 - Goal: the gains must be measurable on the OpenSearch Benchmark big5 workload, 1,000 GB corpus, hot path and cold path,
   not only on the laptop corpus.
