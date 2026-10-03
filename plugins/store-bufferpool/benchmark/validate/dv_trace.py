@@ -35,7 +35,7 @@ loaded by the reference) and loads_not_in_reference by region (every block loade
 the reference did not load).
 
 Usage: validate/dv_trace.py --layout LAYOUT.json [--bkd-layout BKD.json] [--queries dh:s50:7d,...|sort|sort_tt]
-       [--variant V] [--dataset logs_v1] [--latency-ms 4] [--compare REF.json] [--out OUT.json]
+       [--variant V] [--dataset logs_v3] [--latency-ms 4] [--compare REF.json] [--out OUT.json]
 """
 
 import argparse

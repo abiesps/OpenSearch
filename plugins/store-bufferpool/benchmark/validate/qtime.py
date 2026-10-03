@@ -9,7 +9,7 @@ Warm latency of one bench_aggs.py query for a few variants, interleaved: in ever
 (--warmups requests) and timed (--reps requests, client wall); the round's value is the median of its reps. Prints per
 variant the median over rounds and every round's value. Used to re-check a warm-bar outlier of a bench_aggs.py run.
 
-Usage: validate/qtime.py QUERY ROUNDS VARIANT [VARIANT ...] [--dataset logs_v1] [--fork WORKTREE]
+Usage: validate/qtime.py QUERY ROUNDS VARIANT [VARIANT ...] [--dataset logs_v3] [--fork WORKTREE]
   e.g. validate/qtime.py sort_desc:all:1d:500:tt 5 stock E
 Variants use the bench_aggs.py grammar (agg_batch mode, sort_opt switches, @split, @v1).
 """

@@ -13,7 +13,7 @@ the recording and prints, for the samples taken on search threads:
   - the top frames by self time (leaf frame),
   - the top frames by total time (anywhere on the stack).
 
-Usage: validate/jfr_profile.py dh:s50:7d [--docs 30000000] [--seconds 8] [--variant V] [--dataset logs_v1]
+Usage: validate/jfr_profile.py dh:s50:7d [--docs 30000000] [--seconds 8] [--variant V] [--dataset logs_v3]
 --variant takes a bench_aggs.py variant expression (agg_batch mode, sort_opt switches, @split, @v1); --mode MODE is
 the older form of --variant MODE.
 """

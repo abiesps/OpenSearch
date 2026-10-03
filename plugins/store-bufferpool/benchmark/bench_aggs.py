@@ -7,7 +7,8 @@
 """
 Aggregation benchmark (Phase C): the most common log-analytics aggregations on doc values, cold and warm.
 
-Synthetic log corpus, reproducible from the seed (dataset logs_v1). One segment, _source disabled.
+Synthetic log corpus, reproducible from the seed (dataset logs_v1). One segment, _source disabled. The default
+dataset is logs_v3 (below): the same corpus plus a twin of @timestamp.
   @timestamp  date, 7 days from START spread evenly over the docs (about 20 ms apart at 30M docs), plus up to 1 s of
               jitter. Ingested in time order by one bulk thread; the merged segment holds long time-ordered runs whose
               order the merges permuted (like a merged log index), and docs within about 1 s are shuffled by the jitter.
@@ -85,7 +86,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_postings as bp  # noqa: E402  (Client, stats helpers)
 
-DATASET = "logs_v1"
+DATASET = "logs_v3"  # the default dataset (DEFAULT_DATASET)
 BATCH = 20_000
 START_MS = int(datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc).timestamp() * 1000)
 SPAN_MS = 7 * 24 * 3600 * 1000
@@ -121,7 +122,7 @@ AGG_MODES = {name: mode for name, mode in VARIANTS_ALL}
 
 # Datasets (--dataset). An entry: whether the mapping has the twin field SPLIT_FIELD.
 DATASETS = {"logs_v1": {"twin": False}, "logs_v3": {"twin": True}}
-DEFAULT_DATASET = "logs_v1"
+DEFAULT_DATASET = "logs_v3"
 TIME_FIELD = "@timestamp"
 SPLIT_FIELD = "@timestamp_split"
 # sources of the split points format's writer (under --fork): the logs_v3 index name carries their hash
