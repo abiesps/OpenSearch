@@ -16,7 +16,8 @@ import org.opensearch.index.mapper.MapperService;
 
 /**
  * Codec service of {@code bufferpoolfs} indices: {@code index.codec: default} (and its alias {@code lz4}) resolve to
- * {@link PostingsFormatSelectingCodec}. All other codec names behave as in {@link CodecService}.
+ * {@link PointsFormatSelectingCodec} over {@link PostingsFormatSelectingCodec}, so the mapping can pick the postings
+ * format and the points format per field. All other codec names behave as in {@link CodecService}.
  */
 final class BufferPoolCodecService extends CodecService {
 
@@ -28,7 +29,11 @@ final class BufferPoolCodecService extends CodecService {
         // composite (star-tree) indices wrap the default codec differently; leave them alone
         this.selectingCodec = mapperService == null || mapperService.isCompositeIndexPresent()
             ? null
-            : new PostingsFormatSelectingCodec(Lucene104Codec.Mode.BEST_SPEED, mapperService, config.getLogger());
+            : new PointsFormatSelectingCodec(
+                new PostingsFormatSelectingCodec(Lucene104Codec.Mode.BEST_SPEED, mapperService, config.getLogger()),
+                mapperService,
+                config.getLogger()
+            );
     }
 
     @Override
