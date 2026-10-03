@@ -740,25 +740,61 @@ version, median wall ms; OpenSearch `a44ccc13989`, fork `1373677cfb`; load 4-5)
 
 - Open: dh:s1:7d is 0.8 ms slower than stock (0.6 ms from C2, 0.2 ms from prefetch); rounds overlap, needs more rounds.
 
-## Stage 4: numeric sort and BKD (requested; in progress)
+## Stage 4: numeric sort and BKD (step 1 done; step 2 in progress)
 
-Goal: cold latency of `sort` on `@timestamp` (asc and desc, with and without filters). These queries do not use concurrent
-segment search, so prefetch is the main lever. Steps:
-1. Baseline: add sort queries to the benchmark; measure stock / vecdec / pfwc cold and warm; attribute cold loads by file
-   and code path (does `NumericComparator` prune with points (`.kdi`/`.kdd`) or with the doc-values skipper?).
-2. If the BKD path dominates: new points format (user design). `.kdi` keeps the inner-node tree and adds a leaf directory
-   (per leaf, by leaf ID: tight min/max per index dimension, docCount, min/max docID, file pointer + length into `.kdd`
-   and into a new `.kdv`); `.kdd` holds only docIDs, `.kdv` only values; `.kdm` adds the `.kdv` start and a flag.
-   Traversal: prefetch the whole `.kdi` if it is at most 32-64 KB, otherwise child nodes as it descends; classify each
-   leaf from the resident bounds (OUTSIDE: skip, INSIDE: docIDs only, CROSSES: docIDs + values); collect the surviving
-   leaves' pointers; one coalesced prefetch; then read only what is needed.
-   **Decision (user, POC, supersedes "keep stock files"): split as designed, behind a new field type.** Stock fields keep
-   the stock points format, unchanged. A new field type (mapping type in OpenSearch, per-field points format in Lucene)
-   writes the new layout: `.kdi` = inner-node tree + leaf directory, `.kdd` = docIDs only, `.kdv` = values only, `.kdm`
-   + `.kdv` start and a flag. The corpus gets a twin of `@timestamp` with identical values in the new type, so every
-   query can run on the stock field and on the new field over the same docs, same index, same segment. Needs a re-ingest.
-   Queries to compare: `sort` on the timestamp field, ascending AND descending (with and without filters, size 10 and
-   500), and the range filters of the aggregation queries (1-day and 7-day).
+Goal (user): faster COLD latency for queries sorted on `@timestamp`, ascending and descending, with no noticeable
+hot-path (warm) regression. These queries do not use concurrent segment search
+(`DefaultSearchContext.java:1091`: `isSortOnTimeSeriesField` turns it off), so IO overlap must come from prefetch.
+
+### Step 1: baseline (done; report `.agents/tasks/sort-baseline-2026-10-02/report.md`, tools `8a4759d8419`)
+- Queries: `sort_ORDER:SEL:WINDOW[:SIZE][:nt|:tt]` in `bench_aggs.py` (`--queries sort`). SEL `s10` = bool filter
+  [term sel:s10, range]; `all` = bool filter [range] (the Discover shape; WINDOW `all` = match_all); `bare` = the range as
+  the top-level query. WINDOW 7d / 1d, SIZE 10 / 500, `nt` = track_total_hits false, `tt` = true (default 10,000).
+- Results: `results/aggs_20261002_234540.json` (48 queries, load 4-5), `aggs_20261002_235202.json` (`tt`, load 3);
+  traces and layout in `results/s4/`. vecdec and pfwc load exactly what stock loads (their planners hook aggregation
+  collectors only).
+- Stock cold (size 10 unless noted): desc s10 7d 819 ms (144 loads: kdd 66, dvd 52, doc 20); desc all 7d 961 ms
+  (kdd 68, dvd 52); every 1-day query 1,321-1,777 ms (kdd 110, dvd 85); asc s10 7d 1,555 ms (dvd 235); asc 7d size 500
+  3,561-4,494 ms (dvd 572-574); `bare` and match_all 18-42 ms (5-8 loads, OpenSearch approximation path).
+- Code path: Lucene `LongComparator`; its competitive iterator prunes with points only (`NumericComparator.java:114-121`;
+  the skipper is used only without points). It intersects only when the estimated points in [bottom, MAX] (desc) or
+  [MIN, bottom] (asc) are under maxDoc / 8 = 3.75M. The estimate counts the whole segment, not the query window.
+  OpenSearch's `ApproximatePointRangeQuery` (BKD walk from the sort end, stops after size docs) runs only when the
+  top-level query is the range or match_all; a `bool` wrapper (Discover) or `track_total_hits: true` turns it off.
+- Where the cold reads go: desc 7d `.kdd` from the comparator's intersections (3 per query, 4,968-5,165 INSIDE leaves,
+  the whole newest time run; the hits are in 1-10 leaves); every 1-day `.kdd` from `PointRangeQuery` (8,370 INSIDE + 2
+  CROSSES leaves); `.dvd` values from `LongLeafComparator.getValueForDoc`, read in doc-ID order for every collected doc.
+- Layout (`@timestamp`, 1-D): 58,594 leaves x 512 points; `.kdi` part 328 KB (3 blocks), `.kdd` part 95 MiB (762
+  blocks); per leaf doc IDs 1,031 bytes (`DELTA_BPV_16`, 60.6%) and values 602 bytes (39.4%). Index bounds are exact at
+  the min and p50 14 ms high at the max, so only 2-4 leaves per query are CROSSES. A leaf's 512 doc IDs span about 546
+  doc IDs (time order inside each run).
+
+### Step 2 plan (workflow `bkd-split-sort-cold`, each change behind its own switch, measured and attributed separately)
+| Change | Targets | Estimate from step 1 (cold) |
+|---|---|---|
+| A: one coalesced prefetch of the surviving leaves in stock BKD `intersect` (classify from `.kdi` first) | desc 7d, 1-day | about -290 ms (desc 7d), -485 ms (1-day) |
+| B: split format (user design), new field type + twin `@timestamp` field; `.kdi` adds the leaf directory, `.kdd` doc IDs only, `.kdv` values only; descending `.kdi` prefetch (328 KB is over the whole-file limit) | desc 7d, 1-day | kdd 66 -> 43, 110 -> 67; about 10-20 ms over A |
+| B+bits (optional): INSIDE leaves' doc IDs stored doc-ordered (bitset / range with exceptions) in the new format | desc 7d, 1-day | kdd 66 -> about 6, 110 -> about 7 |
+| E: prefetch of the `@timestamp` doc values that the sort comparator reads (pfwc-style planner with pass-through while cached) | asc 7d, and the `.dvd` part of all | asc s10 7d size 500 about -2.5 s; desc 7d about -225 ms; 1-day about -370 ms |
+Bar: warm within noise of stock on the stock field AND on the new field; results identical on both fields; prefetched
+but never read = 0.
+
+### Follow-ups found in step 1 (not in this workflow; for the user to decide)
+- D: use the approximation (BKD walk from the sort end) for the Discover `bool` shape. Measured analogue: 1,777 ms ->
+  39 ms cold, 507 -> 4.3 ms warm. Same-result rewrite when the bool holds only filters on the sort field; new code
+  (walk leaves from the sort end, check the other clauses) for bool + other filters.
+- C: answer a time range with the doc-values skipper on time-clustered segments. Measured analogue: about 6 loads
+  instead of 110.
+- Lucene comparator: clamp the competitive range to the query's own range on the sort field (1-day sorts never prune
+  today); the sampled updates (after 256) missed the pruning moment on asc 7d size 500 (572 value blocks vs 240 with
+  `track_total_hits: false`); `DenseConjunctionBulkScorer.collectRange` ignores competitive-iterator updates within one
+  `score()` call.
+
+### Decisions
+- Split the leaf blocks as designed, behind a new field type (user; replaces "keep stock files"). Stock fields keep the
+  stock points format unchanged. The corpus gets a twin of `@timestamp` with identical values in the new type, so every
+  query runs on both fields over the same docs. Needs a re-ingest.
+- Test both ascending and descending sort (user).
 
 ## Parked
 
