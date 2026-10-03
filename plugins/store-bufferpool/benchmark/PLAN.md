@@ -816,8 +816,12 @@ Each change behind its own switch, measured alone against stock, then stacked:
   carries the Discover shapes, K4 the ascending 7-day rows when D does not apply).
 - **Rows that miss 4x: `track_total_hits: true`** (1.0x-2.9x expected). With `true` Lucene never prunes and the
   approximation does not apply, so only E and C help; desc `all` rows are CPU-bound (warm 316-515 ms).
-- **Open decisions for the user** (not implemented):
-  - E8: look-ahead 8 for the comparator prefetch (still non-speculative: each node proven by a buffered match). It
+- **Decision (user, 2026-10-03): E8 approved** ("look ahead 8 for non-speculative is fine"). E8 = look-ahead 8 for the
+  comparator's doc-values prefetch, its own switch on top of E, still non-speculative (every requested node proven by
+  a buffered match and then read; `prefetched_not_read` = 0), doc-ID aligned, same warm bar. The BKD prefetch (A, B)
+  is unchanged.
+- **Open decisions for the user**:
+  - (approved, see above) E8: look-ahead 8 for the comparator prefetch (still non-speculative: each node proven by a buffered match). It
     overrides the recorded "look-ahead 1" decision. Estimates: `desc:all:7d:500:tt` 4,743 -> about 820 ms (5.8x),
     `desc:s10:7d:500:tt` 3,704 -> about 420 ms (8.8x), `asc:all:1d:500:tt` -> about 110 ms with C (12x).
   - F: desc top-k CPU (partial selection per window, then merge; identical results). Estimate `desc:all:1d:500:tt`
