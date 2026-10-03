@@ -36,13 +36,32 @@ aggregation, the shape of Discover. Spec sort_ORDER:SEL:WINDOW[:SIZE][:nt|:tt]
   nt      "track_total_hits": false; default is OpenSearch's 10,000 (Lucene starts skipping non-competitive docs only
           after that many hits are counted); tt: "track_total_hits": true (exact count: no skipping at all)
 Timed runs ask for no stored fields (the hits carry only their sort values), so the fetch phase reads no .fdt. Before
-measuring, every variant must return the same hits (_id and sort values) as the first variant.
+measuring, every variant must return the same hits as the first variant: _id order, sort values, and hits.total value
+and relation. A variant on another index (@v1) has other _ids, so there each hit is compared by a fingerprint of its
+@timestamp, service, status and latency doc values; hits with equal sort values may come in another order there (doc
+order differs between indices), so within a run of equal sort values the fingerprints are compared as a multiset, and
+in the last such run (the top-k cut) only the sort values count.
+
+Query groups for --queries: sort (the 48 SORT_QUERIES), sort_tt (their 24 order x sel/window x size shapes with :tt).
+Any spec may end in :f=split: sort and range on the twin field @timestamp_split (aggregation specs: only the range).
+
+Variants (--variants, comma-separated, the first is the reference): an expression tok(+tok|~tok)*. The first token is
+a base: stock, an agg_batch mode (runend, vec, vecdec, pf, pfs, pfl, pfsl, pfw, pfwg, pfwc) or an atom or alias.
+'+X' adds atom or alias X, '~X' removes it. Atoms (POST /_bufferpool/sort_opt switches):
+  A (bkd_prefetch), childpf (index_child_prefetch), C (skipper_range), Da (approx_single), Db (approx_bool),
+  E (sort_prefetch), K1 (clamp), K2 (sample_docs=65536), K3 (run_cap), K4f (skipper_mode=fallback),
+  K4s (skipper_mode=first), @split (sort and range on @timestamp_split), @v1 (dataset logs_v1).
+Aliases: B0=@split, B=@split+A, ALL=A+C+Da+Db+E+K1+K2+K3+K4s, ALLf=ALL~K4s+K4f, stock-v1=@v1. So B+childpf is
+@split+A+childpf and ALL~A leaves A out. Before every run the variant's agg_batch mode and the full sort_opt set
+(defaults for every absent switch) are posted, so no switch leaks from one variant into the next.
 
 Usage:
-  benchmark/bench_aggs.py --docs N                 # ingest once (reused afterwards), then measure
+  benchmark/bench_aggs.py --docs N --ingest        # ingest once (reused afterwards), then measure
   benchmark/bench_aggs.py --docs N --ingest-only
   benchmark/bench_aggs.py --docs N --queries dh:s10:7d,terms:s50:7d --modes warm
-Only the Python standard library is used.
+  benchmark/bench_aggs.py --docs N --queries sort,sort_tt --variants stock,A,E,ALL
+Without --ingest a missing index is an error. Before each (query, mode) block the run waits while the 1-minute load
+average is above 10 and records it in each result row. Only the Python standard library is used.
 """
 
 import argparse
@@ -52,6 +71,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 
@@ -90,7 +110,93 @@ WINDOWS = {"7d": (0, SPAN_MS, "1h"), "1d": (3 * 86_400_000, 4 * 86_400_000, "10m
 #   pfwc    pfwg, but docs pass straight through (no buffer) while the nodes planners enter and the next ones are cached
 VARIANTS_ALL = [("stock", None), ("runend", "runend"), ("vec", "vec"), ("vecdec", "vecdec"), ("pf", "pf"), ("pfs", "pfs"),
                 ("pfl", "pfl"), ("pfsl", "pfsl"), ("pfw", "pfw"), ("pfwg", "pfwg"), ("pfwc", "pfwc")]
-VARIANTS = VARIANTS_ALL[:1]
+AGG_MODES = {name: mode for name, mode in VARIANTS_ALL}
+
+# Datasets (--dataset). An entry: whether the mapping has the twin field SPLIT_FIELD.
+DATASETS = {"logs_v1": {"twin": False}}
+DEFAULT_DATASET = "logs_v1"
+TIME_FIELD = "@timestamp"
+SPLIT_FIELD = "@timestamp_split"
+
+# POST /_bufferpool/sort_opt parameters with their defaults (every switch off = stock).
+SORT_OPT_DEFAULTS = {
+    "bkd_prefetch": "false", "bkd_chunks": "8", "whole_index": "false", "whole_index_bytes": "65536",
+    "index_child_prefetch": "false", "approx_single": "false", "approx_bool": "false", "skipper_range": "false",
+    "sort_prefetch": "false", "sort_docs": "65536", "clamp": "false", "sample_docs": "0", "skipper_mode": "off",
+    "run_cap": "false",
+}
+# variant atoms: sort_opt switches, plus @split (twin field) and @v1 (dataset)
+SORT_OPT_ATOMS = {
+    "A": ("bkd_prefetch", "true"), "childpf": ("index_child_prefetch", "true"), "C": ("skipper_range", "true"),
+    "Da": ("approx_single", "true"), "Db": ("approx_bool", "true"), "E": ("sort_prefetch", "true"),
+    "K1": ("clamp", "true"), "K2": ("sample_docs", "65536"), "K3": ("run_cap", "true"),
+    "K4f": ("skipper_mode", "fallback"), "K4s": ("skipper_mode", "first"),
+}
+TARGET_ATOMS = {"@split", "@v1"}
+VARIANT_ALIASES = {
+    "B0": "@split", "B": "@split+A", "ALL": "A+C+Da+Db+E+K1+K2+K3+K4s", "ALLf": "ALL~K4s+K4f", "stock-v1": "@v1",
+}
+
+
+def _variant_atoms(expr, depth=0):
+    """The set of atoms (and at most one agg_batch mode, as 'mode:NAME') an expression stands for."""
+    if depth > 8:
+        raise ValueError(f"variant alias loop at {expr}")
+    if expr in VARIANT_ALIASES:
+        return _variant_atoms(VARIANT_ALIASES[expr], depth + 1)
+    tokens = re.split(r"([+~])", expr)
+    atoms = set()
+    for i in range(0, len(tokens), 2):
+        tok, op = tokens[i], "+" if i == 0 else tokens[i - 1]
+        if tok in VARIANT_ALIASES:
+            these = _variant_atoms(VARIANT_ALIASES[tok], depth + 1)
+        elif tok in SORT_OPT_ATOMS or tok in TARGET_ATOMS:
+            these = {tok}
+        elif tok == "stock" and i == 0:
+            these = set()
+        elif tok in AGG_MODES and AGG_MODES[tok] is not None and i == 0:
+            these = {"mode:" + tok}
+        else:
+            raise ValueError(f"unknown variant token [{tok}] in [{expr}]; agg modes {list(AGG_MODES)} are a base (first "
+                             f"token) only; atoms {sorted(SORT_OPT_ATOMS) + sorted(TARGET_ATOMS)}; aliases "
+                             f"{sorted(VARIANT_ALIASES)}")
+        atoms = atoms | these if op == "+" else atoms - these
+    return atoms
+
+
+def resolve_variant(name, dataset):
+    """
+    A variant expression -> {"name", "dataset", "field", "agg_mode" (None = stock), "sort_opt" (every parameter)}.
+    dataset is the run's --dataset; @v1 replaces it.
+    """
+    atoms = _variant_atoms(name)
+    modes = sorted(a[len("mode:"):] for a in atoms if a.startswith("mode:"))
+    sort_opt = dict(SORT_OPT_DEFAULTS)
+    set_by = {}
+    for a in sorted(atoms & set(SORT_OPT_ATOMS)):
+        key, value = SORT_OPT_ATOMS[a]
+        if key in set_by:
+            raise ValueError(f"variant [{name}]: {set_by[key]} and {a} both set {key}")
+        set_by[key] = a
+        sort_opt[key] = value
+    ds = "logs_v1" if "@v1" in atoms else dataset
+    if ds not in DATASETS:
+        raise ValueError(f"variant [{name}]: unknown dataset {ds}; known {list(DATASETS)}")
+    if "@split" in atoms and not DATASETS[ds]["twin"]:
+        raise ValueError(f"variant [{name}]: dataset {ds} has no {SPLIT_FIELD}")
+    return {"name": name, "dataset": ds, "field": SPLIT_FIELD if "@split" in atoms else TIME_FIELD,
+            "agg_mode": modes[0] if modes else None, "sort_opt": sort_opt}
+
+
+def index_name(dataset, docs, seed, fork):
+    """The index of a dataset; its name carries the postings format hash of --fork."""
+    tag = bp.format_hash(fork)
+    if tag is None:
+        raise RuntimeError(f"cannot find the format sources under --fork {fork}")
+    return f"{dataset}_{docs}_{seed}_{tag}"
+
+
+VARIANTS = [resolve_variant("stock", DEFAULT_DATASET)]
 DEFAULT_QUERIES = [
     "dh:s50:7d", "dh:s10:7d", "dh:s1:7d", "dh:s10:1d",
     "dh_avg:s50:7d", "dh_avg:s10:7d", "dh_avg:s10:1d",
@@ -103,6 +209,32 @@ SORT_QUERIES = [
     for size in ("", ":500")
     for tth in ("", ":nt")
 ]
+# the 24 order x sel/window x size shapes of SORT_QUERIES with an exact hit count
+SORT_TT_QUERIES = [q + ":tt" for q in SORT_QUERIES if not q.endswith(":nt")]
+QUERY_GROUPS = {"sort": SORT_QUERIES, "sort_tt": SORT_TT_QUERIES}
+SPLIT_SUFFIX = ":f=split"
+
+
+def expand_queries(arg):
+    """Comma-separated specs and group names (sort, sort_tt) -> list of specs, each checked."""
+    specs = []
+    for s in arg.split(","):
+        specs.extend(QUERY_GROUPS.get(s, [s]))
+    for s in specs:
+        parse_query(s)
+    return specs
+
+
+def spec_field(spec):
+    """(spec without :f=split, the field its sort and range use when the spec asks for the twin, else None)."""
+    if spec.endswith(SPLIT_SUFFIX):
+        return spec[: -len(SPLIT_SUFFIX)], SPLIT_FIELD
+    return spec, None
+
+
+def query_field(variant, spec):
+    """The field a variant's query of spec sorts and filters on: the twin if the variant or the spec asks for it."""
+    return spec_field(spec)[1] or variant["field"]
 
 
 def mapping():
@@ -214,8 +346,11 @@ def is_sort(spec):
 
 
 def parse_sort(spec):
-    """sort_ORDER:SEL:WINDOW[:SIZE][:nt|:tt] -> (order, sel, window, size, track_total_hits or None for the default)."""
-    parts = spec.split(":")
+    """
+    sort_ORDER:SEL:WINDOW[:SIZE][:nt|:tt][:f=split] -> (order, sel, window, size, track_total_hits or None for the
+    default).
+    """
+    parts = spec_field(spec)[0].split(":")
     order = parts[0][len("sort_"):]
     if len(parts) < 3 or order not in ("desc", "asc"):
         raise ValueError(f"bad query spec {spec}")
@@ -239,40 +374,58 @@ def parse_sort(spec):
 def parse_query(spec):
     if is_sort(spec):
         return parse_sort(spec)
-    agg, sel, window = spec.split(":")
+    parts = spec_field(spec)[0].split(":")
+    if len(parts) != 3:
+        raise ValueError(f"bad query spec {spec}")
+    agg, sel, window = parts
     if agg not in ("dh", "dh_avg", "terms") or sel not in {t for t, _ in SEL} or window not in WINDOWS:
         raise ValueError(f"bad query spec {spec}")
     return agg, sel, window
 
 
-def sort_body(spec, with_ids=False):
+FINGERPRINT_FIELDS = [{"field": TIME_FIELD, "format": "epoch_millis"}, "service", "status", "latency"]
+
+
+def sort_body(spec, with_ids=False, field=None, fingerprint=False):
+    """
+    The sort request of spec, sorting and filtering on field (default: @timestamp, or the twin for :f=split). With
+    with_ids the hits carry _id; with fingerprint also the doc values of FINGERPRINT_FIELDS.
+    """
+    field = field or spec_field(spec)[1] or TIME_FIELD
     order, sel, window, size, tth = parse_sort(spec)
     rng = None
     if window != "all":
         lo, hi, _ = WINDOWS[window]
-        rng = {"range": {"@timestamp": {"gte": START_MS + lo, "lt": START_MS + hi, "format": "epoch_millis"}}}
+        rng = {"range": {field: {"gte": START_MS + lo, "lt": START_MS + hi, "format": "epoch_millis"}}}
     if sel == "bare":
         query = rng
     elif sel == "all":
         query = {"bool": {"filter": [rng]}} if rng else {"match_all": {}}
     else:
         query = {"bool": {"filter": [{"term": {"sel": sel}}] + ([rng] if rng else [])}}
-    body = {"size": size, "query": query, "sort": [{"@timestamp": order}]}
+    body = {"size": size, "query": query, "sort": [{field: order}]}
     if tth is not None:
         body["track_total_hits"] = tth
     if not with_ids:
         body["stored_fields"] = "_none_"
+    if fingerprint:
+        body["docvalue_fields"] = FINGERPRINT_FIELDS
     return body
 
 
-def query_body(spec):
+def query_body(spec, field=None):
+    """
+    The timed request of spec. field (default: @timestamp, or the twin for :f=split) is the sort and range field of a
+    sort spec, and the range field of an aggregation spec (the aggregation stays on @timestamp).
+    """
+    field = field or spec_field(spec)[1] or TIME_FIELD
     if is_sort(spec):
-        return sort_body(spec)
+        return sort_body(spec, field=field)
     agg, sel, window = parse_query(spec)
     lo, hi, interval = WINDOWS[window]
     query = {"bool": {"filter": [
         {"term": {"sel": sel}},
-        {"range": {"@timestamp": {"gte": START_MS + lo, "lt": START_MS + hi, "format": "epoch_millis"}}},
+        {"range": {field: {"gte": START_MS + lo, "lt": START_MS + hi, "format": "epoch_millis"}}},
     ]}}
     avg = {"avg_latency": {"avg": {"field": "latency"}}}
     if agg == "terms":
@@ -284,16 +437,30 @@ def query_body(spec):
     return {"size": 0, "track_total_hits": False, "query": query, "aggs": aggs}
 
 
-_variant = "unset"
+def set_variant(client, variant):
+    """
+    Posts the variant's agg_batch mode and its full sort_opt set (defaults for absent switches), every time, and checks
+    that the node reports the values it was sent.
+    """
+    client.request("POST", f"/_bufferpool/agg_batch?mode={variant['agg_mode'] or 'off'}")
+    query = "&".join(f"{k}={v}" for k, v in variant["sort_opt"].items())
+    got = client.request("POST", f"/_bufferpool/sort_opt?{query}")
+    wrong = {k: got.get(k) for k, v in variant["sort_opt"].items() if str(got.get(k)).lower() != v}
+    if wrong:
+        raise RuntimeError(f"variant {variant['name']}: node reports sort_opt {wrong}, sent {variant['sort_opt']}")
 
 
-def set_variant(client, mode):
-    global _variant
-    if mode == _variant:
-        return
-    if mode is not None or _variant not in ("unset", None):
-        client.request("POST", f"/_bufferpool/agg_batch?mode={mode or 'off'}")
-    _variant = mode
+def reset_variant(client):
+    """Back to stock: agg_batch off and every sort_opt switch at its default."""
+    set_variant(client, resolve_variant("stock", DEFAULT_DATASET))
+
+
+def wait_for_load(limit=10.0, pause=30):
+    """Waits while the 1-minute load average is above limit (the machine is shared); returns the load average."""
+    while os.getloadavg()[0] > limit:
+        print(f"  load average {os.getloadavg()[0]:.1f} > {limit:g}, waiting {pause}s ...", flush=True)
+        time.sleep(pause)
+    return os.getloadavg()
 
 
 def search(client, index, body):
@@ -317,26 +484,79 @@ def result_of(resp):
     return out
 
 
-def check_same_results(client, index, spec):
+def fingerprint(hit):
+    """The doc values of FINGERPRINT_FIELDS of a hit: the same doc in another index has another _id but these values."""
+    f = hit.get("fields", {})
+    return tuple(tuple(str(v) for v in f.get(x["field"] if isinstance(x, dict) else x, [])) for x in FINGERPRINT_FIELDS)
+
+
+def tie_groups(hits):
+    """[(sort values, sorted fingerprints)] per run of hits with equal sort values, in order."""
+    groups = []
+    for sort, fp in hits:
+        if groups and groups[-1][0] == sort:
+            groups[-1][1].append(fp)
+        else:
+            groups.append((sort, [fp]))
+    return [(s, sorted(fps)) for s, fps in groups]
+
+
+def same_docs_other_index(got, ref):
+    """
+    Hits of two indices with the same documents: same sort values in order; within each run of equal sort values the
+    same fingerprints (in any order: ties follow doc order, which differs between indices), except the last run, which
+    the top-k cut may split differently.
+    """
+    if [s for s, _ in got] != [s for s, _ in ref]:
+        return False
+    g, r = tie_groups(got), tie_groups(ref)
+    return g[:-1] == r[:-1]
+
+
+def check_same_results(client, spec):
+    """
+    Runs spec once per variant (on the variant's index and field) and compares with the first variant: the timed
+    request's result (aggregation buckets; or hits.total value and relation and the sort values), and for sort specs
+    the hits of a request that also fetches _id and the fingerprint doc values (the timed one does not): the same _id
+    order on the same index, the same fingerprints (see same_docs_other_index) on another index.
+    """
     ref = None
-    for variant, mode in VARIANTS:
-        set_variant(client, mode)
-        resp, _ = search(client, index, query_body(spec))
+    for v in VARIANTS:
+        set_variant(client, v)
+        field = query_field(v, spec)
+        resp, _ = search(client, v["index"], query_body(spec, field))
         got = result_of(resp)
         if is_sort(spec):
-            # the same hits: _id and sort values, from a request that fetches _id (the timed one does not)
-            id_resp, _ = search(client, index, sort_body(spec, with_ids=True))
-            ids = [(h["_id"], tuple(h["sort"])) for h in id_resp["hits"]["hits"]]
-            if len(got) < 2 or [s for _, s in ids] != got[1:]:
-                raise RuntimeError(f"{variant} {spec}: no hits, or the hits with _id differ from the hits without")
-            got = (got, ids)
+            id_resp, _ = search(client, v["index"], sort_body(spec, with_ids=True, field=field, fingerprint=True))
+            hits = id_resp["hits"]["hits"]
+            if len(got) < 2 or [tuple(h["sort"]) for h in hits] != got[1:] or result_of(id_resp)[0] != got[0]:
+                raise RuntimeError(f"{v['name']} {spec}: no hits, or the hits with _id differ from the hits without")
+            got = (got, [h["_id"] for h in hits], [(tuple(h["sort"]), fingerprint(h)) for h in hits])
         elif not got:
-            raise RuntimeError(f"{variant} {spec}: no buckets")
+            raise RuntimeError(f"{v['name']} {spec}: no buckets")
         if ref is None:
-            ref = got
-        elif got != ref:
-            diff = [(a, b) for a, b in zip(got, ref) if a != b][:5]
-            raise RuntimeError(f"{variant} {spec}: result differs from {VARIANTS[0][0]}: {diff}")
+            ref, ref_index = got, v["index"]
+            continue
+        if not is_sort(spec):
+            same = got == ref
+        elif got[0] != ref[0]:
+            same = False
+        elif v["index"] == ref_index:
+            same = got[1] == ref[1] and got[2] == ref[2]
+        else:
+            same = same_docs_other_index(got[2], ref[2])
+        if not same:
+            if is_sort(spec) and got[0][0] != ref[0][0]:
+                diff = [("hits.total", got[0][0], ref[0][0])]
+            else:
+                if not is_sort(spec):
+                    a, b = got, ref
+                elif v["index"] == ref_index and got[1] != ref[1]:
+                    a, b = got[1], ref[1]
+                else:
+                    a, b = got[2], ref[2]
+                diff = [(i, x, y) for i, (x, y) in enumerate(zip(a, b)) if x != y][:5] or [("length", len(a), len(b))]
+            raise RuntimeError(f"{v['name']} {spec}: result differs from {VARIANTS[0]['name']}: {diff}")
     return ref[0] if is_sort(spec) else ref
 
 
@@ -352,22 +572,23 @@ def io_snapshot(client):
     return {k: v for k, v in files.items() if v["requests"] or v["loads"] or v["prefetch_loads"]}
 
 
-def measure(client, index, spec, runs, cold, expected):
-    out = {v: {"tooks": [], "walls": [], "loads": [], "io": None} for v, _ in VARIANTS}
-    body = query_body(spec)
+def measure(client, spec, runs, cold, expected):
+    out = {v["name"]: {"tooks": [], "walls": [], "loads": [], "io": None} for v in VARIANTS}
+    bodies = {v["name"]: query_body(spec, query_field(v, spec)) for v in VARIANTS}
     if not cold:
-        for _, mode in VARIANTS:  # two warm-ups per variant: page in the blocks and let C2 compile the loop
-            set_variant(client, mode)
-            search(client, index, body)
-            search(client, index, body)
+        for v in VARIANTS:  # two warm-ups per variant: page in the blocks and let C2 compile the loop
+            set_variant(client, v)
+            search(client, v["index"], bodies[v["name"]])
+            search(client, v["index"], bodies[v["name"]])
     for i in range(runs):
         order = VARIANTS[i % len(VARIANTS):] + VARIANTS[: i % len(VARIANTS)]
-        for variant, mode in order:
-            set_variant(client, mode)
+        for v in order:
+            variant = v["name"]
+            set_variant(client, v)
             if cold:
                 client.request("POST", "/_bufferpool/cache/_clear")
             client.request("POST", "/_bufferpool/stats/_reset")
-            resp, wall = search(client, index, body)
+            resp, wall = search(client, v["index"], bodies[variant])
             if result_of(resp) != expected:
                 raise RuntimeError(f"{variant} {spec}: result changed during measurement")
             io = io_snapshot(client)
@@ -379,33 +600,39 @@ def measure(client, index, spec, runs, cold, expected):
     return out
 
 
-def run_matrix(client, index, specs, modes, latency, runs):
+def run_matrix(client, specs, modes, latency, runs):
     results = []
+    first = VARIANTS[0]["name"]
     try:
         bp.set_latency(client, latency)
         for spec in specs:
-            expected = check_same_results(client, index, spec)
+            expected = check_same_results(client, spec)
             for mode in modes:
+                load = wait_for_load()
                 started = time.time()
-                by_variant = measure(client, index, spec, runs, mode == "cold", expected)
+                by_variant = measure(client, spec, runs, mode == "cold", expected)
                 metric = "tooks" if mode == "cold" else "walls"
-                base = by_variant[VARIANTS[0][0]][metric]
+                base = by_variant[first][metric]
                 buckets, docs_in_buckets = result_summary(spec, expected)
-                for variant, vmode in VARIANTS:
+                for v in VARIANTS:
+                    variant = v["name"]
                     r = by_variant[variant]
                     loads, bytes_loaded, by_type = bp.summarize_io(r["io"])
                     results.append({
                         "latency_ms": latency, "query": spec, "variant": variant, "mode": mode,
+                        "index": v["index"], "field": query_field(v, spec), "agg_mode": v["agg_mode"],
+                        "sort_opt": v["sort_opt"], "load_average": load,
                         "buckets": buckets, "docs_in_buckets": docs_in_buckets,
                         "took_ms": r["tooks"], "wall_ms": r["walls"], "loads_per_run": r["loads"],
                         "took": bp.distribution(r["tooks"]), "wall": bp.distribution(r["walls"]),
                         "loads": loads, "bytes_loaded": bytes_loaded, "loads_by_type": by_type, "io": r["io"],
-                        "median_change_vs_first": None if variant == VARIANTS[0][0] else bp.median_change_ci(base, r[metric]),
+                        "median_change_vs_first": None if variant == first else bp.median_change_ci(base, r[metric]),
                     })
-                print(f"  {spec:<16} {mode}: {runs} x {len(VARIANTS)} runs in {time.time() - started:.0f}s", flush=True)
+                print(f"  {spec:<16} {mode}: {runs} x {len(VARIANTS)} runs in {time.time() - started:.0f}s "
+                      f"(load {load[0]:.1f})", flush=True)
     finally:
         bp.set_latency(client, 0)
-        set_variant(client, None)
+        reset_variant(client)
     return results
 
 
@@ -413,7 +640,7 @@ def print_report(meta, results):
     print(f"\n## {meta['docs']:,} docs, {meta['segment_bytes'] / 2**20:,.0f} MiB segment, {meta['runs']} runs per variant, "
           f"{meta['latency_ms']:g} ms per cold miss")
     print("cold: server took; warm: client wall. IOs = blocks loaded per query, by file type.")
-    names = [v for v, _ in VARIANTS]
+    names = [v["name"] for v in VARIANTS]
     rows = {}
     for r in results:
         rows.setdefault((r["query"], r["mode"]), {})[r["variant"]] = r
@@ -441,50 +668,59 @@ def main():
     parser.add_argument("--modes", default="cold,warm")
     parser.add_argument("--queries", default=",".join(DEFAULT_QUERIES))
     parser.add_argument("--fork", default=os.path.join(os.path.dirname(repo), "lucene_experiments"))
-    parser.add_argument("--ingest-only", action="store_true")
-    parser.add_argument("--variants", help="comma-separated variants (the first is the reference); known: "
-                        + ",".join(v[0] for v in VARIANTS_ALL))
+    parser.add_argument("--dataset", default=DEFAULT_DATASET, choices=sorted(DATASETS))
+    parser.add_argument("--ingest", action="store_true", help="ingest a missing index (otherwise it is an error)")
+    parser.add_argument("--ingest-only", action="store_true", help="ingest if missing (implies --ingest), then stop")
+    parser.add_argument("--variants", help="comma-separated variant expressions (the first is the reference), see above")
     parser.add_argument("--out", default=os.path.join(os.path.expanduser("~"), "bufferpool-bench", "results"))
     args = parser.parse_args()
     global VARIANTS
-    if args.variants:
-        known = dict(VARIANTS_ALL)
-        wanted = args.variants.split(",")
-        unknown = [w for w in wanted if w not in known]
-        if unknown:
-            sys.exit(f"unknown variants {unknown}; known: {list(known)}")
-        VARIANTS = [(w, known[w]) for w in wanted]
-    specs = []
-    for s in args.queries.split(","):
-        specs.extend(SORT_QUERIES if s == "sort" else [s])
-    for s in specs:
-        parse_query(s)
+    try:
+        VARIANTS = [resolve_variant(w, args.dataset) for w in (args.variants or "stock").split(",")]
+        specs = expand_queries(args.queries)
+    except ValueError as e:
+        sys.exit(str(e))
+    names = [v["name"] for v in VARIANTS]
+    if len(set(names)) != len(names):
+        sys.exit(f"duplicate variants in {names}")
     client = bp.Client(args.url)
-    tag = bp.format_hash(args.fork)
-    if tag is None:
-        sys.exit(f"cannot find the format sources under --fork {args.fork}")
-    index = f"{DATASET}_{args.docs}_{args.seed}_{tag}"
-    if not client.exists(index):
-        ingest(client, index, args.docs, args.seed)
-    else:
-        print(f"reusing [{index}]", flush=True)
-    count = client.request("GET", f"/{index}/_count")["count"]
-    if count != args.docs:
-        raise RuntimeError(f"[{index}] has {count} docs, expected {args.docs}")
-    seg = segment_info(client, index)
-    seg["timestamp_in_order"] = doc_order(client, index, args.docs)
+    try:
+        main_index = index_name(args.dataset, args.docs, args.seed, args.fork)
+        for v in VARIANTS:
+            v["index"] = index_name(v["dataset"], args.docs, args.seed, args.fork)
+    except RuntimeError as e:
+        sys.exit(str(e))
+    indices = {}
+    for index in [main_index] + [v["index"] for v in VARIANTS]:
+        if index in indices:
+            continue
+        if not client.exists(index):
+            if not (args.ingest or args.ingest_only):
+                existing = sorted(i["index"] for i in client.request("GET", "/_cat/indices/logs_*?format=json"))
+                sys.exit(f"index [{index}] does not exist; pass --ingest to build it. Existing logs_* indices: {existing}")
+            ingest(client, index, args.docs, args.seed)
+        else:
+            print(f"reusing [{index}]", flush=True)
+        count = client.request("GET", f"/{index}/_count")["count"]
+        if count != args.docs:
+            raise RuntimeError(f"[{index}] has {count} docs, expected {args.docs}")
+        seg = segment_info(client, index)
+        seg["timestamp_in_order"] = doc_order(client, index, args.docs)
+        indices[index] = seg
     if args.ingest_only:
-        print(json.dumps(seg))
+        print(json.dumps(indices))
         return
     stats = client.request("GET", "/_bufferpool/stats")
     meta = {
         "time": datetime.datetime.now().isoformat(timespec="seconds"),
-        "index": index, "docs": args.docs, "seed": args.seed, "runs": args.runs, "latency_ms": args.latency_ms,
+        "index": main_index, "dataset": args.dataset, "docs": args.docs, "seed": args.seed, "runs": args.runs,
+        "latency_ms": args.latency_ms,
         "block_size": stats["block_size"], "opensearch_head": bp.git_head(repo), "lucene_fork_head": bp.git_head(args.fork),
-        "suite": "aggs", "variants": [list(v) for v in VARIANTS], "load_average": os.getloadavg(), **seg,
+        "suite": "aggs", "variants": [[v["name"], v] for v in VARIANTS], "load_average": os.getloadavg(),
+        **indices[main_index], "indices": indices,
     }
     print(json.dumps(meta), flush=True)
-    results = run_matrix(client, index, specs, args.modes.split(","), args.latency_ms, args.runs)
+    results = run_matrix(client, specs, args.modes.split(","), args.latency_ms, args.runs)
     os.makedirs(args.out, exist_ok=True)
     out = os.path.join(args.out, f"aggs_{datetime.datetime.now():%Y%m%d_%H%M%S}.json")
     with open(out, "w") as f:

@@ -41,3 +41,17 @@ Per-file-type load counts come from `GET /_bufferpool/stats`. Raw results go to 
 
 `Lucene104Baseline` is stock `Lucene104` under another name, so the baseline field gets files of its own instead of
 sharing them with `_id`.
+
+## Sort experiments (`sort_opt`)
+
+The cold-path sort switches of the Lucene fork and of OpenSearch are set JVM-wide with
+`POST /_bufferpool/sort_opt?bkd_prefetch=&bkd_chunks=&whole_index=&whole_index_bytes=&index_child_prefetch=&approx_single=&approx_bool=&skipper_range=&sort_prefetch=&sort_docs=&clamp=&sample_docs=&skipper_mode=&run_cap=`
+(absent = unchanged; a bad value returns 400 and changes nothing) and read with `GET /_bufferpool/sort_opt`.
+`bench_aggs.py --variants` takes expressions `tok(+tok|~tok)*` over a base (`stock` or an `agg_batch` mode such as
+`vecdec`), atoms `A`, `childpf`, `C`, `Da`, `Db`, `E`, `K1`, `K2`, `K3`, `K4f`, `K4s`, `@split` (the twin field
+`@timestamp_split`), `@v1` (dataset `logs_v1`), and aliases `B0`, `B`, `ALL`, `ALLf`, `stock-v1`; `~X` drops X (for
+example `ALL~A`). Before every run the full `sort_opt` set is posted, defaults included, so no switch leaks between
+variants. `validate/dv_trace.py`, `validate/qtime.py` and `validate/jfr_profile.py` take the same `--variant`
+expressions, and `validate/cmp.py` compares the variants of one result file. When the Lucene fork lives in a worktree,
+restart the node with `FORK=<worktree> ./refresh_lucene.sh --skip-publish` (after `./gradlew mavenToLocal` there), so
+the jar check compares against that worktree's HEAD.

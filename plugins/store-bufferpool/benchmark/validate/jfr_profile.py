@@ -13,7 +13,9 @@ the recording and prints, for the samples taken on search threads:
   - the top frames by self time (leaf frame),
   - the top frames by total time (anywhere on the stack).
 
-Usage: validate/jfr_profile.py dh:s50:7d [--docs 30000000] [--seconds 8] [--mode MODE]
+Usage: validate/jfr_profile.py dh:s50:7d [--docs 30000000] [--seconds 8] [--variant V] [--dataset logs_v1]
+--variant takes a bench_aggs.py variant expression (agg_batch mode, sort_opt switches, @split, @v1); --mode MODE is
+the older form of --variant MODE.
 """
 
 import argparse
@@ -69,18 +71,25 @@ def main():
     parser.add_argument("--docs", type=int, default=30_000_000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--seconds", type=float, default=8)
-    parser.add_argument("--mode", default=None, help="agg_batch mode to set first (default: stock)")
+    parser.add_argument("--variant", default=None, help="bench_aggs.py variant expression to set first (default: stock)")
+    parser.add_argument("--mode", default=None, help="agg_batch mode to set first (older form of --variant)")
+    parser.add_argument("--dataset", default=ba.DEFAULT_DATASET, choices=sorted(ba.DATASETS))
     parser.add_argument("--top", type=int, default=25)
     parser.add_argument("--url", default="http://localhost:9200")
     parser.add_argument("--fork", default=os.path.expanduser("~/workspace/lucene_experiments"))
     parser.add_argument("--out", help="write the summary as JSON here")
     args = parser.parse_args()
 
+    name = args.variant or ("stock" if args.mode in (None, "off") else args.mode)
+    try:
+        variant = ba.resolve_variant(name, args.dataset)
+        ba.parse_query(args.query)
+    except ValueError as e:
+        sys.exit(str(e))
     client = bp.Client(args.url)
-    index = f"{ba.DATASET}_{args.docs}_{args.seed}_{bp.format_hash(args.fork)}"
-    body = ba.query_body(args.query)
-    if args.mode:
-        client.request("POST", f"/_bufferpool/agg_batch?mode={args.mode}")
+    index = ba.index_name(variant["dataset"], args.docs, args.seed, args.fork)
+    body = ba.query_body(args.query, ba.query_field(variant, args.query))
+    ba.set_variant(client, variant)
     for _ in range(3):
         ba.search(client, index, body)
 
@@ -101,8 +110,7 @@ def main():
             runs += 1
     finally:
         subprocess.check_call(["jcmd", pid, "JFR.stop", "name=aggs", f"filename={rec}"], stdout=subprocess.DEVNULL)
-        if args.mode:
-            client.request("POST", "/_bufferpool/agg_batch?mode=off")
+        ba.reset_variant(client)
 
     self_counts = collections.Counter()
     total_counts = collections.Counter()
@@ -120,7 +128,7 @@ def main():
                 path_counts[f] += 1
     walls.sort()
     summary = {
-        "query": args.query, "mode": args.mode or "stock", "runs": runs, "median_wall_ms": walls[len(walls) // 2],
+        "query": args.query, "mode": name, "runs": runs, "median_wall_ms": walls[len(walls) // 2],
         "search_samples": n,
         "path": path_counts.most_common(args.top),
         "self": self_counts.most_common(args.top),
