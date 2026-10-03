@@ -721,6 +721,39 @@ Status after (10) (pfwc):
 - Pippin doc updated: section "Phase 5 (C3e, done)", status line, appendix tables for runs (4)-(10).
 - Next: microbenchmark of the per-node planner and pass-through cost; then points (`.kdd`) prefetch for 1-day ranges.
 
+**Hot-path latency, stock vs vecdec vs pfwc** (interleaved `/tmp/qtime.py`, 5 rounds x 10 requests after 3 warm-up per
+version, median wall ms; OpenSearch `a44ccc13989`, fork `1373677cfb`; load 4-5)
+
+| Query | Stock ms | vecdec ms | pfwc ms | pfwc vs vecdec | pfwc vs stock |
+|---|---:|---:|---:|---:|---:|
+| dh:s50:7d | 237.7 | 10.5 | 10.1 | -0.3 ms (-3%) | -96% |
+| dh:s10:7d | 12.2 | 11.6 | 11.3 | -0.2 ms (-2%) | -7% |
+| dh:s1:7d | 5.0 | 5.5 | 5.8 | +0.2 ms (+4%) | +15% |
+| dh:s10:1d | 23.1 | 17.4 | 17.9 | +0.5 ms (+3%) | -23% |
+| dh_avg:s50:7d | 460.5 | 55.0 | 55.3 | +0.3 ms (+1%) | -88% |
+| dh_avg:s10:7d | 58.7 | 25.5 | 25.7 | +0.2 ms (+1%) | -56% |
+| dh_avg:s10:1d | 29.4 | 19.9 | 20.0 | +0.0 ms (+0%) | -32% |
+| terms:s50:7d | 688.0 | 213.2 | 214.3 | +1.1 ms (+1%) | -69% |
+| terms:s10:7d | 107.4 | 58.2 | 58.2 | -0.1 ms (-0%) | -46% |
+| terms:s1:7d | 13.5 | 11.1 | 11.2 | +0.2 ms (+1%) | -16% |
+| terms:s10:1d | 35.3 | 23.2 | 23.3 | +0.1 ms (+1%) | -34% |
+
+- Open: dh:s1:7d is 0.8 ms slower than stock (0.6 ms from C2, 0.2 ms from prefetch); rounds overlap, needs more rounds.
+
+## Stage 4: numeric sort and BKD (requested; in progress)
+
+Goal: cold latency of `sort` on `@timestamp` (asc and desc, with and without filters). These queries do not use concurrent
+segment search, so prefetch is the main lever. Steps:
+1. Baseline: add sort queries to the benchmark; measure stock / vecdec / pfwc cold and warm; attribute cold loads by file
+   and code path (does `NumericComparator` prune with points (`.kdi`/`.kdd`) or with the doc-values skipper?).
+2. If the BKD path dominates: new points format (user design). `.kdi` keeps the inner-node tree and adds a leaf directory
+   (per leaf, by leaf ID: tight min/max per index dimension, docCount, min/max docID, file pointer + length into `.kdd`
+   and into a new `.kdv`); `.kdd` holds only docIDs, `.kdv` only values; `.kdm` adds the `.kdv` start and a flag.
+   Traversal: prefetch the whole `.kdi` if it is at most 32-64 KB, otherwise child nodes as it descends; classify each
+   leaf from the resident bounds (OUTSIDE: skip, INSIDE: docIDs only, CROSSES: docIDs + values); collect the surviving
+   leaves' pointers; one coalesced prefetch; then read only what is needed. Open question: the "never remove data from
+   stock files" rule (split `.kdd` vs keep stock `.kdd` and write the new files as duplicates).
+
 ## Parked
 
 - Cost model in code: `IOCost` interface on `IndexInput` (block size, miss cost, residency via sampled
