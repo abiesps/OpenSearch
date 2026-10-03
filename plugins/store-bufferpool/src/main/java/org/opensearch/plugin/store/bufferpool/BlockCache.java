@@ -23,8 +23,10 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -34,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Collectors;
 
 /**
  * Node-wide cache of fixed-size file blocks, backed by Caffeine.
@@ -131,6 +134,7 @@ final class BlockCache {
         if (waited > TimeUnit.MICROSECONDS.toNanos(100)) {
             t.recordWait(key, waited);
         }
+        t.recordRead(key);
         return block;
     }
 
@@ -332,13 +336,37 @@ final class BlockCache {
         final long startNanos = System.nanoTime();
         final AtomicInteger seq = new AtomicInteger();
         final ConcurrentLinkedQueue<Event> events = new ConcurrentLinkedQueue<>();
+        /** Blocks loaded by a prefetch during this trace that no reader has read since (not bounded by maxEvents). */
+        private final Set<BlockKey> prefetchedUnread = ConcurrentHashMap.newKeySet();
 
         Trace(int maxEvents) {
             this.maxEvents = maxEvents;
         }
 
         void record(BlockKey key, int size, boolean prefetch) {
+            if (prefetch) {
+                prefetchedUnread.add(key);
+            }
             add(key, size, prefetch, 0);
+        }
+
+        /** A reader's block read returned (a hit, its own load, or a load it joined). */
+        void recordRead(BlockKey key) {
+            prefetchedUnread.remove(key);
+        }
+
+        /** Number of blocks loaded by a prefetch during this trace that no reader read. */
+        int prefetchedUnreadCount() {
+            return prefetchedUnread.size();
+        }
+
+        /** Up to {@code limit} of the prefetched-but-unread blocks as "file:block", sorted. */
+        List<String> prefetchedUnread(int blockSize, int limit) {
+            return prefetchedUnread.stream()
+                .sorted(Comparator.comparing((BlockKey k) -> k.file().getFileName().toString()).thenComparingLong(BlockKey::blockOffset))
+                .limit(limit)
+                .map(k -> k.file().getFileName() + ":" + k.blockOffset() / blockSize)
+                .collect(Collectors.toList());
         }
 
         /** A reader's block read that blocked for {@code waitedNanos}; recorded with size -1. */

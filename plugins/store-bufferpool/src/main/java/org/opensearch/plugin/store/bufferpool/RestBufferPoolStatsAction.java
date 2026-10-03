@@ -23,6 +23,7 @@ import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.transport.client.node.NodeClient;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -61,6 +62,12 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       ahead of collection (run-ahead, no second scorer); {@code pfwg}: pfw plus the gate (collection waits at a
  *       planner's next requested doc until the read after its node is known); {@code pfwc}: pfwg that passes docs
  *       straight through while every node the collectors read from is cached; {@code off} is stock</li>
+ *   <li>{@code POST /_bufferpool/sort_opt?bkd_prefetch=&bkd_chunks=&whole_index=&whole_index_bytes=&index_child_prefetch=&
+ *       approx_single=&approx_bool=&skipper_range=&sort_prefetch=&sort_docs=&clamp=&sample_docs=&skipper_mode=&run_cap=}:
+ *       cold-path sort experiment switches (JVM-wide, see {@link SortOptParams}); an absent parameter leaves its switch
+ *       unchanged, a bad value returns 400 and changes nothing. Every POST also sets the node size of the BKD and sort
+ *       prefetches to the cache block size. {@code GET /_bufferpool/sort_opt} returns every value; {@code GET
+ *       /_bufferpool/stats} reports them as {@code sort_opt_*}</li>
  * </ul>
  */
 final class RestBufferPoolStatsAction extends BaseRestHandler {
@@ -85,7 +92,9 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             new Route(POST, "/_bufferpool/dual_nav/_mode"),
             new Route(POST, "/_bufferpool/disjunction_prefetch"),
             new Route(POST, "/_bufferpool/topk_prefetch"),
-            new Route(POST, "/_bufferpool/agg_batch")
+            new Route(POST, "/_bufferpool/agg_batch"),
+            new Route(POST, "/_bufferpool/sort_opt"),
+            new Route(GET, "/_bufferpool/sort_opt")
         );
     }
 
@@ -105,6 +114,9 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
     protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
         final BlockCache cache = blockCache.get();
         final String path = request.path();
+        if (path.endsWith("/sort_opt")) {
+            return prepareSortOpt(request, cache);
+        }
         if (path.endsWith("/_reset")) {
             cache.resetStats();
             BatchCollection.resetCounters();
@@ -202,6 +214,9 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("agg_prefetch_run_ahead_switches", DocValuesPrefetch.runAheadSwitches());
             builder.field("agg_prefetch_run_ahead_leaves", DocValuesPrefetch.runAheadLeaves());
             builder.field("agg_prefetch_run_ahead_replays", DocValuesPrefetch.runAheadReplays());
+            for (Map.Entry<String, Object> entry : SortOptParams.current().entrySet()) {
+                builder.field("sort_opt_" + entry.getKey(), entry.getValue());
+            }
             builder.field("simulated_load_latency_micros", TimeUnit.NANOSECONDS.toMicros(cache.simulatedLoadLatencyNanos()));
             builder.startObject("files");
             for (Map.Entry<String, BlockCache.FileStats> entry : cache.stats().entrySet()) {
@@ -216,6 +231,38 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                 builder.endObject();
             }
             builder.endObject();
+            builder.endObject();
+            channel.sendResponse(new BytesRestResponse(RestStatus.OK, builder));
+        };
+    }
+
+    /**
+     * {@code POST} parses every sort_opt parameter here, so a bad value fails the request with 400 before anything changes,
+     * and applies them when the request runs (after the REST layer has rejected unknown parameters). {@code GET} only reads.
+     */
+    private static RestChannelConsumer prepareSortOpt(RestRequest request, BlockCache cache) {
+        final SortOptParams params;
+        if (request.method() == POST) {
+            final Map<String, String> values = new HashMap<>();
+            for (String name : SortOptParams.NAMES) {
+                final String value = request.param(name);
+                if (value != null) {
+                    values.put(name, value);
+                }
+            }
+            params = SortOptParams.parse(values);
+        } else {
+            params = null;
+        }
+        return channel -> {
+            if (params != null) {
+                params.apply(cache.blockSize());
+            }
+            final XContentBuilder builder = channel.newBuilder();
+            builder.startObject();
+            for (Map.Entry<String, Object> entry : SortOptParams.current().entrySet()) {
+                builder.field(entry.getKey(), entry.getValue());
+            }
             builder.endObject();
             channel.sendResponse(new BytesRestResponse(RestStatus.OK, builder));
         };
