@@ -740,7 +740,7 @@ version, median wall ms; OpenSearch `a44ccc13989`, fork `1373677cfb`; load 4-5)
 
 - Open: dh:s1:7d is 0.8 ms slower than stock (0.6 ms from C2, 0.2 ms from prefetch); rounds overlap, needs more rounds.
 
-## Stage 4: numeric sort and BKD (step 1 done; step 2 in progress)
+## Stage 4: numeric sort and BKD (step 1 done; step 2 in progress; step 3 Big5 on EC2 planned)
 
 Goal (user): faster COLD latency for queries sorted on `@timestamp`, ascending and descending, with no noticeable
 hot-path (warm) regression. These queries do not use concurrent segment search
@@ -789,6 +789,31 @@ but never read = 0.
   today); the sampled updates (after 256) missed the pruning moment on asc 7d size 500 (572 value blocks vs 240 with
   `track_total_hits: false`); `DenseConjunctionBulkScorer.collectRange` ignores competitive-iterator updates within one
   `score()` call.
+
+### Target (user, 2026-10-03)
+- Cold sort on `@timestamp` (asc and desc) at least **4x faster** than stock, with no warm regression. A, B and E alone
+  do not reach it on the Discover shape (estimates: desc 7d 820-960 -> 300-500 ms, 1-day 1,320-1,780 -> 600-900 ms), so
+  D, C and the comparator fixes are now in scope of step 2, each behind its own switch and measured separately.
+
+### Step 3 (after the 4x target is met): Big5 on EC2 (user's AWS account 823904838333, admin access)
+- Goal: the gains must be measurable on the OpenSearch Benchmark big5 workload, 1,000 GB corpus, hot path and cold path,
+  not only on the laptop corpus.
+- Three setups, same hardware, same OpenSearch version and JVM settings, same index settings, same shard count and the
+  same segment count per shard (force-merged to the same target):
+  1. stock OpenSearch (stock store, stock codec);
+  2. stock OpenSearch code + bufferpool store (all experiment switches off);
+  3. this POC with bufferpool and all changes on (new points field type for `@timestamp` in the mapping).
+  Setups 1 and 2 can share one ingested index (same Lucene format). Setup 3 needs its own ingest with the new mapping;
+  check segment and shard counts match before measuring.
+- Cold path: clear the cache before every query iteration. The bufferpool already has `POST /_bufferpool/cache/_clear`;
+  the benchmark runner must call it before each iteration. For setup 1 (no bufferpool), drop the OS page cache
+  (`sync; echo 3 > /proc/sys/vm/drop_caches`) before each iteration, so all three are cold the same way. The simulated
+  4 ms delay stays off on EC2; storage latency is real (decide EBS gp3 vs instance store vs S3-backed before the run and
+  keep it the same for all setups).
+- Hot path: the same big5 queries with warm caches, OSB's usual warm-up and iteration counts.
+- Report every big5 operation (not only sorts): p50/p90/p99 service time, cold and warm, setups 1 vs 2 vs 3.
+- Resources (EC2, EBS, S3) are created in that account for this test only; tag them, write down what was created, and
+  stop or delete them only with the user's approval. Cost and instance choice are written into the plan before launch.
 
 ### Decisions
 - Split the leaf blocks as designed, behind a new field type (user; replaces "keep stock files"). Stock fields keep the
