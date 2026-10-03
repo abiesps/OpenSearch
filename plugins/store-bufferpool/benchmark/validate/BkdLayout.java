@@ -36,6 +36,13 @@ import java.util.TreeMap;
  * .kdd) so dv_trace.py can attribute points loads to fields. Reads private BKDReader state by reflection; opens the
  * index read-only. Only 1-dimension long fields decode values as longs (other fields report bytes only).
  *
+ * <p>Fields in the split points format ({@code Lucene90Split}, files {@code _N_Lucene90Split_0.{kdm,kdi,kdd,kdv}}) are
+ * reported from the split {@code .kdm} metadata the reader holds: regions {@code points-split-index} (inner nodes) and
+ * {@code points-split-dir} (leaf directory) in the split {@code .kdi}, {@code points-split-docs} in the split
+ * {@code .kdd} and {@code points-split-values} in {@code .kdv}, and for the listed fields every leaf's directory entry
+ * (leaf ID in value order, count, tight min/max, min/max doc ID, doc block FP/length, value block FP/length). The
+ * "split" object gives the four file sizes and the share of {@code .kdi} in {@code .kdd + .kdv}.
+ *
  * <p>Run (Java 21+): java -cp 'DISTRO/lib/*' validate/BkdLayout.java SHARD_INDEX_DIR [OUT.json] [--leaves FIELD,...]
  * (per-leaf arrays are written only for the listed fields; default @timestamp).
  */
@@ -54,19 +61,27 @@ public class BkdLayout {
                 throw new IllegalStateException("expected one segment, found " + reader.leaves().size());
             }
             final LeafReader leaf = reader.leaves().get(0).reader();
+            // stock points files are _N.kdd/_N.kdi; the split format's are _N_Lucene90Split_0.*
             String kdd = null, kdi = null;
+            final String segment = ((org.apache.lucene.index.SegmentReader) leaf).getSegmentName();
             for (String f : d.listAll()) {
-                if (f.endsWith(".kdd")) kdd = f;
-                if (f.endsWith(".kdi")) kdi = f;
+                if (f.equals(segment + ".kdd")) kdd = f;
+                if (f.equals(segment + ".kdi")) kdi = f;
             }
-            final long kddLength = Files.size(dir.resolve(kdd));
-            final long kdiLength = Files.size(dir.resolve(kdi));
+            final String splitPrefix = segment + "_Lucene90Split_0.";
+            final long kddLength = kdd == null ? 0 : Files.size(dir.resolve(kdd));
+            final long kdiLength = kdi == null ? 0 : Files.size(dir.resolve(kdi));
             // leaf FPs of every field, to find where each leaf ends (the next leaf, of any field, or the footer)
             final List<FieldLayout> fields = new ArrayList<>();
             final TreeMap<Long, Boolean> allFps = new TreeMap<>();
+            final List<SplitFieldLayout> splitFields = new ArrayList<>();
             for (FieldInfo fi : leaf.getFieldInfos()) {
                 if (fi.getPointDimensionCount() == 0) continue;
                 final PointValues pv = leaf.getPointValues(fi.name);
+                if (pv.getClass().getSimpleName().equals("SplitBKDReader")) {
+                    splitFields.add(new SplitFieldLayout(fi.name, pv, splitPrefix, leafFields.contains(fi.name)));
+                    continue;
+                }
                 final FieldLayout fl = new FieldLayout(fi.name, pv, fi.getPointNumBytes());
                 fl.walk(leafFields.contains(fi.name));
                 for (long fp : fl.fps)
@@ -83,8 +98,33 @@ public class BkdLayout {
                 kdi,
                 kdiLength
             );
+            if (splitFields.isEmpty() == false) {
+                final long[] len = new long[4];
+                final String[] ext = { "kdm", "kdi", "kdd", "kdv" };
+                for (int i = 0; i < 4; i++)
+                    len[i] = Files.size(dir.resolve(splitPrefix + ext[i]));
+                out.printf(
+                    Locale.ROOT,
+                    "\"split\": {\"prefix\": \"%s\", \"kdm_bytes\": %d, \"kdi_bytes\": %d, \"kdd_bytes\": %d, \"kdv_bytes\": %d, "
+                        + "\"kdi_share_of_kdd_kdv\": %.5f},%n",
+                    splitPrefix,
+                    len[0],
+                    len[1],
+                    len[2],
+                    len[3],
+                    (double) len[1] / (len[2] + len[3])
+                );
+                out.println("\"split_fields\": [");
+                for (int i = 0; i < splitFields.size(); i++) {
+                    splitFields.get(i).print(out, i == splitFields.size() - 1);
+                }
+                out.println("],");
+            }
             out.println("\"fields\": [");
             final StringBuilder regions = new StringBuilder();
+            for (SplitFieldLayout sf : splitFields) {
+                sf.regions(regions);
+            }
             for (int f = 0; f < fields.size(); f++) {
                 final FieldLayout fl = fields.get(f);
                 final long[] ends = new long[fl.fps.size()];
@@ -119,7 +159,10 @@ public class BkdLayout {
             }
             out.println("],");
             out.println("\"regions\": [");
-            out.print(regions);
+            // the last region line must not end with a comma (only split fields: their last line does)
+            String r = regions.toString().stripTrailing();
+            if (r.endsWith(",")) r = r.substring(0, r.length() - 1);
+            out.println(r);
             out.println("]}");
         }
     }
@@ -149,6 +192,113 @@ public class BkdLayout {
         for (int i = 0; i < 8; i++)
             v = (v << 8) | (b[off + i] & 0xFF);
         return v ^ 0x8000000000000000L;
+    }
+
+    /** A field in the split points format: regions from the reader's metadata, leaf directory entries on request. */
+    static final class SplitFieldLayout {
+        final String name, prefix;
+        final PointValues pv;
+        final int numLeaves, numPages, pageShift, numIndexBytes;
+        final long pointCount, dataStart, docDataEnd, valDataStart, valDataEnd, indexStart, directoryStart, directoryEnd;
+        final int docCount;
+        final List<Object> entries = new ArrayList<>();
+
+        SplitFieldLayout(String name, PointValues pv, String prefix, boolean details) throws Exception {
+            this.name = name;
+            this.pv = pv;
+            this.prefix = prefix;
+            this.numLeaves = (int) get(pv, "numLeaves");
+            this.numPages = (int) get(pv, "numPages");
+            this.pageShift = (int) get(pv, "pageShift");
+            this.numIndexBytes = (int) get(pv, "numIndexBytes");
+            this.pointCount = pv.size();
+            this.docCount = pv.getDocCount();
+            this.dataStart = (long) get(pv, "dataStartFP");
+            this.docDataEnd = (long) get(pv, "docDataEndFP");
+            this.valDataStart = (long) get(pv, "valDataStartFP");
+            this.valDataEnd = (long) get(pv, "valDataEndFP");
+            this.indexStart = (long) get(pv, "indexStartFP");
+            this.directoryStart = (long) get(pv, "directoryStartFP");
+            this.directoryEnd = (long) get(pv, "directoryEndFP");
+            if (details) {
+                final Method leafEntry = pv.getClass().getMethod("leafEntry", int.class);
+                for (int i = 0; i < numLeaves; i++) {
+                    entries.add(leafEntry.invoke(pv, i));
+                }
+            }
+        }
+
+        void regions(StringBuilder regions) {
+            final String fmt =
+                "{\"field\": \"%s\", \"region\": \"%s\", \"file\": \"%s\", \"start\": %d, \"end\": %d, \"info\": \"%s\"},%n";
+            regions.append(String.format(Locale.ROOT, fmt, name, "points-split-index", prefix + "kdi", indexStart, indexStart + numIndexBytes, ""));
+            regions.append(
+                String.format(Locale.ROOT, fmt, name, "points-split-dir", prefix + "kdi", directoryStart, directoryEnd, numPages + " pages")
+            );
+            regions.append(
+                String.format(Locale.ROOT, fmt, name, "points-split-docs", prefix + "kdd", dataStart, docDataEnd, numLeaves + " leaves")
+            );
+            regions.append(
+                String.format(Locale.ROOT, fmt, name, "points-split-values", prefix + "kdv", valDataStart, valDataEnd, numLeaves + " leaves")
+            );
+        }
+
+        void print(PrintStream out, boolean last) throws Exception {
+            out.printf(
+                Locale.ROOT,
+                "{\"field\": \"%s\", \"format\": \"Lucene90Split\", \"num_leaves\": %d, \"point_count\": %d, \"doc_count\": %d, "
+                    + "\"index_start\": %d, \"index_bytes\": %d, \"directory_start\": %d, \"directory_end\": %d, "
+                    + "\"directory_bytes\": %d, \"pages\": %d, \"leaves_per_page\": %d, \"docs_start\": %d, \"docs_end\": %d, "
+                    + "\"values_start\": %d, \"values_end\": %d",
+                name,
+                numLeaves,
+                pointCount,
+                docCount,
+                indexStart,
+                numIndexBytes,
+                directoryStart,
+                directoryEnd,
+                directoryEnd - directoryStart,
+                numPages,
+                1 << pageShift,
+                dataStart,
+                docDataEnd,
+                valDataStart,
+                valDataEnd
+            );
+            if (entries.isEmpty() == false) {
+                out.print(
+                    ",\n \"leaf_columns\": [\"leaf_id\", \"count\", \"min\", \"max\", \"min_doc\", \"max_doc\", \"doc_fp\", "
+                        + "\"doc_bytes\", \"value_fp\", \"value_bytes\"],\n \"leaves\": ["
+                );
+                final boolean isLong = pv.getBytesPerDimension() == 8;
+                for (int i = 0; i < entries.size(); i++) {
+                    final Object e = entries.get(i);
+                    final byte[] min = (byte[]) call(e, "minPackedValue"), max = (byte[]) call(e, "maxPackedValue");
+                    out.printf(
+                        Locale.ROOT,
+                        "%s[%d,%d,%s,%s,%d,%d,%d,%d,%d,%d]",
+                        i == 0 ? "" : ",",
+                        i,
+                        (int) call(e, "count"),
+                        isLong ? Long.toString(decodeLong(min, 0)) : "null",
+                        isLong ? Long.toString(decodeLong(max, 0)) : "null",
+                        (int) call(e, "minDocID"),
+                        (int) call(e, "maxDocID"),
+                        (long) call(e, "docBlockFP"),
+                        (int) call(e, "docBlockLength"),
+                        (long) call(e, "valueBlockFP"),
+                        (int) call(e, "valueBlockLength")
+                    );
+                }
+                out.print("]");
+            }
+            out.println(last ? "}" : "},");
+        }
+
+        static Object call(Object o, String name) throws ReflectiveOperationException {
+            return o.getClass().getMethod(name).invoke(o);
+        }
     }
 
     static final class FieldLayout {

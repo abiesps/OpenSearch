@@ -19,6 +19,10 @@ stream), and how many loads were waited on.
 Sort queries (bench_aggs.py sort_*; groups sort and sort_tt) have no aggregation, so only the request itself is
 traced. With --bkd-layout (validate/BkdLayout.java output) .kdi/.kdd loads are attributed to points fields too, and
 every load is kept in trace order with its callers ("load_list") for per-leaf attribution (validate/sort_attr.py).
+Loads of the split points format's files (Lucene90Split_0.{kdm,kdi,kdd,kdv}) map to the BkdLayout regions
+FIELD:points-split-index, FIELD:points-split-dir (both .kdi), FIELD:points-split-docs (.kdd) and
+FIELD:points-split-values (.kdv), each its own row; without a matching region they count as split.kdm, split.kdi, ...
+apart from the stock kdm/kdi/kdd. With --compare every region also gets a row "loads here / loads in the reference".
 
 The variant (--variant, bench_aggs.py grammar: agg_batch mode, sort_opt switches, @split, @v1) is set before every
 traced request. prefetched_not_read: blocks that a prefetch loaded during the request and that no read touched before
@@ -59,9 +63,15 @@ def load_regions(path, *more):
     return sorted(regions, key=lambda r: r["end"] - r["start"])
 
 
+def file_type(file):
+    """The extension of a file, but split points files (_N_Lucene90Split_0.kdd, ...) as split.kdd, split.kdi, ..."""
+    ext = file.rsplit(".", 1)[-1]
+    return "split." + ext if "_Lucene90Split_" in file else ext
+
+
 def attribute(event, regions, block_size):
     file = event["file"]
-    ext = file.rsplit(".", 1)[-1]
+    ext = file_type(file)
     start, end = event["offset"], event["offset"] + event["size"]
     hits = [r for r in regions if r["file"] == file and r["start"] < end and r["end"] > start]
     if not hits:
@@ -216,10 +226,16 @@ def main():
             ref_unread = base["aggregation"].get("prefetched_not_read_by_requester", {})
             mine_unread = r["aggregation"]["prefetched_not_read_by_requester"]
             r["prefetched_not_read_beyond_reference"] = sum(max(0, n - ref_unread.get(k, 0)) for k, n in mine_unread.items())
+            regions_here = r["aggregation"]["by_region"]
+            regions_ref = base["aggregation"]["by_region"]
+            r["by_region_vs_reference"] = {k: [regions_here.get(k, 0), regions_ref.get(k, 0)]
+                                           for k in sorted(set(regions_here) | set(regions_ref))}
             print(f"  {r['query']:<16} loaded {len(mine)} (prefetched {len(pre)}), reference {len(read)}; "
                   f"prefetched_not_in_reference {len(wasted)} {sorted(wasted)[:6]}; "
                   f"loads_not_in_reference {dict(extra.most_common())}; in reference but not loaded here {len(missing)}; "
                   f"prefetched_not_read {r['prefetched_not_read']} (beyond reference {r['prefetched_not_read_beyond_reference']})")
+            for region, (here, there) in r["by_region_vs_reference"].items():
+                print(f"      {region:<34} {here:>5} here {there:>5} reference ({here - there:+d})")
     if args.out:
         with open(args.out, "w") as f:
             json.dump({"index": index, "variant": name, "block_size": block_size, "results": results}, f, indent=1)

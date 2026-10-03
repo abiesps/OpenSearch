@@ -83,7 +83,7 @@ def main():
         t = traces.get(q)
         if t:
             # entries are [file, block, prefetch] or, since dv_trace adds the region, [file, block, prefetch, region]
-            node_blocks = {x[1] for x in t["aggregation"]["blocks"] if x[0].endswith(".kdd") and lo_block <= x[1] <= hi_block}
+            node_blocks = {x[1] for x in t["aggregation"]["blocks"] if x[0].endswith(".kdd") and "_Lucene90Split_" not in x[0] and lo_block <= x[1] <= hi_block}
         split_doc = set()
         split_val = set()
         for leaf in by_kind[0] | crosses:
