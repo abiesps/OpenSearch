@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -125,11 +124,11 @@ final class BlockCache {
         fileStats.requests.increment();
         final Trace t = trace;
         if (t == null) {
-            return getOrLoad(key, channel, fileLength, fileStats, false);
+            return getOrLoad(key, channel, fileLength, fileStats, false, null);
         }
         // tracing only: record reads that blocked, on their own load or on a load already in flight (e.g. a prefetch)
         final long start = System.nanoTime();
-        final ByteBuffer block = getOrLoad(key, channel, fileLength, fileStats, false);
+        final ByteBuffer block = getOrLoad(key, channel, fileLength, fileStats, false, null);
         final long waited = System.nanoTime() - start;
         if (waited > TimeUnit.MICROSECONDS.toNanos(100)) {
             t.recordWait(key, waited);
@@ -138,10 +137,17 @@ final class BlockCache {
         return block;
     }
 
-    private ByteBuffer getOrLoad(BlockKey key, FileChannel channel, long fileLength, FileStats fileStats, boolean prefetch)
-        throws IOException {
+    /** @param requester while tracing, the callers that requested a prefetch (see {@link Trace#callers()}), else null */
+    private ByteBuffer getOrLoad(
+        BlockKey key,
+        FileChannel channel,
+        long fileLength,
+        FileStats fileStats,
+        boolean prefetch,
+        String[] requester
+    ) throws IOException {
         try {
-            return cache.get(key, k -> load(k, channel, fileLength, fileStats, prefetch));
+            return cache.get(key, k -> load(k, channel, fileLength, fileStats, prefetch, requester));
         } catch (UncheckedIOException e) {
             throw e.getCause();
         }
@@ -185,11 +191,13 @@ final class BlockCache {
         if (missing.isEmpty()) {
             return;
         }
+        // tracing only: the prefetch runs on another thread, so remember which code asked for it
+        final String[] requester = trace == null ? null : Trace.callers();
         try {
             prefetchExecutor.execute(() -> {
                 for (BlockKey key : missing) {
                     try {
-                        getOrLoad(key, channel, fileLength, fileStats, true);
+                        getOrLoad(key, channel, fileLength, fileStats, true, requester);
                     } catch (IOException | RuntimeException e) {
                         // e.g. the input was closed before the prefetch ran; a later read loads the block on demand
                         logger.debug(() -> "prefetch of block [" + key + "] failed", e);
@@ -279,7 +287,7 @@ final class BlockCache {
         return fileName;
     }
 
-    private ByteBuffer load(BlockKey key, FileChannel channel, long fileLength, FileStats fileStats, boolean prefetch) {
+    private ByteBuffer load(BlockKey key, FileChannel channel, long fileLength, FileStats fileStats, boolean prefetch, String[] requester) {
         final long start = System.nanoTime();
         final int size = (int) Math.min(blockSize, fileLength - key.blockOffset());
         final ByteBuffer block = ByteBuffer.allocateDirect(size);
@@ -297,7 +305,7 @@ final class BlockCache {
         }
         final Trace t = trace;
         if (t != null) {
-            t.record(key, size, prefetch);
+            t.record(key, size, prefetch, requester);
         }
         (prefetch ? fileStats.prefetchLoads : fileStats.loads).increment();
         fileStats.bytesLoaded.add(size);
@@ -328,7 +336,10 @@ final class BlockCache {
         return trace;
     }
 
-    /** Block loads recorded in order. */
+    /**
+     * Block loads recorded in order. A demand load carries the Lucene callers on the loading thread; a prefetch load
+     * carries the callers that requested the prefetch (the load itself runs on a prefetch thread).
+     */
     static final class Trace {
         private static final StackWalker WALKER = StackWalker.getInstance();
 
@@ -336,18 +347,22 @@ final class BlockCache {
         final long startNanos = System.nanoTime();
         final AtomicInteger seq = new AtomicInteger();
         final ConcurrentLinkedQueue<Event> events = new ConcurrentLinkedQueue<>();
-        /** Blocks loaded by a prefetch during this trace that no reader has read since (not bounded by maxEvents). */
-        private final Set<BlockKey> prefetchedUnread = ConcurrentHashMap.newKeySet();
+        /**
+         * Blocks loaded by a prefetch during this trace that no reader has read since (not bounded by maxEvents), with the
+         * code that requested the prefetch ("codec caller / search caller").
+         */
+        private final Map<BlockKey, String> prefetchedUnread = new ConcurrentHashMap<>();
 
         Trace(int maxEvents) {
             this.maxEvents = maxEvents;
         }
 
-        void record(BlockKey key, int size, boolean prefetch) {
+        /** @param requester for a prefetch load, the callers that requested it ({@link #callers()} on that thread), or null */
+        void record(BlockKey key, int size, boolean prefetch, String[] requester) {
             if (prefetch) {
-                prefetchedUnread.add(key);
+                prefetchedUnread.put(key, requester == null ? "null / null" : requester[0] + " / " + requester[1]);
             }
-            add(key, size, prefetch, 0);
+            add(key, size, prefetch, 0, requester);
         }
 
         /** A reader's block read returned (a hit, its own load, or a load it joined). */
@@ -362,24 +377,35 @@ final class BlockCache {
 
         /** Up to {@code limit} of the prefetched-but-unread blocks as "file:block", sorted. */
         List<String> prefetchedUnread(int blockSize, int limit) {
-            return prefetchedUnread.stream()
+            return prefetchedUnread.keySet()
+                .stream()
                 .sorted(Comparator.comparing((BlockKey k) -> k.file().getFileName().toString()).thenComparingLong(BlockKey::blockOffset))
                 .limit(limit)
                 .map(k -> k.file().getFileName() + ":" + k.blockOffset() / blockSize)
                 .collect(Collectors.toList());
         }
 
-        /** A reader's block read that blocked for {@code waitedNanos}; recorded with size -1. */
-        void recordWait(BlockKey key, long waitedNanos) {
-            add(key, -1, false, waitedNanos);
+        /** Prefetched-but-unread blocks counted by the code that requested the prefetch, sorted by requester. */
+        Map<String, Integer> prefetchedUnreadByRequester() {
+            final Map<String, Integer> counts = new TreeMap<>();
+            for (String requester : prefetchedUnread.values()) {
+                counts.merge(requester, 1, Integer::sum);
+            }
+            return counts;
         }
 
-        private void add(BlockKey key, int size, boolean prefetch, long waitedNanos) {
+        /** A reader's block read that blocked for {@code waitedNanos}; recorded with size -1. */
+        void recordWait(BlockKey key, long waitedNanos) {
+            add(key, -1, false, waitedNanos, null);
+        }
+
+        /** @param requester callers recorded for the event, or null for the callers on this thread */
+        private void add(BlockKey key, int size, boolean prefetch, long waitedNanos, String[] requester) {
             final int n = seq.getAndIncrement();
             if (n >= maxEvents) {
                 return;
             }
-            final String[] callers = callers();
+            final String[] callers = requester != null ? requester : callers();
             events.add(
                 new Event(
                     n,
@@ -397,7 +423,7 @@ final class BlockCache {
         }
 
         /** The innermost Lucene codec frame and the innermost Lucene search frame on the stack, as "Class.method". */
-        private static String[] callers() {
+        static String[] callers() {
             return WALKER.walk(frames -> {
                 String codec = null;
                 String search = null;

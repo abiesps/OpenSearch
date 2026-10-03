@@ -32,8 +32,10 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  * </ul>
  *
  * Each event is one block load (a cache miss or a prefetch load) with its file, block offset, and the innermost Lucene
- * codec and search methods on the stack. {@code prefetched_unread} holds the count of blocks that a prefetch loaded
- * during the trace and that no reader read before the response, and the first 20 of them as {@code file:block}.
+ * codec and search methods on the stack (for a prefetch load: on the stack that requested the prefetch).
+ * {@code prefetched_unread} holds the count of blocks that a prefetch loaded during the trace and that no reader read
+ * before the response, the first 20 of them as {@code file:block}, and the count per requesting code
+ * ({@code by_requester}, "codec caller / search caller").
  */
 final class RestBufferPoolTraceAction extends BaseRestHandler {
 
@@ -87,6 +89,7 @@ final class RestBufferPoolTraceAction extends BaseRestHandler {
                 builder.startObject("prefetched_unread");
                 builder.field("count", trace.prefetchedUnreadCount());
                 builder.field("blocks", trace.prefetchedUnread(cache.blockSize(), 20));
+                builder.field("by_requester", trace.prefetchedUnreadByRequester());
                 builder.endObject();
                 builder.startArray("events");
                 for (BlockCache.Event e : trace.events) {

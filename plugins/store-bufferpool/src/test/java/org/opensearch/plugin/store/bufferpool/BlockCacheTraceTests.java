@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
+import java.util.Map;
 
 import static org.opensearch.plugin.store.bufferpool.BlockCache.DEFAULT_BLOCK_SIZE;
 
@@ -52,6 +53,8 @@ public class BlockCacheTraceTests extends OpenSearchTestCase {
             final BlockCache.Trace trace = cache.stopTrace();
             assertEquals(1, trace.prefetchedUnreadCount());
             assertEquals(List.of("_0.dvd:1"), trace.prefetchedUnread(DEFAULT_BLOCK_SIZE, 20));
+            // no Lucene frame on the requesting (test) thread
+            assertEquals(Map.of("null / null", 1), trace.prefetchedUnreadByRequester());
             assertEquals(3, stats.prefetchLoads.sum());
             assertEquals(1, stats.loads.sum());
         }
