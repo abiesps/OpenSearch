@@ -34,7 +34,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * order (most skipper intervals are entirely inside or outside the range), the range is answered from the doc-values
  * query: whole skipper blocks inside the range match without reading values, and only the few boundary blocks are
  * checked value by value. On every other segment the {@link IndexOrDocValuesQuery} answers it, as in stock.
- * Both sides describe the same range, so the matching docs are identical. Experiment C, switch
+ * Segments where the range holds more than half the docs also use the stock query (the points side then collects
+ * the few non-matching docs). Both sides describe the same range, so the matching docs are identical. Experiment C, switch
  * {@link SortIoExperiments#isSkipperRange()}.
  *
  * @opensearch.internal
@@ -153,11 +154,33 @@ public final class SkipperClusteredRangeQuery extends Query {
             return clusteredEstimate(context) >= 0 ? dvWeight : indexOrDvWeight;
         }
 
+        /**
+         * Whether the points side answers the range cheaply on this segment: when the range holds more than half the
+         * docs, the points query collects the complement (few leaves), so the skip-index walk would only add IO.
+         */
+        private static boolean pointsCheap(ScorerSupplier stock, LeafReaderContext context) {
+            return stock.cost() > context.reader().maxDoc() / 2;
+        }
+
+        /** Whether the doc-values side answers the range on this segment. For tests. */
+        boolean usesDocValues(LeafReaderContext context) throws IOException {
+            ScorerSupplier stock = indexOrDvWeight.scorerSupplier(context);
+            return stock != null && pointsCheap(stock, context) == false && clusteredEstimate(context) >= 0;
+        }
+
         @Override
         public ScorerSupplier scorerSupplier(LeafReaderContext context) throws IOException {
+            final ScorerSupplier stock = indexOrDvWeight.scorerSupplier(context);
+            if (stock == null) {
+                return null;
+            }
+            // the points cost (an estimate from the inner nodes) is what IndexOrDocValuesQuery computes anyway
+            if (pointsCheap(stock, context)) {
+                return stock;
+            }
             final long estimate = clusteredEstimate(context);
             if (estimate < 0) {
-                return indexOrDvWeight.scorerSupplier(context);
+                return stock;
             }
             final ScorerSupplier in = dvWeight.scorerSupplier(context);
             if (in == null) {

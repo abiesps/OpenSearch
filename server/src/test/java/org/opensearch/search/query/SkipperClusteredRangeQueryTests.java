@@ -114,6 +114,13 @@ public class SkipperClusteredRangeQueryTests extends OpenSearchTestCase {
             SkipperClusteredRangeQuery.SkipperClusteredWeight w = weight(searcher, q);
             LeafReaderContext leaf = reader.leaves().get(0);
             assertTrue("clustered values must use doc values", w.clusteredEstimate(leaf) >= 0);
+            // the doc-values side is used unless the range holds more than half the docs (points read the complement)
+            long matches = Math.min(u, max) - l + 1;
+            if (matches * perValue < numDocs / 2 - 2L * perValue * 4096) {
+                assertTrue(w.usesDocValues(leaf));
+            } else if (matches * perValue > numDocs / 2 + 2L * perValue * 4096) {
+                assertFalse(w.usesDocValues(leaf));
+            }
             assertSameDocs(searcher, l, u);
         }
     }
