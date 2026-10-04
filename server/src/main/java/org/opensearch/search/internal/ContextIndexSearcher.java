@@ -39,6 +39,9 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.QueryTimeout;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.BulkScorer;
 import org.apache.lucene.search.CollectionStatistics;
 import org.apache.lucene.search.CollectionTerminatedException;
@@ -77,6 +80,7 @@ import org.opensearch.search.SearchHits;
 import org.opensearch.search.SearchService;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.InternalAggregations;
+import org.opensearch.search.approximate.ApproximatePointRangeQuery;
 import org.opensearch.search.approximate.ApproximateScoreQuery;
 import org.opensearch.search.dfs.AggregatedDfs;
 import org.opensearch.search.fetch.FetchSearchResult;
@@ -88,6 +92,7 @@ import org.opensearch.search.profile.query.QueryProfiler;
 import org.opensearch.search.profile.query.QueryTimingType;
 import org.opensearch.search.query.QueryPhase;
 import org.opensearch.search.query.QuerySearchResult;
+import org.opensearch.search.query.SortIoExperiments;
 import org.opensearch.search.sort.FieldSortBuilder;
 import org.opensearch.search.sort.MinAndMax;
 import org.opensearch.search.streaming.FlushMode;
@@ -211,6 +216,8 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     public Query rewrite(Query original) throws IOException {
         if (original instanceof ApproximateScoreQuery approximateScoreQuery) {
             approximateScoreQuery.setContext(searchContext);
+        } else if (original instanceof BooleanQuery booleanQuery) {
+            original = approximateBoolean(booleanQuery);
         }
         if (profiler != null) {
             profiler.startRewriteTime();
@@ -223,6 +230,41 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
                 profiler.stopAndAddRewriteTime();
             }
         }
+    }
+
+    /**
+     * Experiment D-a ({@link SortIoExperiments#isApproxSingle()}): a {@code bool} whose only clause is a required
+     * {@link ApproximateScoreQuery} matches the same docs as that clause, so it is replaced by the clause (MUST) or by
+     * the clause with score 0 (FILTER, as {@link BooleanQuery#rewrite} does), and the clause gets the search context, so
+     * the approximation applies as for a top-level range. If the clause cannot approximate, the query is unchanged.
+     */
+    private Query approximateBoolean(BooleanQuery query) {
+        // Not with search_after (the approximation narrows the range, so hits.total would count fewer docs than the
+        // bool) and not with deletions (the ascending approximation does not collect extra docs for deleted ones, so
+        // it could return fewer hits than the bool): in both cases the bool keeps its stock form.
+        if (SortIoExperiments.isApproxSingle()
+            && hasSearchAfter() == false
+            && getIndexReader().hasDeletions() == false
+            && query.clauses().size() == 1
+            && query.getMinimumNumberShouldMatch() == 0
+            && query.clauses().get(0).query() instanceof ApproximateScoreQuery inner) {
+            BooleanClause.Occur occur = query.clauses().get(0).occur();
+            if ((occur == BooleanClause.Occur.FILTER || occur == BooleanClause.Occur.MUST) && inner.resolveIfApproximable(searchContext)) {
+                // the stock approximation can drop docs tied at the cut that the bool would rank first (desc)
+                if (inner.getApproximationQuery() instanceof ApproximatePointRangeQuery range) {
+                    range.setIncludeTies(true);
+                }
+                return occur == BooleanClause.Occur.FILTER ? new BoostQuery(new ConstantScoreQuery(inner), 0f) : inner;
+            }
+        }
+        return query;
+    }
+
+    private boolean hasSearchAfter() {
+        return searchContext != null
+            && searchContext.request() != null
+            && searchContext.request().source() != null
+            && searchContext.request().source().searchAfter() != null;
     }
 
     @Override

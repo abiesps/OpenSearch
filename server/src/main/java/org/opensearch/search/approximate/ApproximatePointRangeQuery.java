@@ -55,6 +55,7 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
     private int size;
     private SortOrder sortOrder;
+    private boolean includeTies;
     public PointRangeQuery pointRangeQuery;
     private final Function<byte[], String> valueToString;
 
@@ -98,6 +99,20 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
 
     public SortOrder getSortOrder() {
         return this.sortOrder;
+    }
+
+    /**
+     * With {@code true}, a descending approximation that stops early also collects every doc whose value equals the
+     * lowest value it included (the cut value), so docs tied at the cut with lower doc IDs, which a field sort ranks
+     * first, are not missed. One-dimensional ranges only. Set by the bool approximation experiment (D-a); off (stock)
+     * by default.
+     */
+    public void setIncludeTies(boolean includeTies) {
+        this.includeTies = includeTies;
+    }
+
+    public boolean isIncludeTies() {
+        return includeTies;
     }
 
     public void setSortOrder(SortOrder sortOrder) {
@@ -208,6 +223,126 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                         return relate(minPackedValue, maxPackedValue);
                     }
                 };
+            }
+
+            /**
+             * As {@link #getIntersectVisitor}, and records in {@code minIncluded[0]} the lowest value the visit may have
+             * included: the cell min of a leaf visited by doc IDs, the value of a matching doc of a leaf visited by
+             * values. A loose (lower) cell min only adds docs that rank after the top hits.
+             */
+            private PointValues.IntersectVisitor getTieTrackingVisitor(DocIdSetBuilder result, long[] docCount, byte[][] minIncluded) {
+                final int bytes = pointRangeQuery.getBytesPerDim();
+                final PointValues.IntersectVisitor in = getIntersectVisitor(result, docCount);
+                return new PointValues.IntersectVisitor() {
+                    final byte[] cellMin = new byte[bytes];
+                    boolean cellIncluded;
+
+                    private void include(byte[] value) {
+                        if (minIncluded[0] == null) {
+                            minIncluded[0] = ArrayUtil.copyOfSubArray(value, 0, bytes);
+                        } else if (comparator.compare(value, 0, minIncluded[0], 0) < 0) {
+                            System.arraycopy(value, 0, minIncluded[0], 0, bytes);
+                        }
+                    }
+
+                    private void includeCell() {
+                        if (cellIncluded == false) {
+                            include(cellMin);
+                            cellIncluded = true;
+                        }
+                    }
+
+                    @Override
+                    public void grow(int count) {
+                        in.grow(count);
+                    }
+
+                    @Override
+                    public void visit(int docID) throws IOException {
+                        in.visit(docID);
+                        includeCell();
+                    }
+
+                    @Override
+                    public void visit(DocIdSetIterator iterator) throws IOException {
+                        in.visit(iterator);
+                        includeCell();
+                    }
+
+                    @Override
+                    public void visit(IntsRef ref) throws IOException {
+                        in.visit(ref);
+                        includeCell();
+                    }
+
+                    @Override
+                    public void visit(int docID, byte[] packedValue) throws IOException {
+                        if (matches(packedValue)) {
+                            in.visit(docID);
+                            include(packedValue);
+                        }
+                    }
+
+                    @Override
+                    public void visit(DocIdSetIterator iterator, byte[] packedValue) throws IOException {
+                        if (matches(packedValue)) {
+                            in.visit(iterator);
+                            include(packedValue);
+                        }
+                    }
+
+                    @Override
+                    public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
+                        System.arraycopy(minPackedValue, 0, cellMin, 0, bytes);
+                        cellIncluded = false;
+                        return in.compare(minPackedValue, maxPackedValue);
+                    }
+                };
+            }
+
+            /** Adds every doc whose value equals {@code cut} (if it is in the range); {@code result} must deduplicate. */
+            private void addTies(PointValues values, DocIdSetBuilder result, byte[] cut) throws IOException {
+                if (cut == null || comparator.compare(cut, 0, pointRangeQuery.getLowerPoint(), 0) < 0) {
+                    return;
+                }
+                values.intersect(new PointValues.IntersectVisitor() {
+                    DocIdSetBuilder.BulkAdder adder;
+
+                    @Override
+                    public void grow(int count) {
+                        adder = result.grow(count);
+                    }
+
+                    @Override
+                    public void visit(int docID) {
+                        adder.add(docID);
+                    }
+
+                    @Override
+                    public void visit(int docID, byte[] packedValue) {
+                        if (comparator.compare(packedValue, 0, cut, 0) == 0) {
+                            adder.add(docID);
+                        }
+                    }
+
+                    @Override
+                    public void visit(DocIdSetIterator iterator, byte[] packedValue) throws IOException {
+                        if (comparator.compare(packedValue, 0, cut, 0) == 0) {
+                            adder.add(iterator);
+                        }
+                    }
+
+                    @Override
+                    public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
+                        if (comparator.compare(minPackedValue, 0, cut, 0) > 0 || comparator.compare(maxPackedValue, 0, cut, 0) < 0) {
+                            return PointValues.Relation.CELL_OUTSIDE_QUERY;
+                        }
+                        if (comparator.compare(minPackedValue, 0, cut, 0) == 0 && comparator.compare(maxPackedValue, 0, cut, 0) == 0) {
+                            return PointValues.Relation.CELL_INSIDE_QUERY;
+                        }
+                        return PointValues.Relation.CELL_CROSSES_QUERY;
+                    }
+                });
             }
 
             // we pull this from PointRangeQuery since it is final
@@ -386,15 +521,27 @@ public class ApproximatePointRangeQuery extends ApproximateQuery {
                         // than expected
                         final int deletedDocs = reader.numDeletedDocs();
                         size += deletedDocs;
+                        final boolean ties = includeTies && pointRangeQuery.getNumDims() == 1;
                         return new ScorerSupplier() {
 
-                            final DocIdSetBuilder result = new DocIdSetBuilder(reader.maxDoc(), values);
-                            final PointValues.IntersectVisitor visitor = getIntersectVisitor(result, docCount);
+                            // with ties the cut value's docs are added twice (walk and tie pass): this builder deduplicates
+                            final DocIdSetBuilder result = ties
+                                ? new DocIdSetBuilder(reader.maxDoc())
+                                : new DocIdSetBuilder(reader.maxDoc(), values);
+                            final byte[][] minIncluded = new byte[1][];
+                            final PointValues.IntersectVisitor visitor = ties
+                                ? getTieTrackingVisitor(result, docCount, minIncluded)
+                                : getIntersectVisitor(result, docCount);
                             long cost = -1;
 
                             @Override
                             public Scorer get(long leadCost) throws IOException {
                                 intersectRight(values.getPointTree(), visitor, docCount);
+                                if (ties) {
+                                    // always: the walk can stop early with docCount below size (visit(DocIdSetIterator)
+                                    // does not count), and when it read the whole range the pass adds only duplicates
+                                    addTies(values, result, minIncluded[0]);
+                                }
                                 DocIdSetIterator iterator = result.build().iterator();
                                 return new ConstantScoreScorer(score(), scoreMode, iterator);
                             }

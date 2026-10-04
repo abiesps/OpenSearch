@@ -60,6 +60,20 @@ public final class ApproximateScoreQuery extends Query {
         resolvedQuery = approximationQuery.canApproximate(context) ? approximationQuery : originalQuery;
     };
 
+    /**
+     * Resolves to the approximation if it can approximate in {@code context}; otherwise leaves this query unresolved, so
+     * it rewrites to the original query exactly as when no context is set.
+     *
+     * @return whether the query now resolves to the approximation
+     */
+    public boolean resolveIfApproximable(SearchContext context) {
+        if (approximationQuery.canApproximate(context)) {
+            resolvedQuery = approximationQuery;
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public String toString(String s) {
         return "ApproximateScoreQuery(originalQuery="
