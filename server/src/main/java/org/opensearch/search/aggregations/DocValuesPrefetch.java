@@ -1343,6 +1343,14 @@ public final class DocValuesPrefetch {
             final PlainSink sink = new PlainSink(delegate, p);
             this.plain = sink;
             return new LeafCollector() {
+                /** In pass-through, docs below it go straight to the delegate; MIN_VALUE once buffering. */
+                private int passBelow = 0;
+
+                /** Refreshes {@code passBelow} after the planner may have moved or left pass-through. */
+                private void updatePassBelow() {
+                    passBelow = bypass ? p.trigger : Integer.MIN_VALUE;
+                }
+
                 @Override
                 public void setScorer(Scorable scorer) throws IOException {
                     delegate.setScorer(scorer);
@@ -1350,13 +1358,16 @@ public final class DocValuesPrefetch {
 
                 @Override
                 public void collect(int doc) throws IOException {
+                    if (doc < passBelow) {
+                        delegate.collect(doc);
+                        return;
+                    }
                     if (bypass) {
-                        if (doc >= p.trigger) {
-                            p.advance(doc);
-                            if (bypass == false) {
-                                arriveDoc(doc);
-                                return;
-                            }
+                        p.advance(doc);
+                        updatePassBelow();
+                        if (bypass == false) {
+                            arriveDoc(doc);
+                            return;
                         }
                         delegate.collect(doc);
                         return;
@@ -1368,6 +1379,7 @@ public final class DocValuesPrefetch {
                 public void collect(DocIdStream s) throws IOException {
                     if (bypass) {
                         final int rest = sink.stream(s, true);
+                        updatePassBelow();
                         if (rest >= 0) {
                             arriveStream(rest, s);
                         }
@@ -1380,6 +1392,7 @@ public final class DocValuesPrefetch {
                 public void collectRange(int min, int max) throws IOException {
                     if (bypass) {
                         final int rest = sink.range(min, max, true);
+                        updatePassBelow();
                         if (rest >= 0) {
                             arriveRange(rest, max);
                         }
