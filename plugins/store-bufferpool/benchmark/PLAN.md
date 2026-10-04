@@ -829,6 +829,32 @@ Each change behind its own switch, measured alone against stock, then stacked:
 - Why warm desc is slower than warm asc: inside a time-ascending run every delivered doc beats the bottom in desc
   (copy + heap update + competitive-iterator update per doc); JFR: `PriorityQueue.downHeap` 28.7%, compare 54.6%.
 
+### Step 2 progress (workflow `bkd-split-sort-cold-resume`; design rev 8 APPROVED; plan `.agents/tasks/bkd-split-2026-10-03/plan.md`; measured rows in `results.md` there)
+Plan: FEAT-001 harness, FEAT-002 split format, FEAT-003 wiring + twin + rows stock-v1/B0, FEAT-004 A/B/B+childpf,
+FEAT-005 C/D-a/D-b, FEAT-006 E, FEAT-007 K1-K4, FEAT-008 combinations + leave-one-out, FEAT-009 E8; then review, finalize.
+- **FEAT-001 (done)**: switches `POST/GET /_bufferpool/sort_opt`, unread-prefetch tracking with the requesting code,
+  benchmark variants with full result checks (Lucene `ba32db1397`, `b5f768b3ee`; OpenSearch `22501382426`,
+  `3243ff254f0`, `45be5053fe9`). Stock itself leaves 1 prefetched block unread (Lucene's own first-page doc-values
+  prefetch), so the trace gate is "no unread prefetch beyond stock's".
+- **FEAT-002 (done)**: split points format chosen per field (`PerFieldPointsFormat`, `Lucene90SplitPointsFormat`,
+  codec `Lucene104SplitPoints`; Lucene `1ffa33393c`, `bcb677bd40`). Stock writer diff empty; byte-identity golden hash
+  test passes; new tests 860 runs. 1-D only (the writer rejects other fields; the chooser falls back to stock).
+- **FEAT-003 (done)**: mapping `meta.points_format` picks the split format (plugin `PointsFormatSelectingCodec`;
+  OpenSearch `f90024c52de`, `07b6446d07c`, `c442f6a62a7`, `d3928c9677f`). New corpus
+  `logs_v3_30000000_42_f246f5c2_9fd8171c`: 30M docs, 1 segment, `@timestamp` + twin `@timestamp_split` (identical
+  values, checked per doc). Split files: `.kdi` 1,295,224 bytes (inner nodes 328,377 + leaf directory 966,760 = 1.3%
+  of `.kdd`+`.kdv`), `.kdd` 60,410,537, `.kdv` 39,323,447 (stock leaves 99.7 MB).
+  - The twin changed how segments merged: logs_v3 has 4 time runs (logs_v1 6), and stock is much faster on it for 7-day
+    and all-time sorts (asc 7d about 330 ms cold vs about 1,600 ms on logs_v1). **From here on every row compares inside
+    logs_v3** (stock on `@timestamp` vs changes, on `@timestamp` or the twin); the 4x target is vs stock on logs_v3.
+  - stock-v1 (logs_v1 vs logs_v3, both stock): no measurable cost of the per-field points dispatch.
+  - B0 (split format, every switch off, `aggs_20261003_170356.json`, load 3-4), cold vs stock: 1-day sorts -11% to -19%
+    (`.kdd` 109 -> 67 doc-ID blocks + 2 values + 2 directory, as designed); 1-day aggregation filters -14% to -17%;
+    desc 7d -5% to -13%; small queries (bare range, match_all) +9 to +23 ms (1-2 directory blocks + 1 values block);
+    full scans unchanged. Warm: within the bar (two outliers re-checked interleaved: -0.6 and +0.5 ms). Results
+    identical to stock on all 78 queries. The tight leaf bounds changed no comparator decision on this segment.
+- FEAT-004 (A, B, B+childpf prefetch): running.
+
 ### Step 3 (after the 4x target is met): Big5 on EC2 (user's AWS account 823904838333, admin access)
 - Goal: the gains must be measurable on the OpenSearch Benchmark big5 workload, 1,000 GB corpus, hot path and cold path,
   not only on the laptop corpus.
