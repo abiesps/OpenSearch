@@ -638,6 +638,7 @@ public final class DocValuesPrefetch {
             return null;
         }
         final Planner p = new Planner(field, ra, filter, nodeBytes, sortRequests);
+        p.entryCheck = true;
         sortPlanners.increment();
         p.ahead = ra;
         ra.planners.add(p);
@@ -667,6 +668,13 @@ public final class DocValuesPrefetch {
         private int found = -1;
         /** First doc of the node after {@link #trigger}'s, once computed for the gate (-1: not yet). */
         private int gateTarget = -1;
+        /**
+         * Sort planners in pass-through: whether the node starting at {@link #trigger} was cached when collection entered
+         * the node before it. The last reads of a node touch a few bytes of the next one, so by the time collection
+         * reaches the trigger that node can be loaded by those reads even when the data is cold.
+         */
+        private boolean entryCheck;
+        private boolean entryLoaded = true;
 
         private Planner(Field field, Matches matches, ReadFilter filter, long nodeBytes, LongAdder requestCounter) {
             this.field = field;
@@ -734,8 +742,17 @@ public final class DocValuesPrefetch {
         private void bypassAdvance(int doc) throws IOException {
             final int nodeEnd = field.nextNodeDoc(doc, nodeBytes);
             final boolean last = nodeEnd == DocIdSetIterator.NO_MORE_DOCS || nodeEnd < 0;
-            if (field.isLoaded(doc, nodeBytes)) {
+            boolean loaded = field.isLoaded(doc, nodeBytes);
+            if (loaded && entryCheck && entryLoaded == false && (doc == trigger || field.nextNodeDoc(trigger, nodeBytes) == nodeEnd)) {
+                // this node was not cached when collection entered the previous one: the reads at the end of that node
+                // (which touch a few bytes past it) loaded it
+                loaded = false;
+            }
+            if (loaded) {
                 trigger = last ? DocIdSetIterator.NO_MORE_DOCS : nodeEnd;
+                if (entryCheck) {
+                    entryLoaded = last || field.isLoaded(nodeEnd, nodeBytes);
+                }
                 return;
             }
             ahead.startBuffering();

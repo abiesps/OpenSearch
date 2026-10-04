@@ -421,6 +421,77 @@ public class SortValuesPrefetchTests extends OpenSearchTestCase {
         }
     }
 
+    /**
+     * The read of a node's last docs touches the next node, so when collection reaches the next node it is loaded even
+     * on cold data. A sort planner that entered the previous node with the next one not cached still starts buffering
+     * there; with everything cached it stays in pass-through.
+     */
+    public void testReadSpillIntoTheNextNode() throws IOException {
+        for (boolean warm : new boolean[] { false, true }) {
+            final int maxDoc = 200_000;
+            final int nodeDocs = 10_000;
+            final Set<Integer> loaded = new HashSet<>();
+            final List<Integer> requested = new ArrayList<>();
+            if (warm) {
+                for (int n = 0; n <= maxDoc / nodeDocs; n++) {
+                    loaded.add(n);
+                }
+            } else {
+                loaded.add(0); // the first node was read by the query (a boundary block of a doc-values range)
+            }
+            final DocValuesPrefetch.Field field = new DocValuesPrefetch.Field() {
+                @Override
+                public int nextNodeDoc(int doc, long nodeBytes) {
+                    final int next = (doc / nodeDocs + 1) * nodeDocs;
+                    return next >= maxDoc ? DocIdSetIterator.NO_MORE_DOCS : next;
+                }
+
+                @Override
+                public void prefetch(int doc, long nodeBytes) {
+                    requested.add(doc);
+                    loaded.add(doc / nodeDocs);
+                }
+
+                @Override
+                public boolean isLoaded(int doc, long nodeBytes) {
+                    return loaded.contains(doc / nodeDocs);
+                }
+            };
+            final DocValuesPrefetch.RunAhead ra = DocValuesPrefetch.sortRunAhead(SortIoExperiments.MIN_SORT_PREFETCH_DOCS);
+            final DocValuesPrefetch.Planner planner = DocValuesPrefetch.sortPlanner(field, ra, DocValuesPrefetch.ALL_MATCHES, 4096);
+            final List<Integer> delivered = new ArrayList<>();
+            final LeafCollector out = new LeafCollector() {
+                @Override
+                public void setScorer(Scorable scorer) {}
+
+                @Override
+                public void collect(int doc) {
+                    delivered.add(doc);
+                    loaded.add(doc / nodeDocs);
+                    if ((doc + 1) % nodeDocs == 0) {
+                        loaded.add(doc / nodeDocs + 1); // an 8-byte read at the end of the node
+                    }
+                }
+            };
+            final LeafCollector in = ra.wrapLeafCollector(out, planner);
+            for (int doc = 0; doc < maxDoc; doc++) {
+                in.collect(doc);
+            }
+            in.finish();
+            assertEquals(maxDoc, delivered.size());
+            for (int i = 0; i < maxDoc; i++) {
+                assertEquals(i, (int) delivered.get(i));
+            }
+            if (warm) {
+                assertTrue("nothing requested while cached", requested.isEmpty());
+            } else {
+                // buffering starts at the second node, so every later node is requested ahead of collection
+                assertEquals((int) (2L * nodeDocs), (int) requested.get(0));
+                assertEquals(maxDoc / nodeDocs - 2, requested.size());
+            }
+        }
+    }
+
     /** Sorted searches return the same hits, sort values and totals with and without the wrapper. */
     public void testSameTopHits() throws IOException {
         SortIoExperiments.setSortPrefetchNodeBytes(4096);
@@ -759,6 +830,175 @@ public class SortValuesPrefetchTests extends OpenSearchTestCase {
                 );
                 when(c.collapse()).thenReturn(collapse);
                 assertFalse("collapse", wrapped(c, false));
+            }
+        }
+    }
+
+    /**
+     * Doc values of {@code nodeDocs} docs per node over a simulated cache shared by every instance: a value read loads
+     * its node, a prefetch loads the node and logs the request.
+     */
+    private static final class CacheSim {
+        final int nodeDocs;
+        final Set<Integer> loaded = new HashSet<>();
+        final List<Integer> requests = new ArrayList<>();
+        final Set<Integer> requestedNodes = new HashSet<>();
+        final Set<Integer> readNodes = new HashSet<>();
+        int comparatorReads;
+
+        CacheSim(int nodeDocs) {
+            this.nodeDocs = nodeDocs;
+        }
+
+        NumericDocValues wrap(NumericDocValues in, int maxDoc) {
+            return new FilterNumericDocValues(in) {
+                @Override
+                public long longValue() throws IOException {
+                    final int node = docID() / nodeDocs;
+                    loaded.add(node);
+                    readNodes.add(node);
+                    return super.longValue();
+                }
+
+                @Override
+                public boolean prefetchNodes(int fromDoc, int toDoc, long nodeBytes) {
+                    for (int n = fromDoc / nodeDocs; n <= (toDoc - 1) / nodeDocs; n++) {
+                        loaded.add(n);
+                        requestedNodes.add(n);
+                    }
+                    requests.add(fromDoc);
+                    return true;
+                }
+
+                @Override
+                public boolean isNodeLoaded(int doc, long nodeBytes) {
+                    return loaded.contains(doc / nodeDocs);
+                }
+
+                @Override
+                public int nextPrefetchNodeDoc(int doc, long nodeBytes) {
+                    final long next = ((long) doc / nodeDocs + 1) * nodeDocs;
+                    return next >= maxDoc ? DocIdSetIterator.NO_MORE_DOCS : (int) next;
+                }
+            };
+        }
+    }
+
+    /** Wraps the single-valued sorted numeric doc values of every field with {@link CacheSim}. */
+    private static final class CacheSimReader extends FilterDirectoryReader {
+        private final CacheSim sim;
+
+        CacheSimReader(DirectoryReader in, CacheSim sim) throws IOException {
+            super(in, new SubReaderWrapper() {
+                @Override
+                public LeafReader wrap(LeafReader reader) {
+                    return new FilterLeafReader(reader) {
+                        @Override
+                        public SortedNumericDocValues getSortedNumericDocValues(String field) throws IOException {
+                            final SortedNumericDocValues values = super.getSortedNumericDocValues(field);
+                            final NumericDocValues single = values == null
+                                ? null
+                                : org.apache.lucene.index.DocValues.unwrapSingleton(values);
+                            return single == null ? values : org.apache.lucene.index.DocValues.singleton(sim.wrap(single, maxDoc()));
+                        }
+
+                        @Override
+                        public CacheHelper getCoreCacheHelper() {
+                            return null;
+                        }
+
+                        @Override
+                        public CacheHelper getReaderCacheHelper() {
+                            return null;
+                        }
+                    };
+                }
+            });
+            this.sim = sim;
+        }
+
+        @Override
+        protected DirectoryReader doWrapDirectoryReader(DirectoryReader in) throws IOException {
+            return new CacheSimReader(in, sim);
+        }
+
+        @Override
+        public CacheHelper getReaderCacheHelper() {
+            return null;
+        }
+    }
+
+    /**
+     * With a simulated cache shared by the query and the comparator, for a points range, a doc-values range and the
+     * clustered skipper range (C): same hits, every requested node is read, and a points range spanning several nodes
+     * gets its comparator reads planned.
+     */
+    public void testSimulatedCache() throws IOException {
+        SortIoExperiments.setSortPrefetchNodeBytes(4096);
+        try (Directory dir = newDirectory()) {
+            final IndexWriterConfig iwc = new IndexWriterConfig().setCodec(TestUtil.getDefaultCodec());
+            final int numDocs = 300_000;
+            try (IndexWriter w = new IndexWriter(dir, iwc)) {
+                for (int i = 0; i < numDocs; i++) {
+                    Document doc = new Document();
+                    final long value = i * 20L + randomInt(1000);
+                    doc.add(SortedNumericDocValuesField.indexedField("ts", value));
+                    doc.add(new LongPoint("ts", value));
+                    w.addDocument(doc);
+                }
+                w.forceMerge(1);
+            }
+            for (int q = 0; q < 6; q++) {
+                final CacheSim sim = new CacheSim(randomFrom(5_000, 20_000, 50_000));
+                try (IndexReader reader = new CacheSimReader(DirectoryReader.open(dir), sim)) {
+                    final IndexSearcher searcher = new IndexSearcher(reader);
+                    searcher.setQueryCache(null);
+                    final long a = randomLongBetween(0, numDocs * 10L);
+                    final long b = a + randomLongBetween(numDocs * 2L, numDocs * 10L);
+                    final Query points = LongPoint.newRangeQuery("ts", a, b);
+                    final Query dv = SortedNumericDocValuesField.newSlowRangeQuery("ts", a, b);
+                    final Query query = switch (q % 3) {
+                        case 0 -> points;
+                        case 1 -> dv;
+                        default -> new SkipperClusteredRangeQuery(
+                            "ts",
+                            a,
+                            b,
+                            new org.apache.lucene.search.IndexOrDocValuesQuery(points, dv),
+                            dv
+                        );
+                    };
+                    final Sort sort = new Sort(new SortedNumericSortField("ts", SortField.Type.LONG, randomBoolean()));
+                    final int size = randomFrom(10, 500);
+                    final TopFieldDocs expected = searcher.search(query, new TopFieldCollectorManager(sort, size, null, 1000));
+                    sim.loaded.clear();
+                    sim.readNodes.clear();
+                    final TopFieldCollectorManager manager = new TopFieldCollectorManager(sort, size, null, 1000);
+                    final TopFieldDocs actual = searcher.search(query, new CollectorManager<Collector, TopFieldDocs>() {
+                        final List<TopFieldCollector> collectors = new ArrayList<>();
+
+                        @Override
+                        public Collector newCollector() throws IOException {
+                            TopFieldCollector c = manager.newCollector();
+                            collectors.add(c);
+                            return SortValuesPrefetch.wrap(c, sort);
+                        }
+
+                        @Override
+                        public TopFieldDocs reduce(Collection<Collector> collected) throws IOException {
+                            return manager.reduce(collectors);
+                        }
+                    });
+                    assertSameTopDocs(expected, actual);
+                    if (q % 3 == 0 && (b - a) / 20 >= 3L * sim.nodeDocs) {
+                        // the points query reads no values: the comparator's reads of later nodes are planned (with a
+                        // doc-values range the query itself may read the values first)
+                        assertFalse(query + ": nodes requested", sim.requests.isEmpty());
+                    }
+                    for (int node : sim.requestedNodes) {
+                        assertTrue(query + ": requested node " + node + " is read", sim.readNodes.contains(node));
+                    }
+                }
             }
         }
     }
