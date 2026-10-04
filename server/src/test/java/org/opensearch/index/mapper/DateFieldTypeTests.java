@@ -80,6 +80,8 @@ import org.opensearch.index.query.QueryRewriteContext;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.search.approximate.ApproximatePointRangeQuery;
 import org.opensearch.search.approximate.ApproximateScoreQuery;
+import org.opensearch.search.query.SkipperClusteredRangeQuery;
+import org.opensearch.search.query.SortIoExperiments;
 import org.opensearch.test.TestSearchContext;
 import org.joda.time.DateTimeZone;
 
@@ -325,6 +327,33 @@ public class DateFieldTypeTests extends FieldTypeTestCase {
             )
         );
         assertEquals(expected, ft.rangeQuery("now", instant2, true, true, null, null, null, context));
+
+        // experiment C: the range keeps its wrappers and answers from the skipper on clustered segments
+        SortIoExperiments.setSkipperRange(true);
+        try {
+            Query dv = SortedNumericDocValuesField.newSlowRangeQuery("field", instant1, instant2);
+            Query skipperExpected = new ApproximateScoreQuery(
+                new DateRangeIncludingNowQuery(
+                    new SkipperClusteredRangeQuery(
+                        "field",
+                        instant1,
+                        instant2,
+                        new IndexOrDocValuesQuery(LongPoint.newRangeQuery("field", instant1, instant2), dv),
+                        dv
+                    )
+                ),
+                new ApproximatePointRangeQuery(
+                    "field",
+                    pack(new long[] { instant1 }).bytes,
+                    pack(new long[] { instant2 }).bytes,
+                    new long[] { instant1 }.length,
+                    ApproximatePointRangeQuery.LONG_FORMAT
+                )
+            );
+            assertEquals(skipperExpected, ft.rangeQuery("now", instant2, true, true, null, null, null, context));
+        } finally {
+            SortIoExperiments.resetForTest();
+        }
 
         MappedFieldType unsearchable = new DateFieldType(
             "field",

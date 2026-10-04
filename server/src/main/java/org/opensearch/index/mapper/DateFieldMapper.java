@@ -73,6 +73,8 @@ import org.opensearch.search.DocValueFormat;
 import org.opensearch.search.approximate.ApproximatePointRangeQuery;
 import org.opensearch.search.approximate.ApproximateScoreQuery;
 import org.opensearch.search.lookup.SearchLookup;
+import org.opensearch.search.query.SkipperClusteredRangeQuery;
+import org.opensearch.search.query.SortIoExperiments;
 
 import java.io.IOException;
 import java.time.DateTimeException;
@@ -586,6 +588,9 @@ public final class DateFieldMapper extends ParametrizedFieldMapper {
 
                     if (dvQuery != null) {
                         query = new IndexOrDocValuesQuery(pointRangeQuery, dvQuery);
+                        if (SortIoExperiments.isSkipperRange()) {
+                            query = new SkipperClusteredRangeQuery(name(), l, u, query, dvQuery);
+                        }
                         if (context.indexSortedOnField(name())) {
                             query = new IndexSortSortedNumericDocValuesRangeQuery(name(), l, u, query);
                         }

@@ -25,6 +25,7 @@ import org.opensearch.index.mapper.DateFieldMapper;
 import org.opensearch.index.query.DateRangeIncludingNowQuery;
 import org.opensearch.search.approximate.ApproximateScoreQuery;
 import org.opensearch.search.internal.SearchContext;
+import org.opensearch.search.query.SkipperClusteredRangeQuery;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -56,6 +57,7 @@ final class Helper {
         queryWrappers.put(DateRangeIncludingNowQuery.class, q -> ((DateRangeIncludingNowQuery) q).getQuery());
         queryWrappers.put(IndexOrDocValuesQuery.class, q -> ((IndexOrDocValuesQuery) q).getIndexQuery());
         queryWrappers.put(ApproximateScoreQuery.class, q -> ((ApproximateScoreQuery) q).getOriginalQuery());
+        queryWrappers.put(SkipperClusteredRangeQuery.class, q -> ((SkipperClusteredRangeQuery) q).getIndexOrDocValuesQuery());
     }
 
     /**
