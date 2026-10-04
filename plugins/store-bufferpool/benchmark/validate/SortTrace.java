@@ -1,3 +1,4 @@
+
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -27,12 +28,15 @@ import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.DocIdStream;
+import org.apache.lucene.search.FieldComparator;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.FilterDocIdSetIterator;
 import org.apache.lucene.search.IndexOrDocValuesQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.LeafCollector;
+import org.apache.lucene.search.LeafFieldComparator;
 import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.Pruning;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScoreDoc;
@@ -107,6 +111,20 @@ public class SortTrace {
     static final long[] jCounts = new long[4]; // {J, nextDoc+advance calls, intoBitSet calls, nodes skipped in total}
     static String traced; // the field of the current query
     static final Map<String, FieldState> fieldStates = new HashMap<>();
+    // per time run of the traced field: {setBottom calls, comparator update attempts (estimates on the comparator's
+    // tree, or installs when it has no tree), attempts outside a comparator callback (K2 trailing), comparator
+    // intersections, bound writes (setBottom/threshold calls after which the comparator's competitive bound
+    // changed), delivered docs}
+    static final int RUN_STATS = 6;
+    static long[][] runStats = new long[0][RUN_STATS];
+    static int curDoc = -1; // last doc the comparator saw (copy/compareBottom/compareTop)
+    static int inCallback; // > 0 while a comparator callback (setBottom, setHitsThresholdReached, setScorer) runs
+
+    static void runCount(int doc, int stat, long n) {
+        final FieldState fs = fieldStates.get(traced);
+        if (fs == null || runStats.length == 0) return;
+        runStats[fs.runOf(Math.max(doc, 0))][stat] += n;
+    }
 
     /** Per sort field: leaf ordinal of every doc, how to read the leaf ordinal of a tree, and the doc-values nodes. */
     static final class FieldState {
@@ -117,6 +135,14 @@ public class SortTrace {
         Method leafKey; // stock: getLeafBlockFP, split: leafID
         boolean split;
         int[] nodeStarts; // first doc of every doc-values node, ascending
+        int[] runStarts; // first doc of every time run (the value jumps by more than a minute), ascending
+
+        final List<Long> runMin = new ArrayList<>(), runMax = new ArrayList<>(); // value range of every time run
+
+        int runOf(int doc) {
+            final int i = Arrays.binarySearch(runStarts, doc);
+            return i >= 0 ? i : -i - 2;
+        }
 
         FieldState(String name, int maxDoc) {
             this.name = name;
@@ -210,6 +236,9 @@ public class SortTrace {
                         estimates.clear();
                         dvReads.clear();
                         Arrays.fill(jCounts, 0);
+                        runStats = new long[fieldStates.get(field).runStarts.length][RUN_STATS];
+                        curDoc = -1;
+                        inCallback = 0;
                         final String[] p = spec.split(":");
                         final boolean desc = p[0].equals("sort_desc");
                         final String sel = p[1], window = p[2];
@@ -221,22 +250,26 @@ public class SortTrace {
                             else size = Integer.parseInt(p[i]);
                         }
                         final Query q = query(field, sel, window);
-                        final SortedNumericSortField sortField = new SortedNumericSortField(
+                        final SortedNumericSortField sortField = new TracingSortField(
                             field,
-                            SortField.Type.LONG,
                             desc,
                             desc ? SortedNumericSelector.Type.MAX : SortedNumericSelector.Type.MIN
                         );
                         if (k1 && window.equals("all") == false) {
                             final long[] r = range(window);
                             try {
-                                sortField.getClass().getMethod("setCompetitiveBounds", long.class, long.class).invoke(sortField, r[0], r[1]);
+                                sortField.getClass()
+                                    .getMethod("setCompetitiveBounds", long.class, long.class)
+                                    .invoke(sortField, r[0], r[1]);
                             } catch (NoSuchMethodException e) {
                                 throw new IllegalStateException("--k1 needs SortedNumericSortField.setCompetitiveBounds (FEAT-007)", e);
                             }
                         }
                         final long t0 = System.nanoTime();
-                        final TopFieldDocs top = searcher.search(q, new TopFieldCollectorManager(new Sort(sortField), size, null, threshold));
+                        final TopFieldDocs top = searcher.search(
+                            q,
+                            new TopFieldCollectorManager(new Sort(sortField), size, null, threshold)
+                        );
                         final long nanos = System.nanoTime() - t0;
                         if (rep == 0) continue;
                         print(out, spec, field, q, top, nanos);
@@ -250,14 +283,16 @@ public class SortTrace {
                         summary.append(
                             String.format(
                                 Locale.ROOT,
-                                " | %s: calls %d, intersections %d, estimates %s, leaves %d ids + %d values, J %d",
+                                " | %s: calls %d, intersections %d, estimates %s, leaves %d ids + %d values, J %d, per run "
+                                    + "[setBottom, attempts, trailing, intersects, bound writes, delivered] %s",
                                 field,
                                 calls.size(),
                                 inter,
                                 estimates,
                                 vd,
                                 vv,
-                                jCounts[0]
+                                jCounts[0],
+                                Arrays.deepToString(runStats)
                             )
                         );
                     }
@@ -353,6 +388,24 @@ public class SortTrace {
             doc = next;
         }
         fs.nodeStarts = starts.stream().mapToInt(Integer::intValue).toArray();
+        // time runs: a new run starts where the value jumps (either way) by more than a minute from the previous doc
+        final NumericDocValues values = DocValues.unwrapSingleton(leaf.getSortedNumericDocValues(fs.name));
+        final List<Integer> runs = new ArrayList<>();
+        runs.add(0);
+        long prev = Long.MIN_VALUE;
+        for (int d = values.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = values.nextDoc()) {
+            final long v = values.longValue();
+            if (prev != Long.MIN_VALUE && Math.abs(v - prev) > 60_000L) runs.add(d);
+            if (runs.size() > fs.runMin.size()) {
+                fs.runMin.add(v);
+                fs.runMax.add(v);
+            }
+            final int r = runs.size() - 1;
+            fs.runMin.set(r, Math.min(fs.runMin.get(r), v));
+            fs.runMax.set(r, Math.max(fs.runMax.get(r), v));
+            prev = v;
+        }
+        fs.runStarts = runs.stream().mapToInt(Integer::intValue).toArray();
     }
 
     /**
@@ -381,7 +434,8 @@ public class SortTrace {
         out.printf(
             Locale.ROOT,
             "{\"layout\": \"%s\", \"tree\": \"%s\", \"leaves\": %d, \"node_bytes\": %d, \"nodes\": %d, \"min_node_docs\": %d, "
-                + "\"max_node_docs\": %d, \"first_node_docs\": %d, \"last_node_docs\": %d, \"min_node_docs_incl_edges\": %d}%n",
+                + "\"max_node_docs\": %d, \"first_node_docs\": %d, \"last_node_docs\": %d, \"min_node_docs_incl_edges\": %d, "
+                + "\"run_starts\": %s, \"run_hours\": %s}%n",
             fs.name,
             fs.split ? "split" : "stock",
             fs.numLeaves,
@@ -391,9 +445,23 @@ public class SortTrace {
             max,
             docs[0],
             docs[s.length - 1],
-            minAll
+            minAll,
+            Arrays.toString(fs.runStarts),
+            runHours(fs)
         );
         out.flush();
+    }
+
+    /** Value range of every time run in hours since START_MS, [[min, max], ...]. */
+    static String runHours(FieldState fs) {
+        final StringBuilder sb = new StringBuilder("[");
+        for (int r = 0; r < fs.runMin.size(); r++) {
+            sb.append(r == 0 ? "" : ", ")
+                .append(
+                    String.format(Locale.ROOT, "[%.2f, %.2f]", (fs.runMin.get(r) - START_MS) / 3.6e6, (fs.runMax.get(r) - START_MS) / 3.6e6)
+                );
+        }
+        return sb.append(']').toString();
     }
 
     /** --check-twin: per-doc doc values and point values, size, docCount, min and max of base and twin. */
@@ -527,6 +595,8 @@ public class SortTrace {
                 jCounts[3]
             )
         );
+        sb.append(", \"run_starts\": ").append(Arrays.toString(fieldStates.get(field).runStarts));
+        sb.append(", \"runs\": ").append(Arrays.deepToString(runStats));
         sb.append(", \"dv_reads\": {");
         int k = 0;
         for (var e : dvReads.entrySet()) {
@@ -592,6 +662,171 @@ public class SortTrace {
         }
     }
 
+    /**
+     * The OpenSearch sort field (LONG, MIN for asc, MAX for desc) whose comparator is wrapped to count, per time run,
+     * setBottom calls and bound writes (the leaf comparator's competitive bound read by reflection after each callback)
+     * and to track the doc the comparator last saw. Everything is forwarded, so the comparator works as unwrapped.
+     */
+    static final class TracingSortField extends SortedNumericSortField {
+        TracingSortField(String field, boolean reverse, SortedNumericSelector.Type selector) {
+            super(field, SortField.Type.LONG, reverse, selector);
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public FieldComparator<?> getComparator(int numHits, Pruning pruning) {
+            final FieldComparator<Object> in = (FieldComparator<Object>) super.getComparator(numHits, pruning);
+            return new FieldComparator<Object>() {
+                @Override
+                public int compare(int slot1, int slot2) {
+                    return in.compare(slot1, slot2);
+                }
+
+                @Override
+                public void setTopValue(Object value) {
+                    in.setTopValue(value);
+                }
+
+                @Override
+                public Object value(int slot) {
+                    return in.value(slot);
+                }
+
+                @Override
+                public int compareValues(Object first, Object second) {
+                    return in.compareValues(first, second);
+                }
+
+                @Override
+                public void setSingleSort() {
+                    in.setSingleSort();
+                }
+
+                @Override
+                public void disableSkipping() {
+                    in.disableSkipping();
+                }
+
+                @Override
+                public LeafFieldComparator getLeafComparator(LeafReaderContext context) throws IOException {
+                    return new TracingLeafComparator(in.getLeafComparator(context));
+                }
+            };
+        }
+    }
+
+    static final class TracingLeafComparator implements LeafFieldComparator {
+        final LeafFieldComparator in;
+        final Object builder; // NumericComparator.CompetitiveDISIBuilder, or null
+        final java.lang.reflect.Field minField, maxField;
+        long lastMin = Long.MIN_VALUE, lastMax = Long.MAX_VALUE;
+
+        TracingLeafComparator(LeafFieldComparator in) {
+            this.in = in;
+            Object b = null;
+            java.lang.reflect.Field mn = null, mx = null;
+            try {
+                final java.lang.reflect.Field f = field(in.getClass(), "competitiveDISIBuilder");
+                b = f == null ? null : f.get(in);
+                if (b != null) {
+                    mn = field(b.getClass(), "minValueAsLong");
+                    mx = field(b.getClass(), "maxValueAsLong");
+                    lastMin = mn.getLong(b);
+                    lastMax = mx.getLong(b);
+                }
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+            this.builder = b;
+            this.minField = mn;
+            this.maxField = mx;
+        }
+
+        static java.lang.reflect.Field field(Class<?> c, String name) {
+            for (; c != null; c = c.getSuperclass()) {
+                try {
+                    final java.lang.reflect.Field f = c.getDeclaredField(name);
+                    f.setAccessible(true);
+                    return f;
+                } catch (NoSuchFieldException e) {
+                    // look in the superclass
+                }
+            }
+            return null;
+        }
+
+        private void boundCheck() {
+            if (builder == null) return;
+            try {
+                final long mn = minField.getLong(builder), mx = maxField.getLong(builder);
+                if (mn != lastMin || mx != lastMax) {
+                    runCount(curDoc, 4, 1);
+                    lastMin = mn;
+                    lastMax = mx;
+                }
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        @Override
+        public void setBottom(int slot) throws IOException {
+            runCount(curDoc, 0, 1);
+            inCallback++;
+            try {
+                in.setBottom(slot);
+            } finally {
+                inCallback--;
+            }
+            boundCheck();
+        }
+
+        @Override
+        public int compareBottom(int doc) throws IOException {
+            curDoc = doc;
+            return in.compareBottom(doc);
+        }
+
+        @Override
+        public int compareTop(int doc) throws IOException {
+            curDoc = doc;
+            return in.compareTop(doc);
+        }
+
+        @Override
+        public void copy(int slot, int doc) throws IOException {
+            curDoc = doc;
+            in.copy(slot, doc);
+        }
+
+        @Override
+        public void setScorer(Scorable scorer) throws IOException {
+            inCallback++;
+            try {
+                in.setScorer(scorer);
+            } finally {
+                inCallback--;
+            }
+            boundCheck();
+        }
+
+        @Override
+        public DocIdSetIterator competitiveIterator() throws IOException {
+            return in.competitiveIterator();
+        }
+
+        @Override
+        public void setHitsThresholdReached() throws IOException {
+            inCallback++;
+            try {
+                in.setHitsThresholdReached();
+            } finally {
+                inCallback--;
+            }
+            boundCheck();
+        }
+    }
+
     /** Forwards everything; wraps the competitive iterator (the same wrapper for the same iterator) to count J. */
     static final class JCountingLeafCollector implements LeafCollector {
         final LeafCollector in;
@@ -611,16 +846,27 @@ public class SortTrace {
 
         @Override
         public void collect(int doc) throws IOException {
+            runCount(doc, 5, 1);
             in.collect(doc);
         }
 
         @Override
         public void collect(DocIdStream stream) throws IOException {
-            in.collect(stream);
+            // TopFieldCollector's leaf collectors take streams doc by doc (LeafCollector default), so this is the same path
+            stream.forEach(doc -> {
+                runCount(doc, 5, 1);
+                in.collect(doc);
+            });
         }
 
         @Override
         public void collectRange(int min, int max) throws IOException {
+            final FieldState f = fieldStates.get(traced);
+            for (int r = f.runOf(min); r < f.runStarts.length && f.runStarts[r] < max; r++) {
+                final int from = Math.max(min, f.runStarts[r]);
+                final int to = r + 1 < f.runStarts.length ? Math.min(max, f.runStarts[r + 1]) : max;
+                if (to > from) runStats[r][5] += to - from;
+            }
             in.collectRange(min, max);
         }
 
@@ -784,7 +1030,11 @@ public class SortTrace {
             final int id = calls.size();
             calls.add(caller);
             estimates.add(0);
-            return new CountingTree(in.getPointTree(), id, fs);
+            final boolean comparator = caller.contains("NumericComparator");
+            if (comparator && caller.startsWith("intersect<")) runCount(curDoc, 3, 1);
+            final CountingTree tree = new CountingTree(in.getPointTree(), id, fs);
+            tree.comparator = comparator && caller.startsWith("intersect<") == false;
+            return tree;
         }
 
         @Override
@@ -829,6 +1079,7 @@ public class SortTrace {
         final int call;
         final FieldState fs;
         int depth;
+        boolean comparator; // the comparator's estimate tree: every root bounds read is one update attempt
 
         CountingTree(PointValues.PointTree in, int call, FieldState fs) {
             this.in = in;
@@ -840,6 +1091,7 @@ public class SortTrace {
         public PointValues.PointTree clone() {
             final CountingTree c = new CountingTree(in.clone(), call, fs);
             c.depth = depth;
+            c.comparator = comparator;
             return c;
         }
 
@@ -864,7 +1116,13 @@ public class SortTrace {
 
         @Override
         public byte[] getMinPackedValue() {
-            if (depth == 0) estimates.set(call, estimates.get(call) + 1);
+            if (depth == 0) {
+                estimates.set(call, estimates.get(call) + 1);
+                if (comparator) {
+                    runCount(curDoc, 1, 1);
+                    if (inCallback == 0) runCount(curDoc, 2, 1);
+                }
+            }
             return in.getMinPackedValue();
         }
 

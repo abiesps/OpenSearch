@@ -229,9 +229,10 @@ public class BkdLayout {
         }
 
         void regions(StringBuilder regions) {
-            final String fmt =
-                "{\"field\": \"%s\", \"region\": \"%s\", \"file\": \"%s\", \"start\": %d, \"end\": %d, \"info\": \"%s\"},%n";
-            regions.append(String.format(Locale.ROOT, fmt, name, "points-split-index", prefix + "kdi", indexStart, indexStart + numIndexBytes, ""));
+            final String fmt = "{\"field\": \"%s\", \"region\": \"%s\", \"file\": \"%s\", \"start\": %d, \"end\": %d, \"info\": \"%s\"},%n";
+            regions.append(
+                String.format(Locale.ROOT, fmt, name, "points-split-index", prefix + "kdi", indexStart, indexStart + numIndexBytes, "")
+            );
             regions.append(
                 String.format(Locale.ROOT, fmt, name, "points-split-dir", prefix + "kdi", directoryStart, directoryEnd, numPages + " pages")
             );
@@ -239,7 +240,16 @@ public class BkdLayout {
                 String.format(Locale.ROOT, fmt, name, "points-split-docs", prefix + "kdd", dataStart, docDataEnd, numLeaves + " leaves")
             );
             regions.append(
-                String.format(Locale.ROOT, fmt, name, "points-split-values", prefix + "kdv", valDataStart, valDataEnd, numLeaves + " leaves")
+                String.format(
+                    Locale.ROOT,
+                    fmt,
+                    name,
+                    "points-split-values",
+                    prefix + "kdv",
+                    valDataStart,
+                    valDataEnd,
+                    numLeaves + " leaves"
+                )
             );
         }
 
