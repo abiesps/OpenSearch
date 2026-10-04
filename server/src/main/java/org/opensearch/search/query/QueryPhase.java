@@ -222,6 +222,11 @@ public class QueryPhase {
                 }
             }
 
+            if (SortIoExperiments.isClamp()) {
+                // K1: tell the sort comparator the range every match has on a date sort field
+                SortQueryBounds.apply(searchContext, query);
+            }
+
             final LinkedList<QueryCollectorContext> collectors = new LinkedList<>();
             // whether the chain contains a collector that filters documents
             boolean hasFilterCollector = false;
