@@ -387,6 +387,183 @@ public class ApproximateBooleanQueryTests extends OpenSearchTestCase {
         }
     }
 
+    // ---------------------------------------------------------------- D-b
+
+    static Query bool(String field, long l, long u, String selValue, boolean rangeMust, boolean selMust) {
+        return new BooleanQuery.Builder().add(range(field, l, u), rangeMust ? BooleanClause.Occur.MUST : BooleanClause.Occur.FILTER)
+            .add(new TermQuery(new Term(SEL, selValue)), selMust ? BooleanClause.Occur.MUST : BooleanClause.Occur.FILTER)
+            .build();
+    }
+
+    /** Rewrites with D-b on, checks that D-b applied, and compares with the plain bool. */
+    static void assertBoolSame(TestIndex index, Request r, long l, long u, String selValue) throws IOException {
+        boolean rangeMust = randomBoolean();
+        boolean selMust = randomBoolean();
+        SortIoExperiments.setApproxBool(true);
+        Query rewritten = contextSearcher(index.reader, r.context()).rewrite(bool(r.field(), l, u, selValue, rangeMust, selMust));
+        assertTrue(rewritten.toString(), rewritten instanceof ApproximateScoreQuery);
+        assertTrue(((ApproximateScoreQuery) rewritten).resolvedQuery instanceof ApproximateBooleanQuery);
+        TopFieldDocs actual = run(index.reader, rewritten, r);
+        TopFieldDocs expected = run(index.reader, bool(r.field(), l, u, selValue, rangeMust, selMust), r);
+        assertSameTopDocs(r + " [" + l + ", " + u + "] sel=" + selValue, expected, actual, r);
+    }
+
+    public void testBoolRandom() throws IOException {
+        int numDocs = randomIntBetween(3_000, 20_000);
+        long maxValue = randomFrom(numDocs / 8L, numDocs * 4L);
+        long[] values = randomValues(numDocs, maxValue);
+        double ratio = randomFrom(0.01, 0.1, 0.3, 0.5, 0.9);
+        try (
+            TestIndex index = new TestIndex(
+                values,
+                randomSelection(numDocs, ratio),
+                randomFrom(0.0, 0.05, 0.3),
+                randomFrom(16, 64, 512),
+                randomIntBetween(1, 3)
+            )
+        ) {
+            for (String field : FIELDS) {
+                for (SortOrder order : SortOrder.values()) {
+                    long l = randomLongBetween(0, maxValue / 2);
+                    long u = randomLongBetween(l, maxValue);
+                    assertBoolSame(index, new Request(field, order, randomFrom(10, 500), randomTth(), null), l, u, "s");
+                }
+            }
+        }
+    }
+
+    public void testBoolEmptyResults() throws IOException {
+        long[] values = randomValues(4_000, 1_000);
+        try (TestIndex index = new TestIndex(values, randomSelection(4_000, 0.5), 0, 64, randomIntBetween(1, 2))) {
+            for (String field : FIELDS) {
+                for (SortOrder order : SortOrder.values()) {
+                    Request r = new Request(field, order, 10, randomFrom(SearchContext.TRACK_TOTAL_HITS_DISABLED, 100), null);
+                    assertBoolSame(index, r, 2_000, 3_000, "s"); // range outside the values
+                    assertBoolSame(index, r, 0, 1_000, "none"); // other clause matches nothing
+                    assertBoolSame(index, r, 10, 12, "s"); // fewer matches than the budget: exact count
+                }
+            }
+        }
+    }
+
+    /**
+     * Leaves of 16 docs; doc i: values 0..43 for docs 0..43, value 50 for docs 44..99 (the end of leaf 2, all of leaves
+     * 3, 4 and 5, the start of leaf 6), values 60..63 for docs 100..103. The other clause drops some tied docs and, when
+     * middleEmpty, every doc of the middle tied leaves 3 and 4, so the desc tie loop must continue past leaves that add
+     * no match to reach the matches of leaf 2.
+     */
+    private void assertTiesOverLeaves(boolean middleEmpty) throws IOException {
+        long[] values = new long[104];
+        boolean[] selected = new boolean[104];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i < 44 ? i : i < 100 ? 50 : 60 + (i - 100);
+            boolean middle = i >= 48 && i < 80;
+            selected[i] = middleEmpty && middle ? false : random().nextDouble() < 0.7;
+        }
+        selected[45] = true; // leaf 2 holds a tied match
+        Arrays.fill(selected, 100, 104, true); // the 4 hits above the tied value
+        try (TestIndex index = new TestIndex(values, selected, 0, 16, 1)) {
+            for (String field : FIELDS) {
+                for (SortOrder order : SortOrder.values()) {
+                    for (int tth : new int[] {
+                        SearchContext.TRACK_TOTAL_HITS_DISABLED,
+                        20,
+                        SearchContext.DEFAULT_TRACK_TOTAL_HITS_UP_TO }) {
+                        int size = randomFrom(5, 10, 30);
+                        Request r = new Request(field, order, size, tth, null);
+                        if (tth == SearchContext.DEFAULT_TRACK_TOTAL_HITS_UP_TO) {
+                            // budget above the segment size: D-b falls back to the plain bool on the segment
+                            SortIoExperiments.setApproxBool(true);
+                            Query rewritten = contextSearcher(index.reader, r.context()).rewrite(bool(field, 0, 200, "s", false, false));
+                            assertSameTopDocs(
+                                r.toString(),
+                                run(index.reader, bool(field, 0, 200, "s", false, false), r),
+                                run(index.reader, rewritten, r),
+                                r
+                            );
+                            continue;
+                        }
+                        assertBoolSame(index, r, 0, 200, "s");
+                        assertBoolSame(index, r, 45, 61, "s");
+                        if (order == SortOrder.DESC && size > 4) {
+                            // the hits after the 4 values above 50 are tied docs; the lowest doc IDs come first
+                            TopFieldDocs expected = run(index.reader, bool(field, 0, 200, "s", false, false), r);
+                            int firstTied = ((FieldDoc) expected.scoreDocs[4]).doc;
+                            assertTrue("first tied hit " + firstTied, firstTied < 48);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public void testBoolTiesOverLeaves() throws IOException {
+        assertTiesOverLeaves(false);
+    }
+
+    public void testBoolTiesNonMatchingMiddleLeaf() throws IOException {
+        assertTiesOverLeaves(true);
+    }
+
+    public void testBoolSearchAfterRejected() throws IOException {
+        long[] values = randomValues(2_000, 500);
+        try (TestIndex index = new TestIndex(values, randomSelection(2_000, 0.5), 0, 64, 1)) {
+            for (String field : FIELDS) {
+                SortIoExperiments.setApproxBool(true);
+                ApproximateScoreQuery clause = range(field, 10, 400);
+                ApproximatePointRangeQuery approx = (ApproximatePointRangeQuery) clause.getApproximationQuery();
+                String before = approx.toString();
+                int sizeBefore = approx.getSize();
+                SortOrder orderBefore = approx.getSortOrder();
+                Query bool = new BooleanQuery.Builder().add(clause, BooleanClause.Occur.FILTER)
+                    .add(new TermQuery(new Term(SEL, "s")), BooleanClause.Occur.FILTER)
+                    .build();
+                Request r = new Request(field, randomFrom(SortOrder.values()), 10, SearchContext.TRACK_TOTAL_HITS_DISABLED, 200L);
+                Query rewritten = contextSearcher(index.reader, r.context()).rewrite(bool);
+                assertFalse(rewritten.toString(), rewritten instanceof ApproximateScoreQuery);
+                assertNull(clause.resolvedQuery);
+                assertEquals(before, approx.toString());
+                assertEquals(sizeBefore, approx.getSize());
+                assertEquals(orderBefore, approx.getSortOrder());
+            }
+        }
+    }
+
+    public void testBoolShapeChecks() throws IOException {
+        long[] values = randomValues(2_000, 500);
+        try (TestIndex index = new TestIndex(values, randomSelection(2_000, 0.5), 0, 64, 1)) {
+            SortIoExperiments.setApproxBool(true);
+            Request r = new Request(TS, SortOrder.DESC, 10, SearchContext.TRACK_TOTAL_HITS_DISABLED, null);
+            // a single clause is D-a's shape, not D-b's
+            Query single = new BooleanQuery.Builder().add(range(TS, 10, 400), BooleanClause.Occur.FILTER).build();
+            assertFalse(contextSearcher(index.reader, r.context()).rewrite(single) instanceof ApproximateScoreQuery);
+            // MUST_NOT or SHOULD clauses
+            Query mustNot = new BooleanQuery.Builder().add(range(TS, 10, 400), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SEL, "s")), BooleanClause.Occur.MUST_NOT)
+                .build();
+            assertFalse(contextSearcher(index.reader, r.context()).rewrite(mustNot) instanceof ApproximateScoreQuery);
+            // range on another field than the sort field
+            Request other = new Request(TS_SPLIT, SortOrder.DESC, 10, SearchContext.TRACK_TOTAL_HITS_DISABLED, null);
+            assertFalse(
+                contextSearcher(index.reader, other.context()).rewrite(
+                    bool(TS, 10, 400, "s", false, false)
+                ) instanceof ApproximateScoreQuery
+            );
+            // track_total_hits: true
+            Request accurate = new Request(TS, SortOrder.DESC, 10, SearchContext.TRACK_TOTAL_HITS_ACCURATE, null);
+            assertFalse(
+                contextSearcher(index.reader, accurate.context()).rewrite(
+                    bool(TS, 10, 400, "s", false, false)
+                ) instanceof ApproximateScoreQuery
+            );
+            // switch off
+            SortIoExperiments.setApproxBool(false);
+            assertFalse(
+                contextSearcher(index.reader, r.context()).rewrite(bool(TS, 10, 400, "s", false, false)) instanceof ApproximateScoreQuery
+            );
+        }
+    }
+
     public void testSingleClauseNotApproximableIsUnchanged() throws IOException {
         long[] values = randomValues(2_000, 500);
         try (TestIndex index = new TestIndex(values, randomSelection(2_000, 0.5), 0, 64, 1)) {

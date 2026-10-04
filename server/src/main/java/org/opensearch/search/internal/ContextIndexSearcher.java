@@ -80,6 +80,7 @@ import org.opensearch.search.SearchHits;
 import org.opensearch.search.SearchService;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.InternalAggregations;
+import org.opensearch.search.approximate.ApproximateBooleanQuery;
 import org.opensearch.search.approximate.ApproximatePointRangeQuery;
 import org.opensearch.search.approximate.ApproximateScoreQuery;
 import org.opensearch.search.dfs.AggregatedDfs;
@@ -237,6 +238,8 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
      * {@link ApproximateScoreQuery} matches the same docs as that clause, so it is replaced by the clause (MUST) or by
      * the clause with score 0 (FILTER, as {@link BooleanQuery#rewrite} does), and the clause gets the search context, so
      * the approximation applies as for a top-level range. If the clause cannot approximate, the query is unchanged.
+     * Experiment D-b ({@link SortIoExperiments#isApproxBool()}): a {@code bool} of a range on the sort field and other
+     * required filters becomes an {@link ApproximateBooleanQuery} when it can approximate.
      */
     private Query approximateBoolean(BooleanQuery query) {
         // Not with search_after (the approximation narrows the range, so hits.total would count fewer docs than the
@@ -255,6 +258,13 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
                     range.setIncludeTies(true);
                 }
                 return occur == BooleanClause.Occur.FILTER ? new BoostQuery(new ConstantScoreQuery(inner), 0f) : inner;
+            }
+        }
+        if (SortIoExperiments.isApproxBool()) {
+            // D-b: range on the sort field + other required filters; null if the shape or the context does not fit
+            Query approximated = ApproximateBooleanQuery.approximate(query, searchContext);
+            if (approximated != null) {
+                return approximated;
             }
         }
         return query;
