@@ -25,6 +25,7 @@ import org.apache.lucene.search.DocIdStream;
 import org.apache.lucene.search.FilterDocIdSetIterator;
 import org.apache.lucene.search.FilteredDocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryCache;
 import org.apache.lucene.search.QueryCachingPolicy;
@@ -86,6 +87,9 @@ public final class DocValuesPrefetch {
     private static final LongAdder leapfrogs = new LongAdder();
     private static final LongAdder sharedHits = new LongAdder();
     private static final LongAdder sharedMisses = new LongAdder();
+    /** Sort planners ({@link #sortPlanner}) and their node requests, counted apart from the aggregation planners. */
+    private static final LongAdder sortPlanners = new LongAdder();
+    private static final LongAdder sortRequests = new LongAdder();
     /**
      * Per search: a searcher over the same reader that caches the look-ahead's non-term clauses per segment. An entry
      * lives until its search is released ({@link #release}); a search context releases its entry when it closes.
@@ -244,10 +248,22 @@ public final class DocValuesPrefetch {
         return sharedMisses.sum();
     }
 
+    /** Sort planners created since the last {@link #resetCounters()}. */
+    public static long sortPlanners() {
+        return sortPlanners.sum();
+    }
+
+    /** Node requests of sort planners since the last {@link #resetCounters()}. */
+    public static long sortRequests() {
+        return sortRequests.sum();
+    }
+
     /** Sets the counters to zero. */
     public static void resetCounters() {
         planners.reset();
         requests.reset();
+        sortPlanners.reset();
+        sortRequests.reset();
         lookaheads.reset();
         leapfrogs.reset();
         sharedHits.reset();
@@ -502,6 +518,11 @@ public final class DocValuesPrefetch {
 
     /** Planning view of a numeric field, or null if its codec does not support node planning. */
     public static Field of(NumericDocValues values) throws IOException {
+        return of(values, nodeBytes);
+    }
+
+    /** Same as {@link #of(NumericDocValues)}, checking support with nodes of {@code nodeBytes} bytes. */
+    public static Field of(NumericDocValues values, long nodeBytes) throws IOException {
         if (values == null || values.nextPrefetchNodeDoc(0, nodeBytes) < 0) {
             return null;
         }
@@ -589,12 +610,37 @@ public final class DocValuesPrefetch {
         if (enabled == false || field == null || matches == null) {
             return null;
         }
-        final Planner p = new Planner(field, matches, filter, nodeBytes);
+        final Planner p = new Planner(field, matches, filter, nodeBytes, requests);
         planners.increment();
         if (matches instanceof Ahead ahead) {
             p.ahead = ahead;
             ahead.planners.add(p);
         }
+        p.start();
+        return p;
+    }
+
+    /**
+     * A run-ahead buffer for the sort comparator ({@link RunAhead#wrapLeafCollector}): no gate, pass-through while the
+     * nodes read are cached, bit set allocated when buffering starts. Ignores every aggregation switch.
+     */
+    public static RunAhead sortRunAhead(int lag) {
+        return new RunAhead(lag, false, true, true);
+    }
+
+    /**
+     * Creates a planner of the sort comparator's reads over the matches of {@code ra}, or returns null when the field
+     * does not support planning. Same as {@link #planner} without the {@link #isEnabled()} check, counted in
+     * {@link #sortPlanners()} and {@link #sortRequests()}.
+     */
+    public static Planner sortPlanner(Field field, RunAhead ra, ReadFilter filter, long nodeBytes) throws IOException {
+        if (field == null || ra == null) {
+            return null;
+        }
+        final Planner p = new Planner(field, ra, filter, nodeBytes, sortRequests);
+        sortPlanners.increment();
+        p.ahead = ra;
+        ra.planners.add(p);
         p.start();
         return p;
     }
@@ -605,6 +651,8 @@ public final class DocValuesPrefetch {
         private final Matches matches;
         private final ReadFilter filter;
         private final long nodeBytes;
+        /** Counts this planner's node requests. */
+        private final LongAdder requestCounter;
         private Ahead ahead;
         /** When a read doc reaches it, the doc is in a node not planned from yet: request the following one. */
         private int trigger;
@@ -620,11 +668,17 @@ public final class DocValuesPrefetch {
         /** First doc of the node after {@link #trigger}'s, once computed for the gate (-1: not yet). */
         private int gateTarget = -1;
 
-        private Planner(Field field, Matches matches, ReadFilter filter, long nodeBytes) {
+        private Planner(Field field, Matches matches, ReadFilter filter, long nodeBytes, LongAdder requestCounter) {
             this.field = field;
             this.matches = matches;
             this.filter = filter;
             this.nodeBytes = nodeBytes;
+            this.requestCounter = requestCounter;
+        }
+
+        /** The doc at which {@link #advance} plans again: a read at or after it needs a call, a read before it not. */
+        public int trigger() {
+            return trigger;
         }
 
         private void start() throws IOException {
@@ -666,7 +720,7 @@ public final class DocValuesPrefetch {
                 return;
             }
             field.prefetch(next, nodeBytes);
-            requests.increment();
+            requestCounter.increment();
             trigger = next;
             gateTarget = -1;
         }
@@ -847,9 +901,12 @@ public final class DocValuesPrefetch {
     public static final class RunAhead extends Ahead {
         private static final int WINDOW = 4096;
         private final int lag;
-        private final FixedBitSet bits;
-        private final long[] words;
+        /** The buffer; a sort run-ahead allocates it at its first {@code startAt} (null while it passes docs through). */
+        private FixedBitSet bits;
+        private long[] words;
         private final int capacity;
+        /** A sort run-ahead ({@link #sortRunAhead}): lazy bit set, switches not counted with the aggregation ones. */
+        private final boolean sort;
         /** Doc ID of bit 0, a multiple of 64. */
         private int base;
         /** Docs below it were handed to the collectors. */
@@ -857,6 +914,8 @@ public final class DocValuesPrefetch {
         /** Highest doc ID set in the buffer, or -1. */
         private int lastSet = -1;
         private LeafBucketCollector out;
+        /** Set by {@link #wrapLeafCollector}: buffered docs go to a plain leaf collector instead of {@link #out}. */
+        private PlainSink plain;
         private final BufferStream stream = new BufferStream();
         private final int[] first = new int[1];
 
@@ -871,14 +930,26 @@ public final class DocValuesPrefetch {
         }
 
         RunAhead(int lag, boolean gate, boolean bypass) {
+            this(lag, gate, bypass, false);
+        }
+
+        RunAhead(int lag, boolean gate, boolean bypass, boolean sort) {
             this.lag = lag;
             this.gate = gate;
             this.bypass = bypass;
+            this.sort = sort;
             this.buffering = bypass == false;
             // with the gate, delivery can wait at a planner's trigger while the scorer runs further ahead
             this.capacity = ((gate ? 4 : 2) * lag + 4 * WINDOW + 63) & ~63;
-            this.bits = new FixedBitSet(capacity);
-            this.words = bits.getBits();
+            if (sort == false) {
+                this.bits = new FixedBitSet(capacity);
+                this.words = bits.getBits();
+            }
+        }
+
+        /** The buffer's bit set, null if not allocated. For tests. */
+        FixedBitSet bitSetForTest() {
+            return bits;
         }
 
         @Override
@@ -965,13 +1036,21 @@ public final class DocValuesPrefetch {
         @Override
         void startBuffering() {
             if (bypass) {
-                super.startBuffering();
+                if (sort) {
+                    bypass = false;
+                } else {
+                    super.startBuffering();
+                }
                 startPending = true;
             }
         }
 
         /** Starts the buffer at {@code doc}: every earlier doc went straight to the collectors. */
         private void startAt(int doc) {
+            if (bits == null) {
+                bits = new FixedBitSet(capacity);
+                words = bits.getBits();
+            }
             startPending = false;
             buffering = true;
             base = doc & ~63;
@@ -983,6 +1062,7 @@ public final class DocValuesPrefetch {
             if (startPending) {
                 startAt(doc);
             }
+            assert bits != null : "arrival before the buffer started";
             startRun(PER_DOC);
             if (ringCount == RING) {
                 endRun();
@@ -1006,11 +1086,17 @@ public final class DocValuesPrefetch {
             if (s.intoArray(first) == 0) {
                 return;
             }
+            arriveStream(first[0], s);
+        }
+
+        /** The arrival of {@code doc} and then the rest of {@code s}. */
+        private void arriveStream(int doc, DocIdStream s) throws IOException {
             if (startPending) {
-                startAt(first[0]);
+                startAt(doc);
             }
+            assert bits != null : "arrival before the buffer started";
             startRun(STREAM);
-            arriveDoc0(first[0]);
+            arriveDoc0(doc);
             while (s.mayHaveRemaining()) {
                 final int end = base + capacity;
                 final int last = s.intoBitSet(end, bits, base);
@@ -1048,6 +1134,7 @@ public final class DocValuesPrefetch {
             if (startPending) {
                 startAt(min);
             }
+            assert bits != null : "arrival before the buffer started";
             // a new run per range: delivery hands each run on as one range
             startRun(RANGE);
             runStart[(runHead + runCount - 1) & (RUNS - 1)] = min;
@@ -1084,6 +1171,7 @@ public final class DocValuesPrefetch {
 
         /** Every doc below {@code doc} is known: deliver up to {@code doc - lag} and move the buffer so it has room. */
         private void makeRoom(int doc) throws IOException {
+            assert bits != null : "room made before the buffer started";
             arrived = Math.max(arrived, doc);
             endRun();
             afterArrival();
@@ -1115,7 +1203,11 @@ public final class DocValuesPrefetch {
                         final int lo = Math.max(delivered, runStart[r]);
                         final int hi = Math.min(end, lastSet + 1);
                         if (hi > lo) {
-                            out.collectRange(lo, hi);
+                            if (plain == null) {
+                                out.collectRange(lo, hi);
+                            } else {
+                                plain.range(lo, hi, false);
+                            }
                         }
                     } else if (runKind[r] == STREAM) {
                         final int hi = Math.min(end, lastSet + 1);
@@ -1123,14 +1215,22 @@ public final class DocValuesPrefetch {
                             stream.reset(delivered, hi);
                             // planners advanced by the collectors may look at buffered docs not delivered yet: keep
                             // delivered unchanged until the stream is consumed
-                            out.collect(stream, 0);
+                            if (plain == null) {
+                                out.collect(stream, 0);
+                            } else {
+                                plain.stream(stream, false);
+                            }
                         }
                     } else {
                         while (ringCount > 0 && ring[ringHead] < end) {
                             final int doc = ring[ringHead];
                             ringHead = (ringHead + 1) & (RING - 1);
                             ringCount--;
-                            out.collect(doc, 0);
+                            if (plain == null) {
+                                out.collect(doc, 0);
+                            } else {
+                                plain.doc(doc);
+                            }
                         }
                     }
                     delivered = end;
@@ -1216,6 +1316,196 @@ public final class DocValuesPrefetch {
             };
         }
 
+        /**
+         * Wraps a plain leaf collector (the sort comparator's) that does not advance {@code p} itself: the buffer
+         * advances it at its trigger, before the doc there is collected. Docs reach {@code delegate} in their arrival
+         * form, split only at triggers. The leaf starts in pass-through; when {@code p} finds a read node that is not
+         * cached, the rest of the leaf is buffered, starting with the rest of the current arrival.
+         */
+        public LeafCollector wrapLeafCollector(LeafCollector delegate, Planner p) {
+            final PlainSink sink = new PlainSink(delegate, p);
+            this.plain = sink;
+            return new LeafCollector() {
+                @Override
+                public void setScorer(Scorable scorer) throws IOException {
+                    delegate.setScorer(scorer);
+                }
+
+                @Override
+                public void collect(int doc) throws IOException {
+                    if (bypass) {
+                        if (doc >= p.trigger) {
+                            p.advance(doc);
+                            if (bypass == false) {
+                                arriveDoc(doc);
+                                return;
+                            }
+                        }
+                        delegate.collect(doc);
+                        return;
+                    }
+                    arriveDoc(doc);
+                }
+
+                @Override
+                public void collect(DocIdStream s) throws IOException {
+                    if (bypass) {
+                        final int rest = sink.stream(s, true);
+                        if (rest >= 0) {
+                            arriveStream(rest, s);
+                        }
+                        return;
+                    }
+                    arriveStream(s);
+                }
+
+                @Override
+                public void collectRange(int min, int max) throws IOException {
+                    if (bypass) {
+                        final int rest = sink.range(min, max, true);
+                        if (rest >= 0) {
+                            arriveRange(rest, max);
+                        }
+                        return;
+                    }
+                    arriveRange(min, max);
+                }
+
+                @Override
+                public DocIdSetIterator competitiveIterator() throws IOException {
+                    return delegate.competitiveIterator();
+                }
+
+                @Override
+                public void finish() throws IOException {
+                    finishLeaf();
+                    delegate.finish();
+                }
+            };
+        }
+
+        /** Hands docs to a plain leaf collector, advancing the planner at its trigger before the doc there. */
+        private final class PlainSink {
+            private final LeafCollector out;
+            private final Planner p;
+            private final LimitedStream view = new LimitedStream();
+            private final int[] one = new int[1];
+
+            PlainSink(LeafCollector out, Planner p) {
+                this.out = out;
+                this.p = p;
+            }
+
+            void doc(int doc) throws IOException {
+                if (doc >= p.trigger) {
+                    p.advance(doc);
+                }
+                out.collect(doc);
+            }
+
+            /**
+             * Hands over {@code s}. With {@code passThrough}, returns the doc at which the planner started buffering
+             * (not handed over; it and the rest of {@code s} must arrive in the buffer), else -1.
+             */
+            int stream(DocIdStream s, boolean passThrough) throws IOException {
+                while (true) {
+                    final int trigger = p.trigger;
+                    if (trigger == DocIdSetIterator.NO_MORE_DOCS) {
+                        out.collect(s);
+                        return -1;
+                    }
+                    view.reset(s, trigger);
+                    out.collect(view);
+                    if (s.intoArray(one) == 0) {
+                        return -1;
+                    }
+                    final int doc = one[0];
+                    p.advance(doc);
+                    if (passThrough && bypass == false) {
+                        return doc;
+                    }
+                    out.collect(doc);
+                }
+            }
+
+            /**
+             * Hands over the range {@code [min, max)}. With {@code passThrough}, returns the doc at which the planner
+             * started buffering (the range from it on is not handed over), else -1.
+             */
+            int range(int min, int max, boolean passThrough) throws IOException {
+                while (true) {
+                    final int trigger = p.trigger;
+                    if (trigger >= max) {
+                        out.collectRange(min, max);
+                        return -1;
+                    }
+                    if (trigger > min) {
+                        out.collectRange(min, trigger);
+                        min = trigger;
+                    }
+                    p.advance(min);
+                    if (passThrough && bypass == false) {
+                        return min;
+                    }
+                }
+            }
+        }
+
+        /** The docs of a stream below a limit, as a stream; the docs at or after the limit stay in the stream. */
+        private static final class LimitedStream extends DocIdStream {
+            private DocIdStream in;
+            private int limit;
+            private boolean exhausted;
+
+            void reset(DocIdStream in, int limit) {
+                this.in = in;
+                this.limit = limit;
+                this.exhausted = false;
+            }
+
+            @Override
+            public void forEach(int upTo, CheckedIntConsumer<IOException> consumer) throws IOException {
+                if (upTo >= limit) {
+                    upTo = limit;
+                    exhausted = true;
+                }
+                in.forEach(upTo, consumer);
+            }
+
+            @Override
+            public int count(int upTo) throws IOException {
+                if (upTo >= limit) {
+                    upTo = limit;
+                    exhausted = true;
+                }
+                return in.count(upTo);
+            }
+
+            @Override
+            public int intoArray(int upTo, int[] array) {
+                final boolean toLimit = upTo >= limit;
+                final int n = in.intoArray(toLimit ? limit : upTo, array);
+                if (n == 0 && toLimit) {
+                    exhausted = true;
+                }
+                return n;
+            }
+
+            @Override
+            public int intoBitSet(int upTo, FixedBitSet bitSet, int offset) throws IOException {
+                if (upTo >= limit) {
+                    upTo = limit;
+                    exhausted = true;
+                }
+                return in.intoBitSet(upTo, bitSet, offset);
+            }
+
+            @Override
+            public boolean mayHaveRemaining() {
+                return exhausted == false && in.mayHaveRemaining();
+            }
+        }
+
         private void finishFlush() throws IOException {
             if (buffering == false) {
                 return;
@@ -1251,6 +1541,7 @@ public final class DocValuesPrefetch {
             private int upTo, max;
 
             void reset(int from, int to) {
+                assert bits != null : "stream over a buffer that did not start";
                 this.upTo = from;
                 this.max = to;
             }

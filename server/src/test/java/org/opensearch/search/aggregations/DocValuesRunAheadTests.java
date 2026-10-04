@@ -11,6 +11,8 @@ package org.opensearch.search.aggregations;
 import org.apache.lucene.search.CheckedIntConsumer;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.DocIdStream;
+import org.apache.lucene.search.LeafCollector;
+import org.apache.lucene.search.Scorable;
 import org.apache.lucene.util.FixedBitSet;
 import org.opensearch.test.OpenSearchTestCase;
 
@@ -268,6 +270,119 @@ public class DocValuesRunAheadTests extends OpenSearchTestCase {
                 }
             } else {
                 assertPlanned(matches, field);
+            }
+        }
+    }
+
+    /** A plain leaf collector that records its docs in order (it never advances the planner). */
+    private static class PlainRecorder implements LeafCollector {
+        final List<Integer> delivered = new ArrayList<>();
+        final FakeField field;
+
+        PlainRecorder(FakeField field) {
+            this.field = field;
+        }
+
+        @Override
+        public void setScorer(Scorable scorer) {}
+
+        @Override
+        public void collect(int doc) {
+            delivered.add(doc);
+            field.collected++;
+        }
+    }
+
+    /** A sort run-ahead that stays in pass-through (everything cached) never allocates its bit set. */
+    public void testSortRunAheadPassThroughAllocatesNothing() throws IOException {
+        final int maxDoc = randomIntBetween(1, 500_000);
+        final FixedBitSet matches = randomMatches(maxDoc);
+        final FakeField field = new FakeField(randomIntBetween(500, 200_000), maxDoc);
+        field.loadedUpTo = maxDoc + 1;
+        final DocValuesPrefetch.RunAhead ra = DocValuesPrefetch.sortRunAhead(1 << 16);
+        assertNull(ra.bitSetForTest());
+        final DocValuesPrefetch.Planner planner = DocValuesPrefetch.sortPlanner(field, ra, DocValuesPrefetch.ALL_MATCHES, 4096);
+        final PlainRecorder out = new PlainRecorder(field);
+        final LeafCollector in = ra.wrapLeafCollector(out, planner);
+        feedPlain(matches, maxDoc, in);
+        in.finish();
+        assertDelivered(matches, out.delivered);
+        assertTrue(field.requested.isEmpty());
+        assertNull("no bit set in pass-through", ra.bitSetForTest());
+    }
+
+    /** A sort run-ahead that starts buffering allocates its bit set once, at the switch, and delivers every doc once. */
+    public void testSortRunAheadAllocatesAtTheSwitch() throws IOException {
+        for (int iter = 0; iter < 10; iter++) {
+            final int maxDoc = randomIntBetween(10_000, 1_000_000);
+            final FixedBitSet matches = randomMatches(maxDoc);
+            final FakeField field = new FakeField(randomIntBetween(500, 50_000), maxDoc);
+            field.loadedUpTo = randomBoolean() ? 0 : randomIntBetween(0, maxDoc / 2);
+            final DocValuesPrefetch.RunAhead ra = DocValuesPrefetch.sortRunAhead(randomFrom(1 << 16, 1 << 17));
+            final DocValuesPrefetch.Planner planner = DocValuesPrefetch.sortPlanner(field, ra, DocValuesPrefetch.ALL_MATCHES, 4096);
+            final FixedBitSet[] allocated = new FixedBitSet[1];
+            final PlainRecorder out = new PlainRecorder(field) {
+                @Override
+                public void collect(int doc) {
+                    final FixedBitSet bits = ra.bitSetForTest();
+                    if (allocated[0] == null) {
+                        allocated[0] = bits;
+                    } else {
+                        assertSame("allocated once, kept until the leaf ends", allocated[0], bits);
+                    }
+                    super.collect(doc);
+                }
+            };
+            final LeafCollector in = ra.wrapLeafCollector(out, planner);
+            feedPlain(matches, maxDoc, in);
+            in.finish();
+            assertDelivered(matches, out.delivered);
+            if (field.loadedUpTo == 0 && matches.cardinality() > 0) {
+                assertNotNull("buffering started at the first doc", ra.bitSetForTest());
+            }
+            if (allocated[0] != null) {
+                assertSame(allocated[0], ra.bitSetForTest());
+            }
+            assertRequestedBeforeCollected(matches, field);
+        }
+    }
+
+    /** Aggregation run-aheads allocate the bit set in the constructor, as before. */
+    public void testAggregationRunAheadAllocatesInConstructor() {
+        assertNotNull(new DocValuesPrefetch.RunAhead(1 << 16).bitSetForTest());
+        assertNotNull(new DocValuesPrefetch.RunAhead(1 << 16, randomBoolean(), randomBoolean()).bitSetForTest());
+    }
+
+    /** Feeds matches to a plain leaf collector: windows, single docs and fully matching ranges, in doc ID order. */
+    private static void feedPlain(FixedBitSet matches, int maxDoc, LeafCollector in) throws IOException {
+        int doc = 0;
+        while (doc < maxDoc) {
+            int next = matches.nextSetBit(doc);
+            if (next == DocIdSetIterator.NO_MORE_DOCS) {
+                break;
+            }
+            switch (randomIntBetween(0, 2)) {
+                case 0 -> {
+                    int end = Math.min(maxDoc, next + randomIntBetween(1, 4096));
+                    FixedBitSet window = new FixedBitSet(4096);
+                    for (int d = next; d < end; d++) {
+                        if (matches.get(d)) {
+                            window.set(d - next);
+                        }
+                    }
+                    in.collect(new WindowStream(window, next));
+                    doc = end;
+                }
+                case 1 -> {
+                    in.collect(next);
+                    doc = next + 1;
+                }
+                default -> {
+                    int clear = matches.nextClearBit(next);
+                    int end = clear == DocIdSetIterator.NO_MORE_DOCS ? maxDoc : clear;
+                    in.collectRange(next, end);
+                    doc = end;
+                }
             }
         }
     }

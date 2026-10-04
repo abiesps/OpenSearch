@@ -433,6 +433,7 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
          * @param trackMaxScore True if max score should be tracked
          * @param trackTotalHitsUpTo True if the total number of hits should be tracked
          * @param hasFilterCollector True if the collector chain contains at least one collector that can filters document
+         * @param sortPrefetchEligible True if the search may prefetch the sort values (see {@link SortValuesPrefetch})
          */
         private SimpleTopDocsCollectorContext(
             IndexReader reader,
@@ -442,7 +443,8 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
             int numHits,
             boolean trackMaxScore,
             int trackTotalHitsUpTo,
-            boolean hasFilterCollector
+            boolean hasFilterCollector,
+            boolean sortPrefetchEligible
         ) throws IOException {
             super(REASON_SEARCH_TOP_HITS, numHits);
             this.sortAndFormats = sortAndFormats;
@@ -508,7 +510,12 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
                 maxScoreSupplier = () -> Float.NaN;
             }
 
-            this.collector = MultiCollector.wrap(topDocsCollector, maxScoreCollector);
+            if (sortPrefetchEligible && maxScoreCollector == null && topDocsCollector.scoreMode().needsScores() == false) {
+                // topDocsSupplier keeps the unwrapped collector
+                this.collector = SortValuesPrefetch.wrap(topDocsCollector, sortAndFormats.sort);
+            } else {
+                this.collector = MultiCollector.wrap(topDocsCollector, maxScoreCollector);
+            }
         }
 
         private class SimpleTopDocsCollectorManager
@@ -700,7 +707,8 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
                 numHits,
                 trackMaxScore,
                 trackTotalHitsUpTo,
-                hasFilterCollector
+                hasFilterCollector,
+                false
             );
             this.scrollContext = Objects.requireNonNull(scrollContext);
             this.numberOfShards = numberOfShards;
@@ -881,7 +889,8 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
                 numDocs,
                 searchContext.trackScores(),
                 searchContext.trackTotalHitsUpTo(),
-                hasFilterCollector
+                hasFilterCollector,
+                isSortPrefetchEligible(searchContext, hasFilterCollector)
             ) {
                 @Override
                 public boolean shouldRescore() {
@@ -889,6 +898,24 @@ public abstract class TopDocsCollectorContext extends QueryCollectorContext impl
                 }
             };
         }
+    }
+
+    /**
+     * Whether the top-docs collector of {@code searchContext} may be wrapped with {@link SortValuesPrefetch}: the switch
+     * is on and the collector would be the only one between the scorer and the comparator (no filter collector, no
+     * aggregation or plugin collector, no profiler, no max score), on the non-concurrent path, with one LONG sort field.
+     * The constructor also requires a sort that needs no scores.
+     */
+    static boolean isSortPrefetchEligible(SearchContext searchContext, boolean hasFilterCollector) {
+        return SortIoExperiments.isSortPrefetch()
+            && hasFilterCollector == false
+            && searchContext.aggregations() == null
+            && searchContext.getProfilers() == null
+            && searchContext.trackScores() == false
+            && searchContext.shouldUseConcurrentSearch() == false
+            && searchContext.sort() != null
+            && SortValuesPrefetch.isEligibleSort(searchContext.sort().sort)
+            && searchContext.queryCollectorManagers().isEmpty();
     }
 
     /**

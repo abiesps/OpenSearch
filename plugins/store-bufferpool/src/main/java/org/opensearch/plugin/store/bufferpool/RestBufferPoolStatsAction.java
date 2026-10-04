@@ -214,6 +214,8 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("agg_prefetch_run_ahead_switches", DocValuesPrefetch.runAheadSwitches());
             builder.field("agg_prefetch_run_ahead_leaves", DocValuesPrefetch.runAheadLeaves());
             builder.field("agg_prefetch_run_ahead_replays", DocValuesPrefetch.runAheadReplays());
+            builder.field("sort_prefetch_planners", DocValuesPrefetch.sortPlanners());
+            builder.field("sort_prefetch_requests", DocValuesPrefetch.sortRequests());
             for (Map.Entry<String, Object> entry : SortOptParams.current().entrySet()) {
                 builder.field("sort_opt_" + entry.getKey(), entry.getValue());
             }
