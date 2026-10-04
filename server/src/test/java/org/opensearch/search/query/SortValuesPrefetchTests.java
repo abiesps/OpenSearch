@@ -648,10 +648,35 @@ public class SortValuesPrefetchTests extends OpenSearchTestCase {
                     }
                 }
                 if (indexSorted == false) {
-                    // a reader whose values do not support node planning
+                    // a reader whose values do not support node planning: checked at the first doc, then pass-through
                     try (IndexReader reader = new NoPlanningReader(DirectoryReader.open(dir))) {
-                        final FixedLeaf delegate = new FixedLeaf();
-                        assertSame(delegate.leaf, SortValuesPrefetch.wrap(delegate, sort).getLeafCollector(reader.leaves().get(0)));
+                        DocValuesPrefetch.resetCounters();
+                        final IndexSearcher searcher = new IndexSearcher(reader);
+                        final Sort desc = new Sort(new SortedNumericSortField("ts", SortField.Type.LONG, true));
+                        final TopFieldDocs expected = searcher.search(
+                            new MatchAllDocsQuery(),
+                            new TopFieldCollectorManager(desc, 10, null, 1)
+                        );
+                        final TopFieldCollectorManager manager = new TopFieldCollectorManager(desc, 10, null, 1);
+                        final List<TopFieldCollector> collectors = new ArrayList<>();
+                        final TopFieldDocs actual = searcher.search(
+                            new MatchAllDocsQuery(),
+                            new CollectorManager<Collector, TopFieldDocs>() {
+                                @Override
+                                public Collector newCollector() throws IOException {
+                                    TopFieldCollector c = manager.newCollector();
+                                    collectors.add(c);
+                                    return SortValuesPrefetch.wrap(c, desc);
+                                }
+
+                                @Override
+                                public TopFieldDocs reduce(Collection<Collector> collected) throws IOException {
+                                    return manager.reduce(collectors);
+                                }
+                            }
+                        );
+                        assertSameTopDocs(expected, actual);
+                        assertEquals("no node planning: nothing requested", 0, DocValuesPrefetch.sortRequests());
                     }
                 }
             }

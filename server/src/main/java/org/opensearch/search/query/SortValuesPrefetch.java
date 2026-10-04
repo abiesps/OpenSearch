@@ -14,6 +14,7 @@ import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.search.Collector;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Sort;
@@ -101,10 +102,7 @@ public final class SortValuesPrefetch implements Collector {
             return leaf;
         }
         final long nodeBytes = SortIoExperiments.sortPrefetchNodeBytes();
-        final DocValuesPrefetch.Field field = DocValuesPrefetch.of(values, nodeBytes);
-        if (field == null) {
-            return leaf;
-        }
+        final DocValuesPrefetch.Field field = new LazyField(values);
         final DocValuesPrefetch.RunAhead ra = DocValuesPrefetch.sortRunAhead(SortIoExperiments.sortPrefetchDocs());
         final DocValuesPrefetch.Planner planner = DocValuesPrefetch.sortPlanner(field, ra, DocValuesPrefetch.ALL_MATCHES, nodeBytes);
         return ra.wrapLeafCollector(leaf, planner);
@@ -113,5 +111,46 @@ public final class SortValuesPrefetch implements Collector {
     @Override
     public String toString() {
         return "SortValuesPrefetch(" + in + ")";
+    }
+
+    /**
+     * Planning view of the sort field ({@link DocValuesPrefetch#of(NumericDocValues, long)}) that checks node-planning
+     * support at its first use, when collection reaches the first doc, instead of when the leaf collector is created:
+     * the check reads navigation data (the value jump table of a blocked field), whose first-page prefetch is then
+     * usually loaded, so a short query does not wait for it. Without support the leaf stays in pass-through: every
+     * node counts as cached and no node is requested.
+     */
+    private static final class LazyField implements DocValuesPrefetch.Field {
+        private final NumericDocValues values;
+        /** 0 not checked yet, 1 supported, -1 not supported. */
+        private int support;
+
+        LazyField(NumericDocValues values) {
+            this.values = values;
+        }
+
+        private boolean supported(long nodeBytes) throws IOException {
+            if (support == 0) {
+                support = values.nextPrefetchNodeDoc(0, nodeBytes) < 0 ? -1 : 1;
+            }
+            return support > 0;
+        }
+
+        @Override
+        public int nextNodeDoc(int doc, long nodeBytes) throws IOException {
+            return supported(nodeBytes) ? values.nextPrefetchNodeDoc(doc, nodeBytes) : DocIdSetIterator.NO_MORE_DOCS;
+        }
+
+        @Override
+        public void prefetch(int doc, long nodeBytes) throws IOException {
+            if (supported(nodeBytes)) {
+                values.prefetchNodes(doc, doc + 1, nodeBytes);
+            }
+        }
+
+        @Override
+        public boolean isLoaded(int doc, long nodeBytes) throws IOException {
+            return supported(nodeBytes) == false || values.isNodeLoaded(doc, nodeBytes);
+        }
     }
 }
