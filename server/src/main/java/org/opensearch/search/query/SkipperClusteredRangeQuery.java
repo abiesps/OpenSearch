@@ -226,6 +226,10 @@ public final class SkipperClusteredRangeQuery extends Query {
         if (skipper.docCount() == 0 || skipper.minValue() > upper || skipper.maxValue() < lower) {
             return 0; // nothing matches: the doc-values side answers with no reads of values
         }
+        if (skipper.minValue() >= lower && skipper.maxValue() <= upper) {
+            // every value is inside: no interval to read (the doc-values side matches all docs with a value)
+            return skipper.docCount();
+        }
         long noDocs = 0;
         long maybeDocs = 0;
         int position = 0;

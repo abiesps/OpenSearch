@@ -220,9 +220,10 @@ public class SkipperClusteredRangeQueryTests extends OpenSearchTestCase {
             int level1Intervals = (numDocs + 32_767) / 32_768;
             assertTrue("advances " + skipper.advances + " of " + level1Intervals, skipper.advances <= 3);
 
-            // a range over every value makes every interval YES: clustered, every doc estimated
+            // a range over every value is clustered with every doc estimated, from the global bounds alone
             CountingSkipper all = new CountingSkipper(leaf.reader().getDocValuesSkipper(FIELD));
-            assertEquals(numDocs, SkipperClusteredRangeQuery.clusteredEstimate(all, 0, numDocs - 1, numDocs));
+            assertEquals(numDocs, SkipperClusteredRangeQuery.clusteredEstimate(all, -1, numDocs, numDocs));
+            assertEquals(0, all.advances);
         }
     }
 
