@@ -888,6 +888,11 @@ public class SortTrace {
             perLeaf(in.clone(), visitor, true);
         }
 
+        @Override
+        public void prefetchIntersect(PointValues.IntersectVisitor visitor) throws IOException {
+            in.prefetchIntersect(visitor);
+        }
+
         private void perLeaf(PointValues.PointTree t, PointValues.IntersectVisitor visitor, boolean values) throws IOException {
             if (t.moveToChild()) {
                 do {

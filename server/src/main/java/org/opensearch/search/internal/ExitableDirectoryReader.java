@@ -368,6 +368,12 @@ class ExitableDirectoryReader extends FilterDirectoryReader {
             pointTree.visitDocValues(exitableIntersectVisitor);
         }
 
+        @Override
+        public void prefetchIntersect(PointValues.IntersectVisitor visitor) throws IOException {
+            queryCancellation.checkCancelled();
+            pointTree.prefetchIntersect(visitor);
+        }
+
         // reuse ExitableIntersectVisitor#checkAndThrowWithSampling
         private void checkAndThrowWithSampling() {
             if ((calls++ & ExitableIntersectVisitor.MAX_CALLS_BEFORE_QUERY_TIMEOUT_CHECK) == 0) {
@@ -482,6 +488,11 @@ class ExitableDirectoryReader extends FilterDirectoryReader {
         public void grow(int count) {
             queryCancellation.checkCancelled();
             in.grow(count);
+        }
+
+        @Override
+        public boolean prefetchIntersect() {
+            return in.prefetchIntersect();
         }
     }
 }
