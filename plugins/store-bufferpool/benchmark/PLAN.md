@@ -853,7 +853,28 @@ FEAT-005 C/D-a/D-b, FEAT-006 E, FEAT-007 K1-K4, FEAT-008 combinations + leave-on
     desc 7d -5% to -13%; small queries (bare range, match_all) +9 to +23 ms (1-2 directory blocks + 1 values block);
     full scans unchanged. Warm: within the bar (two outliers re-checked interleaved: -0.6 and +0.5 ms). Results
     identical to stock on all 78 queries. The tight leaf bounds changed no comparator decision on this segment.
-- FEAT-004 (A, B, B+childpf prefetch): running.
+- **FEAT-004 (done)**: A = one coalesced, chunked prefetch of the leaves an intersection will read (stock format;
+  Lucene `a0413bc3c3`); B = the same on the split format, from the directory's tight bounds, plus the whole-section and
+  child `.kdi` rules (Lucene `951e0cafc3`); OpenSearch `a51ea3fc9e9` forwards the hooks through cancellable readers.
+  Switches `bkd_prefetch`, `index_child_prefetch`, `whole_index` (never applies: the twin's `.kdi` section is 1.3 MB).
+  Results identical to stock on all queries; loads per region equal stock (A) or B0 (B); no unread prefetch beyond
+  stock's. Warm: no regression (sort and the 11 aggregation queries, re-checked interleaved).
+
+| Cold, logs_v3 | stock p50 ms | A | B (split + prefetch) | speedup A / B |
+|---|---|---|---|---|
+| 1-day sorts (28) | 1,032-1,714 | 525-1,047 (-34% to -49%) | 620-1,117 (-34% to -45%) | x1.52-1.97 / x1.50-1.82 |
+| 1-day aggregations, range on the twin (3) | 1,173-1,449 | - | 672-941 (-35% to -43%) | - / x1.54-1.75 |
+| desc 7d (10) | 398-626 | 254-394 (-30% to -38%) | 271-443 (-26% to -38%) | x1.43-1.62 / x1.36-1.63 |
+| asc 7d (10) | 242-3,528 | no change | no change | x1.0 |
+| full scans, 7d tt (8) | 3,096-4,655 | no change | no change | x1.0 |
+| bare range and match_all (16) | 18-47 | no change | +0 to +19 ms (B0's directory and values blocks) | x1.0 / x0.57-1.0 |
+
+  Runs: A `aggs_20261003_183109.json`; B `aggs_20261003_192502.json`; A vs B interleaved `aggs_20261003_195255.json`
+  (B within -34 to +12 ms of A: once the leaves load in parallel, B's 38 fewer leaf loads save little). B+childpf:
+  within noise of B (the child `.kdi` reads happen before the async load finishes). Absolute cold times move up to 30%
+  between runs, so variants are compared only inside one run.
+  vs 4x: A/B give x1.4-2.0 on desc 7d and 1-day; asc 7d and full scans are doc-values bound (E, E8, K4 next).
+- FEAT-005 (C, D-a, D-b): running.
 
 ### Step 3 (after the 4x target is met): Big5 on EC2 (user's AWS account 823904838333, admin access)
 - Goal: the gains must be measurable on the OpenSearch Benchmark big5 workload, 1,000 GB corpus, hot path and cold path,
