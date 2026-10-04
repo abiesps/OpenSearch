@@ -307,7 +307,9 @@ public final class ApproximateBooleanQuery extends ApproximateQuery {
                     return 0;
                 }
                 final int[] docs = candidates.docs;
-                new LSBRadixSorter().sort(PackedInts.bitsRequired(maxDoc - 1), docs, candidates.size);
+                if (isSorted(docs, candidates.size) == false) {
+                    new LSBRadixSorter().sort(PackedInts.bitsRequired(maxDoc - 1), docs, candidates.size);
+                }
                 final Bits live = context.reader().getLiveDocs();
                 int n = 0;
                 for (int i = 0; i < candidates.size; i++) {
@@ -331,7 +333,10 @@ public final class ApproximateBooleanQuery extends ApproximateQuery {
                 }
                 final DocIdSetBuilder.BulkAdder adder = builder.grow(n);
                 long added = 0;
-                docLoop: for (int i = 0; i < n; i++) {
+                // leapfrog: a clause that lands past the candidate moves the candidate index forward by galloping, so a
+                // selective clause costs one advance per match, not one per candidate
+                int i = 0;
+                docLoop: while (i < n) {
                     final int doc = docs[i];
                     for (DocIdSetIterator it : approximations) {
                         int d = it.docID();
@@ -342,18 +347,55 @@ public final class ApproximateBooleanQuery extends ApproximateQuery {
                             break docLoop;
                         }
                         if (d != doc) {
+                            i = gallop(docs, i + 1, n, d);
                             continue docLoop;
                         }
                     }
+                    boolean match = true;
                     for (TwoPhaseIterator tp : twoPhases) {
                         if (tp != null && tp.matches() == false) {
-                            continue docLoop;
+                            match = false;
+                            break;
                         }
                     }
-                    adder.add(doc);
-                    added++;
+                    if (match) {
+                        adder.add(doc);
+                        added++;
+                    }
+                    i++;
                 }
                 return added;
+            }
+
+            private static boolean isSorted(int[] docs, int n) {
+                for (int i = 1; i < n; i++) {
+                    if (docs[i - 1] > docs[i]) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            /** The first index in [from, n) whose doc is at least target, or n. */
+            private static int gallop(int[] docs, int from, int n, int target) {
+                int step = 1;
+                int lo = from;
+                int hi = from;
+                while (hi < n && docs[hi] < target) {
+                    lo = hi + 1;
+                    hi += step;
+                    step <<= 1;
+                }
+                hi = Math.min(hi, n);
+                while (lo < hi) {
+                    int mid = (lo + hi) >>> 1;
+                    if (docs[mid] < target) {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                return lo;
             }
 
             /** The leaves of the range in sort order (asc: left to right, desc: right to left), skipping outside cells. */
