@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Sun, 4 Oct 2026 18:54:30 -0700
+Subject: [PATCH] Split BKD codec for the POC Lucene's luceneutil copy
+
+POC Lucene (fork bkd-split) only: stock Lucene has no PerFieldPointsFormat. Compiled by luceneutil only in the POC checkout's private luceneutil copy.
+---
+ src/main/perf/ColdpathSplitPoints.java | 56 ++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+ create mode 100644 src/main/perf/ColdpathSplitPoints.java
+
+diff --git a/src/main/perf/ColdpathSplitPoints.java b/src/main/perf/ColdpathSplitPoints.java
+new file mode 100644
+index 00000000..43a1fb7f
+--- /dev/null
++++ b/src/main/perf/ColdpathSplitPoints.java
+@@ -0,0 +1,56 @@
++package perf;
++
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++import java.util.Set;
++import org.apache.lucene.codecs.Codec;
++import org.apache.lucene.codecs.FilterCodec;
++import org.apache.lucene.codecs.PointsFormat;
++import org.apache.lucene.codecs.lucene104.Lucene104SplitPointsCodec;
++import org.apache.lucene.codecs.perfield.PerFieldPointsFormat;
++import org.apache.lucene.index.FieldInfo;
++
++/**
++ * POC Lucene only (the Lucene fork's split BKD points format). Writes the named one-dimensional points fields with
++ * {@link PerFieldPointsFormat#SPLIT} and every other field with the stock format, under the codec name
++ * {@link Lucene104SplitPointsCodec#NAME}, which SPI resolves to {@link Lucene104SplitPointsCodec} when the segment is
++ * read (it reads every field through the format its FieldInfo attributes name). The same choice rule as the
++ * OpenSearch plugin's PointsFormatSelectingCodec: split only for 1-D points fields (index dims == dims == 1).
++ */
++public final class ColdpathSplitPoints {
++  private ColdpathSplitPoints() {}
++
++  public static Codec wrap(Codec delegate, Set<String> fields) {
++    final PointsFormat points =
++        new PerFieldPointsFormat() {
++          @Override
++          public PointsFormat getPointsFormatForField(FieldInfo fi) {
++            if (fields.contains(fi.name) && fi.getPointIndexDimensionCount() == 1 && fi.getPointDimensionCount() == 1) {
++              return SPLIT;
++            }
++            return STOCK;
++          }
++        };
++    return new FilterCodec(Lucene104SplitPointsCodec.NAME, delegate) {
++      @Override
++      public PointsFormat pointsFormat() {
++        return points;
++      }
++    };
++  }
++}

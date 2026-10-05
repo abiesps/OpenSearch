@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Sun, 4 Oct 2026 18:53:59 -0700
+Subject: [PATCH 0/3] Compile against Lucene 10.5.x
+
+luceneutil main tracks Lucene main (11.x APIs). This keeps luceneutil's behaviour on the Lucene 10.5.1 line: PriorityQueue.lessThan, merge-policy noCFSRatio for compound files (the pre-#510 code), and -bp (vector BP, Lucene main only) rejected.
+---
+ src/main/perf/CreateQueries.java  |  8 +++++++-
+ src/main/perf/Indexer.java        | 14 ++++++++------
+ src/main/perf/NRTPerfTest.java    |  2 +-
+ src/main/perf/SearchPerfTest.java |  2 +-
+ 4 files changed, 17 insertions(+), 9 deletions(-)
+
+diff --git a/src/main/perf/CreateQueries.java b/src/main/perf/CreateQueries.java
+index 082b9812..490e2aec 100644
+--- a/src/main/perf/CreateQueries.java
++++ b/src/main/perf/CreateQueries.java
+@@ -67,7 +67,13 @@ public class CreateQueries {
+ 
+   private static class MostFrequentTerms extends PriorityQueue<TermFreq> {
+     public MostFrequentTerms(int maxSize) {
+-      super(maxSize, (tf1, tf2) -> tf1.df < tf2.df);
++      // Lucene 10.x PriorityQueue: lessThan is an abstract method (Lucene main takes a comparator lambda)
++      super(maxSize);
++    }
++
++    @Override
++    protected boolean lessThan(TermFreq tf1, TermFreq tf2) {
++      return tf1.df < tf2.df;
+     }
+   }
+ 
+diff --git a/src/main/perf/Indexer.java b/src/main/perf/Indexer.java
+index 39c2f3c6..57946533 100644
+--- a/src/main/perf/Indexer.java
++++ b/src/main/perf/Indexer.java
+@@ -73,7 +73,6 @@ import org.apache.lucene.index.SerialMergeScheduler;
+ import org.apache.lucene.index.Term;
+ import org.apache.lucene.index.TieredMergePolicy;
+ import org.apache.lucene.index.VectorEncoding;
+-import org.apache.lucene.misc.index.BpVectorReorderer;
+ import org.apache.lucene.misc.index.BPReorderingMergePolicy;
+ import org.apache.lucene.search.Sort;
+ import org.apache.lucene.search.SortField;
+@@ -127,25 +126,28 @@ public final class Indexer {
+     }
+   }
+ 
+-  private static MergePolicy getMergePolicy(String mergePolicy, boolean useBP) {
++  private static MergePolicy getMergePolicy(String mergePolicy, boolean useCFS, boolean useBP) {
+ 
+     MergePolicy mp;
+     if (mergePolicy.equals("LogDocMergePolicy")) {
+       mp = new LogDocMergePolicy();
++      mp.setNoCFSRatio(useCFS ? 1.0 : 0.0);
+     } else if (mergePolicy.equals("LogByteSizeMergePolicy")) {
+       mp = new LogByteSizeMergePolicy();
++      mp.setNoCFSRatio(useCFS ? 1.0 : 0.0);
+     } else if (mergePolicy.equals("NoMergePolicy")) {
+       mp = NoMergePolicy.INSTANCE;
+     } else if (mergePolicy.equals("TieredMergePolicy")) {
+       final TieredMergePolicy tmp = new TieredMergePolicy();
+       //tmp.setMaxMergedSegmentMB(1000000.0);
++      tmp.setNoCFSRatio(useCFS ? 1.0 : 0.0);
+       mp = tmp;
+     } else {
+       throw new RuntimeException("unknown MergePolicy " + mergePolicy);
+     }
+     if (useBP) {
+-      BpVectorReorderer reorderer = new BpVectorReorderer(LineFileDocs.VECTOR_FIELD_NAME);
+-      mp = new BPReorderingMergePolicy(mp, reorderer);
++      // Lucene 10.x has no BpVectorReorderer (vector BP reordering is Lucene main only); no vectors are indexed here
++      throw new IllegalArgumentException("-bp (BpVectorReorderer) needs Lucene main; this luceneutil copy targets Lucene 10.x");
+     }
+     return mp;
+   }
+@@ -529,8 +531,8 @@ public final class Indexer {
+         iwc.setUseCompoundFile(useCFS);
+ 
+         iwc.setMergeScheduler(getMergeScheduler(indexingFailed, useCMS, maxConcurrentMerges, ioThrottle));
+-        iwc.getCodec().compoundFormat().setShouldUseCompoundFile(useCFS);
+-        iwc.setMergePolicy(getMergePolicy(mergePolicy, useBP));
++        // Lucene 10.x: compound files of merged segments are chosen by the merge policy's noCFSRatio
++        iwc.setMergePolicy(getMergePolicy(mergePolicy, useCFS, useBP));
+ 
+         // Keep all commit points:
+         if (doDeletions || doForceMerge) {
+diff --git a/src/main/perf/NRTPerfTest.java b/src/main/perf/NRTPerfTest.java
+index 99916046..5bdf2a7d 100644
+--- a/src/main/perf/NRTPerfTest.java
++++ b/src/main/perf/NRTPerfTest.java
+@@ -327,7 +327,7 @@ public class NRTPerfTest {
+     */
+ 
+     TieredMergePolicy tmp = new TieredMergePolicy();
+-    conf.getCodec().compoundFormat().setShouldUseCompoundFile(false);
++    tmp.setNoCFSRatio(0.0); // Lucene 10.x
+     tmp.setMaxMergedSegmentMB(1000000.0);
+     //tmp.setReclaimDeletesWeight(3.0);
+     //tmp.setMaxMergedSegmentMB(7000.0);
+diff --git a/src/main/perf/SearchPerfTest.java b/src/main/perf/SearchPerfTest.java
+index 7c151e95..eadb6091 100755
+--- a/src/main/perf/SearchPerfTest.java
++++ b/src/main/perf/SearchPerfTest.java
+@@ -428,7 +428,7 @@ public class SearchPerfTest {
+         iwc.setIndexCommit(PerfUtils.findCommitPoint(commit, dir));
+       }
+ 
+-      iwc.getCodec().compoundFormat().setShouldUseCompoundFile(useCFS);
++      ((TieredMergePolicy) iwc.getMergePolicy()).setNoCFSRatio(useCFS ? 1.0 : 0.0); // Lucene 10.x
+       //((TieredMergePolicy) iwc.getMergePolicy()).setMaxMergedSegmentMB(1024);
+       //((TieredMergePolicy) iwc.getMergePolicy()).setReclaimDeletesWeight(3.0);
+       //((TieredMergePolicy) iwc.getMergePolicy()).setMaxMergeAtOnce(4);

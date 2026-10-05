@@ -1,0 +1,189 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Sun, 4 Oct 2026 18:54:00 -0700
+Subject: [PATCH 2/3] Drop and verify caches before every task (cold mode)
+
+---
+ src/main/perf/ColdpathCold.java   | 136 ++++++++++++++++++++++++++++++
+ src/main/perf/SearchPerfTest.java |   3 +
+ src/main/perf/TaskThreads.java    |   9 ++
+ 3 files changed, 148 insertions(+)
+ create mode 100644 src/main/perf/ColdpathCold.java
+
+diff --git a/src/main/perf/ColdpathCold.java b/src/main/perf/ColdpathCold.java
+new file mode 100644
+index 00000000..878f0a8d
+--- /dev/null
++++ b/src/main/perf/ColdpathCold.java
+@@ -0,0 +1,136 @@
++package perf;
++
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++import java.io.IOException;
++import java.io.PrintStream;
++import java.io.UncheckedIOException;
++import java.net.URI;
++import java.net.URLEncoder;
++import java.net.http.HttpClient;
++import java.net.http.HttpRequest;
++import java.net.http.HttpResponse;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Paths;
++import java.time.Duration;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * Strict per-task cold mode of the coldpath harness. Before every task, outside the task's timed region, the coldpath
++ * agent on this host pages out this JVM's mappings of the index files (MMapDirectory pages stay cached while mapped),
++ * syncs and drops the page cache ({@code POST /cache/drop?pageout=1}); then the page-cache residency of the index files
++ * is checked with mincore ({@code GET /cache/residency}) and the device / NFS counters are snapshotted
++ * ({@code GET /snapshot}). After the task the counters are snapshotted again. One JSON line per task goes to
++ * {@code -Dcoldpath.cold.log} (not stdout: luceneutil rejects a large stdout). Enabled by {@code -Dcoldpath.cold.agent};
++ * needs one task at a time ({@code -numConcurrentQueries 1}), checked by SearchPerfTest.
++ * Properties: coldpath.cold.agent (http://127.0.0.1:9700), coldpath.cold.tokenFile, coldpath.cold.arm (the agent arm
++ * whose data_path holds the index), coldpath.cold.uuids (index directory names under data_path/indices),
++ * coldpath.cold.residencyTolerance (bytes, default 1 MiB), coldpath.cold.log.
++ */
++public final class ColdpathCold {
++  private static final String AGENT = System.getProperty("coldpath.cold.agent", "");
++  private static final Pattern RESIDENT = Pattern.compile("\"resident_bytes\"\\s*:\\s*(\\d+)");
++  private static HttpClient client;
++  private static String token;
++  private static PrintStream log;
++  private static String preDrop;
++  private static String preResidency;
++  private static String preSnapshot;
++  private static long preResident;
++  private static long count;
++
++  private ColdpathCold() {}
++
++  public static boolean enabled() {
++    return AGENT.isEmpty() == false;
++  }
++
++  private static synchronized void init() throws IOException {
++    if (client != null) {
++      return;
++    }
++    client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
++    String tokenFile = System.getProperty("coldpath.cold.tokenFile");
++    token = tokenFile == null ? "" : Files.readString(Paths.get(tokenFile)).trim();
++    String logPath = System.getProperty("coldpath.cold.log");
++    if (logPath == null) {
++      throw new IllegalArgumentException("-Dcoldpath.cold.log is required with -Dcoldpath.cold.agent");
++    }
++    log = new PrintStream(Files.newOutputStream(Paths.get(logPath)), true, StandardCharsets.UTF_8);
++  }
++
++  private static String call(String method, String pathAndQuery) {
++    try {
++      HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(AGENT + pathAndQuery))
++          .timeout(Duration.ofMinutes(15)).header("X-Coldpath-Token", token);
++      b = method.equals("POST") ? b.POST(HttpRequest.BodyPublishers.noBody()) : b.GET();
++      HttpResponse<String> r = client.send(b.build(), HttpResponse.BodyHandlers.ofString());
++      if (r.statusCode() / 100 != 2) {
++        throw new IllegalStateException("coldpath agent " + method + " " + pathAndQuery + " -> " + r.statusCode() + " " + r.body());
++      }
++      return r.body();
++    } catch (IOException e) {
++      throw new UncheckedIOException(e);
++    } catch (InterruptedException e) {
++      Thread.currentThread().interrupt();
++      throw new IllegalStateException(e);
++    }
++  }
++
++  private static String q(String v) {
++    return URLEncoder.encode(v, StandardCharsets.UTF_8);
++  }
++
++  /** Drops the caches and verifies them, before the task starts (not timed). */
++  public static synchronized void beforeTask(Task task) throws IOException {
++    init();
++    String arm = "arm=" + q(System.getProperty("coldpath.cold.arm", ""));
++    preDrop = call("POST", "/cache/drop?pageout=1&" + arm);
++    preResidency = call("GET", "/cache/residency?" + arm + "&uuids=" + q(System.getProperty("coldpath.cold.uuids", "")));
++    Matcher m = RESIDENT.matcher(preResidency);
++    preResident = m.find() ? Long.parseLong(m.group(1)) : -1;
++    preSnapshot = call("GET", "/snapshot?" + arm);
++  }
++
++  /** Records the task's run time with the clear, the residency and the IO counters around it. */
++  public static synchronized void afterTask(Task task) {
++    String arm = "arm=" + q(System.getProperty("coldpath.cold.arm", ""));
++    String post = call("GET", "/snapshot?" + arm);
++    long tolerance = Long.getLong("coldpath.cold.residencyTolerance", 1L << 20);
++    boolean ok = preResident >= 0 && preResident <= tolerance;
++    log.println("{\"n\":" + (count++) + ",\"category\":" + json(task.getCategory()) + ",\"task\":" + json(task.toString())
++        + ",\"run_ms\":" + (task.runTimeNanos / 1e6) + ",\"resident_bytes\":" + preResident + ",\"cold_ok\":" + ok
++        + ",\"drop\":" + preDrop + ",\"residency\":" + preResidency + ",\"pre\":" + preSnapshot + ",\"post\":" + post + "}");
++  }
++
++  private static String json(String s) {
++    StringBuilder b = new StringBuilder("\"");
++    for (char c : s.toCharArray()) {
++      if (c == '"' || c == '\\') {
++        b.append('\\').append(c);
++      } else if (c < 0x20) {
++        b.append(String.format("\\u%04x", (int) c));
++      } else {
++        b.append(c);
++      }
++    }
++    return b.append('"').toString();
++  }
++}
+diff --git a/src/main/perf/SearchPerfTest.java b/src/main/perf/SearchPerfTest.java
+index 8917d61c..47aa0d8f 100755
+--- a/src/main/perf/SearchPerfTest.java
++++ b/src/main/perf/SearchPerfTest.java
+@@ -270,6 +270,9 @@ public class SearchPerfTest {
+     final String analyzer = args.getString("-analyzer");
+     final String tasksFile = args.getString("-taskSource");
+     final int numConcurrentQueries = args.getInt("-numConcurrentQueries");
++    if (ColdpathCold.enabled() && numConcurrentQueries != 1) {
++      throw new IllegalArgumentException("coldpath per-task cold mode needs -numConcurrentQueries 1, got " + numConcurrentQueries);
++    }
+     final String fieldName = args.getString("-field");
+     final boolean printHeap = args.getFlag("-printHeap");
+     final boolean doPKLookup = args.getFlag("-pk");
+diff --git a/src/main/perf/TaskThreads.java b/src/main/perf/TaskThreads.java
+index 16509654..5ad84e08 100644
+--- a/src/main/perf/TaskThreads.java
++++ b/src/main/perf/TaskThreads.java
+@@ -153,7 +153,16 @@ public class TaskThreads {
+           // each time.  or, could we somehow "fix this in post"?  are there dedup
+           // tools/regexps/something?  Java mission control somehow dedups these
+           // annoyingly named anon lambdas...
++          // coldpath harness, strict per-task cold mode: caches dropped and verified before the task, outside its
++          // timed region (RunTask times only task.go)
++          final boolean cold = ColdpathCold.enabled();
++          if (cold) {
++            ColdpathCold.beforeTask(task);
++          }
+           executor.submit(new RunTask(tasks, task, indexState, taskParser)).get();
++          if (cold) {
++            ColdpathCold.afterTask(task);
++          }
+ 
+           task.threadID = threadID;
+         }

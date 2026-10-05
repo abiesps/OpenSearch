@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Sun, 4 Oct 2026 18:53:59 -0700
+Subject: [PATCH 1/3] Set Lucene experiment switches from -Dcoldpath.switches
+
+---
+ src/main/perf/ColdpathSwitches.java | 148 ++++++++++++++++++++++++++++
+ src/main/perf/SearchPerfTest.java   |   3 +
+ 2 files changed, 151 insertions(+)
+ create mode 100644 src/main/perf/ColdpathSwitches.java
+
+diff --git a/src/main/perf/ColdpathSwitches.java b/src/main/perf/ColdpathSwitches.java
+new file mode 100644
+index 00000000..baa2d167
+--- /dev/null
++++ b/src/main/perf/ColdpathSwitches.java
+@@ -0,0 +1,148 @@
++package perf;
++
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++import java.lang.reflect.InvocationTargetException;
++import java.lang.reflect.Method;
++import java.lang.reflect.Modifier;
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Sets the process-wide experiment switches of a Lucene build from {@code -Dcoldpath.switches=Class.setter=value,...}
++ * (coldpath harness, harness/luceneutil/switches.json lists the setters, generated from the fork's source). Each setter
++ * is called by reflection, then read back through its getter ({@code getX} or {@code isX}) and printed as
++ * {@code COLDPATH switch <class>.<setter>=<value> readback=<value>}. An unknown class, an unknown setter, a value the
++ * setter rejects or a read-back that differs exits the JVM with status 3: the arm is "not available" on this build
++ * (stock Lucene has none of these classes, so only the empty switch set runs on it).
++ */
++public final class ColdpathSwitches {
++  public static final String PROPERTY = "coldpath.switches";
++  public static final int EXIT_NOT_AVAILABLE = 3;
++
++  private ColdpathSwitches() {}
++
++  /** Applies the switches of the system property; returns the read-back lines. */
++  public static List<String> apply() {
++    return apply(System.getProperty(PROPERTY, ""));
++  }
++
++  static List<String> apply(String spec) {
++    List<String> lines = new ArrayList<>();
++    if (spec == null || spec.isBlank()) {
++      System.out.println("COLDPATH switches: none (stock behaviour)");
++      return lines;
++    }
++    for (String item : spec.split(",")) {
++      item = item.trim();
++      if (item.isEmpty()) {
++        continue;
++      }
++      int eq = item.indexOf('=');
++      int dot = eq < 0 ? -1 : item.lastIndexOf('.', eq);
++      if (eq < 0 || dot < 0) {
++        fail("bad switch [" + item + "]: expected <fully.qualified.Class>.<setter>=<value>");
++      }
++      String className = item.substring(0, dot);
++      String setterName = item.substring(dot + 1, eq);
++      String value = item.substring(eq + 1);
++      Class<?> clazz;
++      try {
++        clazz = Class.forName(className);
++      } catch (ClassNotFoundException e) {
++        fail("class " + className + " is not in this Lucene build");
++        return lines;
++      }
++      Method setter = staticMethod(clazz, setterName, 1);
++      if (setter == null || setterName.startsWith("set") == false) {
++        fail("no static setter " + className + "." + setterName + "(x)");
++        return lines;
++      }
++      String base = setterName.substring(3);
++      Method getter = staticMethod(clazz, "get" + base, 0);
++      if (getter == null) {
++        getter = staticMethod(clazz, "is" + base, 0);
++      }
++      if (getter == null) {
++        fail("no read-back getter get" + base + "() or is" + base + "() in " + className);
++        return lines;
++      }
++      Object arg = convert(setter.getParameterTypes()[0], value, item);
++      Object back;
++      try {
++        setter.invoke(null, arg);
++        back = getter.invoke(null);
++      } catch (InvocationTargetException e) {
++        fail("setter rejected [" + item + "]: " + e.getCause());
++        return lines;
++      } catch (IllegalAccessException e) {
++        fail("cannot call " + className + "." + setterName + ": " + e);
++        return lines;
++      }
++      if (String.valueOf(back).equals(String.valueOf(arg)) == false) {
++        fail("read-back of [" + item + "] is " + back);
++      }
++      String line = "COLDPATH switch " + className + "." + setterName + "=" + value + " readback=" + back;
++      System.out.println(line);
++      lines.add(line);
++    }
++    return lines;
++  }
++
++  private static Method staticMethod(Class<?> clazz, String name, int params) {
++    for (Method m : clazz.getMethods()) {
++      if (m.getName().equals(name) && m.getParameterCount() == params && Modifier.isStatic(m.getModifiers())) {
++        return m;
++      }
++    }
++    return null;
++  }
++
++  @SuppressWarnings({"unchecked", "rawtypes"})
++  private static Object convert(Class<?> type, String value, String item) {
++    try {
++      if (type == boolean.class) {
++        if (value.equals("true") == false && value.equals("false") == false) {
++          fail("[" + item + "]: boolean must be true or false");
++        }
++        return Boolean.parseBoolean(value);
++      } else if (type == int.class) {
++        return Integer.parseInt(value);
++      } else if (type == long.class) {
++        return Long.parseLong(value);
++      } else if (type == double.class) {
++        return Double.parseDouble(value);
++      } else if (type == String.class) {
++        return value;
++      } else if (type.isEnum()) {
++        return Enum.valueOf((Class) type, value);
++      }
++    } catch (IllegalArgumentException e) {
++      fail("[" + item + "]: " + e.getMessage());
++    }
++    fail("[" + item + "]: unsupported parameter type " + type.getName());
++    return null;
++  }
++
++  private static void fail(String message) {
++    System.out.println("COLDPATH switches NOT AVAILABLE: " + message);
++    System.err.println("COLDPATH switches NOT AVAILABLE: " + message);
++    System.out.flush();
++    System.exit(EXIT_NOT_AVAILABLE);
++  }
++}
+diff --git a/src/main/perf/SearchPerfTest.java b/src/main/perf/SearchPerfTest.java
+index eadb6091..8917d61c 100755
+--- a/src/main/perf/SearchPerfTest.java
++++ b/src/main/perf/SearchPerfTest.java
+@@ -216,6 +216,9 @@ public class SearchPerfTest {
+     // eg java SearchPerfTest /path/to/index 4 100
+     final Args args = new Args(clArgs);
+ 
++    // coldpath harness: the Lucene build's experiment switches, set and read back before anything else runs
++    ColdpathSwitches.apply();
++
+     Directory dir0;
+     final String dirPath = args.getString("-indexPath") + "/index";
+     final String dirImpl = args.getString("-dirImpl");

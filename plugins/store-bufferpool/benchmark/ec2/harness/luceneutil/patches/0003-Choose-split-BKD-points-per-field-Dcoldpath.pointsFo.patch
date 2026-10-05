@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Sun, 4 Oct 2026 18:54:00 -0700
+Subject: [PATCH 3/3] Choose split BKD points per field
+ (-Dcoldpath.pointsFormat)
+
+---
+ src/main/perf/ColdpathPointsFormat.java | 60 +++++++++++++++++++++++++
+ src/main/perf/Indexer.java              |  5 ++-
+ 2 files changed, 63 insertions(+), 2 deletions(-)
+ create mode 100644 src/main/perf/ColdpathPointsFormat.java
+
+diff --git a/src/main/perf/ColdpathPointsFormat.java b/src/main/perf/ColdpathPointsFormat.java
+new file mode 100644
+index 00000000..7d6a9e76
+--- /dev/null
++++ b/src/main/perf/ColdpathPointsFormat.java
+@@ -0,0 +1,60 @@
++package perf;
++
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++import java.util.Arrays;
++import java.util.LinkedHashSet;
++import java.util.Set;
++import org.apache.lucene.codecs.Codec;
++
++/**
++ * Per-field points format for the Indexer (coldpath harness): {@code -Dcoldpath.pointsFormat=Lucene90Split:f1,f2}
++ * writes the named one-dimensional points fields in the Lucene fork's split BKD format (the "B" index variant). The
++ * codec that does it ({@code perf.ColdpathSplitPoints}) is only in the POC Lucene's private luceneutil copy (stock Lucene
++ * has no split format), so it is looked up by name; without the property the Indexer's codec is used unchanged.
++ */
++public final class ColdpathPointsFormat {
++  public static final String PROPERTY = "coldpath.pointsFormat";
++
++  private ColdpathPointsFormat() {}
++
++  public static Codec wrap(Codec codec) {
++    String spec = System.getProperty(PROPERTY, "");
++    if (spec.isBlank()) {
++      return codec;
++    }
++    int colon = spec.indexOf(':');
++    String format = colon < 0 ? spec : spec.substring(0, colon);
++    if (format.equals("Lucene90Split") == false || colon < 0) {
++      throw new IllegalArgumentException("-D" + PROPERTY + "=" + spec + ": expected Lucene90Split:<field>,<field>...");
++    }
++    Set<String> fields = new LinkedHashSet<>(Arrays.asList(spec.substring(colon + 1).split(",")));
++    try {
++      Class<?> c = Class.forName("perf.ColdpathSplitPoints");
++      Codec wrapped = (Codec) c.getMethod("wrap", Codec.class, Set.class).invoke(null, codec, fields);
++      System.out.println("COLDPATH points format Lucene90Split for fields " + fields + " codec " + wrapped.getName());
++      return wrapped;
++    } catch (ClassNotFoundException e) {
++      System.out.println("COLDPATH points format NOT AVAILABLE: no split points format in this Lucene build");
++      System.exit(ColdpathSwitches.EXIT_NOT_AVAILABLE);
++      return codec;
++    } catch (ReflectiveOperationException e) {
++      throw new IllegalStateException(e);
++    }
++  }
++}
+diff --git a/src/main/perf/Indexer.java b/src/main/perf/Indexer.java
+index 57946533..4a4c41fd 100644
+--- a/src/main/perf/Indexer.java
++++ b/src/main/perf/Indexer.java
+@@ -479,7 +479,8 @@ public final class Indexer {
+           );
+         }
+       // Use Codec at defaults, except possibly for id field, facets, andconcurrency during HNSW merging
+-      final Codec codec = new Lucene104Codec() {
++      // coldpath harness: -Dcoldpath.pointsFormat=Lucene90Split:<fields> wraps this codec (POC Lucene only)
++      final Codec codec = ColdpathPointsFormat.wrap(new Lucene104Codec() {
+           @Override
+           public PostingsFormat getPostingsFormatForField(String field) {
+             return PostingsFormat.forName(field.equals("id") ?
+@@ -503,7 +504,7 @@ public final class Indexer {
+           public KnnVectorsFormat getKnnVectorsFormatForField(String field) {
+             return knnVectorsFormat;
+           }
+-        };
++        });
+ 
+       final AtomicBoolean indexingFailed = new AtomicBoolean();
+ 

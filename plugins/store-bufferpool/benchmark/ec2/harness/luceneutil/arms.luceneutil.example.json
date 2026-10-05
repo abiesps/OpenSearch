@@ -1,0 +1,388 @@
+{
+ "_doc": "luceneutil arms of branch g-luceneutil (GENERIC-PLAN section 5). Values in {braces} are params: the IO sizes come from the IO configuration (8 KiB block, 32 KiB random, 128 KiB sequential); the K2 / ORPF / TOPK values and the CORE set must be copied from artifacts-final.json and the final POC report before phase B (recorded per arm in session.json). Switch names are checked against switches.json (generated from the fork). Stock Lucene arms carry no switches. The index variants are built by luceneutil (run_luceneutil.py index) on EBS and copied with checksums to EFS (run_luceneutil.py copy).",
+ "python": "python3",
+ "luceneutil": {
+  "path": "/data/ebs/lu/luceneutil",
+  "commit": "99217ab641d0dd172a89f22f079aa85227f5b7fe"
+ },
+ "checkouts": {
+  "stock": {
+   "path": "/data/ebs/lu/lucene-stock",
+   "ref": "releases/lucene/10.5.1",
+   "commit": "64ce863a2bea79c69c19c4d56268c26710ff0ff9"
+  },
+  "poc": {
+   "path": "/data/ebs/lu/lucene-poc",
+   "ref": "origin/bkd-split",
+   "commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
+   "note": "phase B: the final POC Lucene commit of artifacts-final.json"
+  }
+ },
+ "java_command": "java -server -Xms8g -Xmx8g --add-modules jdk.incubator.vector -XX:+HeapDumpOnOutOfMemoryError -XX:+UseParallelGC --enable-native-access=ALL-UNNAMED",
+ "storages": {
+  "EBS": {
+   "index_dir_base": "/data/ebs/lu/indices",
+   "agent_arm": "LU-EBS",
+   "agent_url": "http://127.0.0.1:9700",
+   "agent_token_file": "/etc/coldpath-agent/token",
+   "residency_tolerance": 1048576,
+   "read_ahead_kb": 128
+  },
+  "EFS": {
+   "index_dir_base": "/mnt/efs/lu/indices",
+   "agent_arm": "LU-EFS",
+   "agent_url": "http://127.0.0.1:9700",
+   "agent_token_file": "/etc/coldpath-agent/token",
+   "residency_tolerance": 1048576,
+   "read_ahead_kb": 128
+  }
+ },
+ "indices": {
+  "stock": {
+   "builder_checkout": "/data/ebs/lu/lucene-stock",
+   "luceneutil_index_kwargs": {
+    "addDVFields": true,
+    "useCMS": true,
+    "mergePolicy": "TieredMergePolicy"
+   },
+   "facets": [
+    [
+     "taxonomy:Date",
+     "Date"
+    ],
+    [
+     "taxonomy:Month",
+     "Month"
+    ],
+    [
+     "taxonomy:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "sortedset:Date",
+     "Date"
+    ],
+    [
+     "sortedset:Month",
+     "Month"
+    ],
+    [
+     "sortedset:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "taxonomy:RandomLabel",
+     "RandomLabel"
+    ],
+    [
+     "sortedset:RandomLabel",
+     "RandomLabel"
+    ]
+   ],
+   "note": "built by stock Lucene; searched by every arm (identical files, like S0/S1)"
+  },
+  "poc_stock": {
+   "builder_checkout": "/data/ebs/lu/lucene-poc",
+   "luceneutil_index_kwargs": {
+    "addDVFields": true,
+    "useCMS": true,
+    "mergePolicy": "TieredMergePolicy"
+   },
+   "facets": [
+    [
+     "taxonomy:Date",
+     "Date"
+    ],
+    [
+     "taxonomy:Month",
+     "Month"
+    ],
+    [
+     "taxonomy:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "sortedset:Date",
+     "Date"
+    ],
+    [
+     "sortedset:Month",
+     "Month"
+    ],
+    [
+     "sortedset:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "taxonomy:RandomLabel",
+     "RandomLabel"
+    ],
+    [
+     "sortedset:RandomLabel",
+     "RandomLabel"
+    ]
+   ],
+   "note": "built by POC Lucene with the stock codec; searched by L0 and L1 (writer compatibility and equal results)"
+  },
+  "split": {
+   "builder_checkout": "/data/ebs/lu/lucene-poc",
+   "luceneutil_index_kwargs": {
+    "addDVFields": true,
+    "useCMS": true,
+    "mergePolicy": "TieredMergePolicy",
+    "extraNamePart": "splitbkd"
+   },
+   "facets": [
+    [
+     "taxonomy:Date",
+     "Date"
+    ],
+    [
+     "taxonomy:Month",
+     "Month"
+    ],
+    [
+     "taxonomy:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "sortedset:Date",
+     "Date"
+    ],
+    [
+     "sortedset:Month",
+     "Month"
+    ],
+    [
+     "sortedset:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "taxonomy:RandomLabel",
+     "RandomLabel"
+    ],
+    [
+     "sortedset:RandomLabel",
+     "RandomLabel"
+    ]
+   ],
+   "points_format": "Lucene90Split:lastMod,timesecnum,dayOfYear",
+   "note": "B: luceneutil's date/time point fields in the split BKD format (POC Lucene only)"
+  },
+  "dualnav": {
+   "builder_checkout": "/data/ebs/lu/lucene-poc",
+   "luceneutil_index_kwargs": {
+    "addDVFields": true,
+    "useCMS": true,
+    "mergePolicy": "TieredMergePolicy",
+    "postingsFormat": "Lucene104DualNav",
+    "extraNamePart": "dualnav"
+   },
+   "facets": [
+    [
+     "taxonomy:Date",
+     "Date"
+    ],
+    [
+     "taxonomy:Month",
+     "Month"
+    ],
+    [
+     "taxonomy:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "sortedset:Date",
+     "Date"
+    ],
+    [
+     "sortedset:Month",
+     "Month"
+    ],
+    [
+     "sortedset:DayOfYear",
+     "DayOfYear"
+    ],
+    [
+     "taxonomy:RandomLabel",
+     "RandomLabel"
+    ],
+    [
+     "sortedset:RandomLabel",
+     "RandomLabel"
+    ]
+   ],
+   "note": "DualNav postings variant (POC Lucene only)"
+  }
+ },
+ "params": {
+  "io.block_bytes": 8192,
+  "io.random_bytes": 32768,
+  "io.sequential_bytes": 131072,
+  "k2.sample_docs": 65536,
+  "orpf.bytes_ahead": 131072,
+  "topk.norms_docs_ahead": 4096,
+  "topk.doc_nodes_ahead": 1,
+  "_note": "k2/orpf/topk values: copy from artifacts-final.json before phase B"
+ },
+ "competition": {
+  "jvm_count": 20,
+  "task_repeat_count": 20,
+  "cold_task_repeat_count": 3,
+  "task_count_per_cat": 1,
+  "random_seed": 4,
+  "verify_scores": true,
+  "verify_counts": true,
+  "search_concurrency": 0,
+  "num_concurrent_queries": null
+ },
+ "tasks": [
+  "wikimedium.10M.nostopwords.tasks",
+  "wikimedium.10M.facets.tasks",
+  "wikimedium.10M.datefacets.nostopwords.tasks"
+ ],
+ "arms": {
+  "L0": {
+   "checkout": "stock",
+   "index": "stock",
+   "switches": {},
+   "note": "stock Lucene 10.5.1 (reference; L0@a,L0@b = A/A)"
+  },
+  "L1": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {},
+   "note": "POC Lucene, every switch off: the unconditional POC changes (hot-path check)"
+  },
+  "L0-pocidx": {
+   "checkout": "stock",
+   "index": "poc_stock",
+   "switches": {}
+  },
+  "L1-pocidx": {
+   "checkout": "poc",
+   "index": "poc_stock",
+   "switches": {}
+  },
+  "L2-A": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.util.bkd.BKDExperiments.setIntersectPrefetch": true,
+    "org.apache.lucene.util.bkd.BKDExperiments.setNodeBytes": "{io.sequential_bytes}"
+   }
+  },
+  "L2-A-child": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.util.bkd.BKDExperiments.setIndexChildPrefetch": true,
+    "org.apache.lucene.util.bkd.BKDExperiments.setNodeBytes": "{io.sequential_bytes}"
+   }
+  },
+  "L2-K2": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.comparators.ComparatorExperiments.setSampleDocs": "{k2.sample_docs}"
+   }
+  },
+  "L2-K3": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.CollectExperiments.setCompetitiveRunCap": true
+   }
+  },
+  "L2-K4f": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.comparators.ComparatorExperiments.setSkipperMode": "FALLBACK"
+   }
+  },
+  "L2-K4s": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.comparators.ComparatorExperiments.setSkipperMode": "FIRST"
+   }
+  },
+  "L2-ORPF": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.DisjunctionPrefetch.setBytesAhead": "{orpf.bytes_ahead}",
+    "org.apache.lucene.search.DisjunctionPrefetch.setNodeBytes": "{io.sequential_bytes}"
+   }
+  },
+  "L2-TOPK": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.TopKPrefetch.setNormsDocsAhead": "{topk.norms_docs_ahead}",
+    "org.apache.lucene.search.TopKPrefetch.setDocNodesAhead": "{topk.doc_nodes_ahead}",
+    "org.apache.lucene.search.TopKPrefetch.setNodeBytes": "{io.sequential_bytes}"
+   }
+  },
+  "L2-bulkDecode": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.CollectExperiments.setBulkDecode": true
+   }
+  },
+  "L2-cacheRunEnd": {
+   "checkout": "poc",
+   "index": "stock",
+   "switches": {
+    "org.apache.lucene.search.CollectExperiments.setCacheRunEnd": true
+   }
+  },
+  "L1-dualnav": {
+   "checkout": "poc",
+   "index": "dualnav",
+   "switches": {
+    "org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat.setReadMode": "DOC"
+   }
+  },
+  "L2-DualNav": {
+   "checkout": "poc",
+   "index": "dualnav",
+   "switches": {
+    "org.apache.lucene.codecs.lucene104.Lucene104DualNavPostingsFormat.setReadMode": "NAV"
+   }
+  },
+  "L2-B": {
+   "checkout": "poc",
+   "index": "split",
+   "switches": {},
+   "note": "compare with L1 (stock-format index)"
+  },
+  "L2-CORE": {
+   "checkout": "poc",
+   "index": "split",
+   "switches": {
+    "org.apache.lucene.util.bkd.BKDExperiments.setIntersectPrefetch": true,
+    "org.apache.lucene.util.bkd.BKDExperiments.setNodeBytes": "{io.sequential_bytes}",
+    "org.apache.lucene.search.comparators.ComparatorExperiments.setSampleDocs": "{k2.sample_docs}",
+    "org.apache.lucene.search.CollectExperiments.setCompetitiveRunCap": true,
+    "org.apache.lucene.search.DisjunctionPrefetch.setBytesAhead": "{orpf.bytes_ahead}",
+    "org.apache.lucene.search.DisjunctionPrefetch.setNodeBytes": "{io.sequential_bytes}",
+    "org.apache.lucene.search.TopKPrefetch.setNormsDocsAhead": "{topk.norms_docs_ahead}",
+    "org.apache.lucene.search.TopKPrefetch.setDocNodesAhead": "{topk.doc_nodes_ahead}",
+    "org.apache.lucene.search.TopKPrefetch.setNodeBytes": "{io.sequential_bytes}"
+   },
+   "note": "set to the accepted core Lucene switches of the final POC report before phase B"
+  }
+ },
+ "outcome": {
+  "reference": "L0",
+  "targets": [
+   "L1",
+   "L2-CORE"
+  ],
+  "aa": "L0@a,L0@b",
+  "delta_min": 0.05
+ }
+}

@@ -1,0 +1,50 @@
+
+Start of tasks winddown: 31234.5 msec
+
+Elapsed MS (excluding warmup and winddown): 25012.25
+
+Average CPU cores used: 1.87
+
+Results for 6 tasks:
+
+TASK: cat=HighTerm q=body:list s=null group=null hits=2000+ facets=[]
+  3.2105 msec @ 5012.33 msec
+  thread 0
+  doc=1203911 score=4.512033
+  doc=77012 score=4.1102
+  doc=33 score=4.1102
+
+TASK: cat=IntNRQ q=timesecnum:[10000 TO 60000] s=null group=null hits=1234567 facets=[]
+  12.75 msec @ 5020.1 msec
+  thread 0
+  doc=5 score=1.0
+  doc=6 score=1.0
+
+TASK: cat=TermDTSort q=body:states s=<long: "lastModNDV"> group=null hits=86021 facets=[]
+  8.001 msec @ 5040.9 msec
+  thread 0
+  doc=901 lastModNDV=1335862382000
+  doc=902 lastModNDV=1335862381000
+
+TASK: cat=BrowseMonthTaxoFacets q=*:* s=null group=null hits=33332620 facets=[taxonomy:Month]
+  45.5 msec @ 5100.0 msec
+  thread 0
+  getFacetResults time 40.1000 msec
+  facets:
+    dim=Month path=[] value=-1 childCount=12
+  Jan (2803034)
+  Feb (2723344)
+
+TASK: cat=HighTerm q=body:list s=null group=null hits=2000+ facets=[]
+  2.9001 msec @ 5200.3 msec
+  thread 0
+  doc=1203911 score=4.512033
+  doc=77012 score=4.1102
+  doc=33 score=4.1102
+
+TASK: respell q=universit
+  1.5 msec @ 5300.0 msec
+  thread 0
+  university freq=8021 score=0.8888889
+
+HEAP: 1234567890
