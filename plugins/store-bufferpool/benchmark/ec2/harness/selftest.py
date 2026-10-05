@@ -415,6 +415,15 @@ def main():
     run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S0-EBS,S1-EFS,S2-X-EFS,S2-NA-EFS", "--rounds", "4",
          "--modes", "cold,warm,ccold,cwarm", "--clients", "3", "--concurrent-batches", "2", "--concurrent-seconds", "1",
          "--out", s2, "--strict"])
+    # an index without index.store.type (the node default, as OSB creates it) closed while a stock node runs: the
+    # stock arm starts without a store-type reset (http_logs: the ingest left logs-* unset)
+    for i in m.indices.values():
+        i["status"] = "close"
+    m.indices["big5"]["store_type"] = None
+    m.binary = "S0-EBS"
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S0-EBS", "--rounds", "1", "--modes", "cold",
+         "--cold-iters", "1", "--no-results", "--out", os.path.join(tmp, "session-unset"), "--strict"])
+    assert m.indices["big5"]["store_type"] == "hybridfs", m.indices["big5"]
     out = os.path.join(tmp, "analysis")
     report = run([PY, os.path.join(here, "analyze.py"), s1, s2, "--base", "S1-EFS", "--compare", "S1-EFS@b,S2-X-EFS,S0-EBS",
                   "--aa", "S1-EFS@a,S1-EFS@b", "--ni-ref", "S0-EBS,S0-EBS@a,S0-EBS@b", "--ni-aa", "S0-EBS@a,S0-EBS@b",

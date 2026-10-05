@@ -353,7 +353,8 @@ def close_indices(node, cfg, log):
             node.os.request("POST", f"/{name}/_close?wait_for_active_shards=0")
             log(f"  closed {name}")
         want = stock.get(name)
-        if want and st["store_type"] != want:
+        # no index.store.type = the node default (fs, hybridfs on Linux), which the stock binary reads
+        if want and st["store_type"] is not None and st["store_type"] != want:
             if reset_ok is None:
                 reset_ok = any(p.get("component") == "store-bufferpool"
                                for p in node.os.request("GET", "/_cat/plugins?format=json"))
