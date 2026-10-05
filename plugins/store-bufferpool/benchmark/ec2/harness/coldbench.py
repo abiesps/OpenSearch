@@ -48,6 +48,8 @@ import urllib.parse
 
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, here)
+import canonical_ext  # noqa: E402 - generic workloads: percolate slots, highlight, inner_hits
+import indices_ext  # noqa: E402 - generic workloads: multi-index targets, not-applicable arms
 from common import HttpError, JsonClient, JsonlWriter, wait_until  # noqa: E402
 
 SCHEMA = 1
@@ -94,6 +96,9 @@ def canonical(pages, typ):
         out["hits_digest"] = hashlib.sha256("\n".join(ids).encode()).hexdigest()
     else:
         out["hits"] = hits
+        extras = canonical_ext.hit_extras(pages, _round)  # None unless hits carry percolate/highlight/inner_hits parts
+        if extras is not None:
+            out["hits_ext"] = extras
     out["digest"] = hashlib.sha256(json.dumps(out, sort_keys=True).encode()).hexdigest()[:16]
     return out
 
@@ -151,7 +156,11 @@ def execute(client, index, op):
     for p in pages:
         if p.get("timed_out") or (p.get("_shards", {}).get("failed") or 0) > 0:
             raise RuntimeError(f"op {op['name']}: timed out or shard failures: {json.dumps(p.get('_shards'))[:500]}")
-    return {"took_ms": took, "wall_ms": wall * 1e3, "canonical": canonical(pages, typ), "requests": len(pages)}
+    out = {"took_ms": took, "wall_ms": wall * 1e3, "canonical": canonical(pages, typ), "requests": len(pages)}
+    flags = canonical_ext.response_flags(pages)
+    if flags:
+        out["flags"] = flags
+    return out
 
 
 # ---------------------------------------------------------------- the data node
@@ -265,7 +274,10 @@ def load_arms(path, indices_override=None):
     cfg = json.load(open(path))
     if indices_override:
         cfg["indices"] = json.load(open(indices_override))["indices"]
+    indices_ext.normalize(cfg["indices"])
     for name, a in cfg["arms"].items():
+        if indices_ext.not_applicable(a):
+            continue
         for key in ("node", "index", "open"):
             if key not in a:
                 raise ValueError(f"arm {name}: missing [{key}]")
@@ -298,7 +310,7 @@ def close_indices(node, cfg, log):
     stock node never opens a bufferpoolfs or split-format index (S0 and POC share a data path per storage). Closing
     and opening is the same for every arm, and the cold clear after it removes what the open read.
     """
-    for name in sorted({idx["name"] for idx in cfg["indices"].values()}):
+    for name in indices_ext.physical_names(cfg["indices"]):
         try:
             st = index_state(node, name)
         except RuntimeError:
@@ -310,16 +322,17 @@ def close_indices(node, cfg, log):
 
 def open_indices(node, cfg, arm, log):
     for key in arm["open"]:
-        name = cfg["indices"][key]["name"]
-        st = index_state(node, name)
         want_type = arm.get("store_types", {}).get(key)
-        if want_type and st["store_type"] != want_type:
-            if st["status"] == "open":
-                node.os.request("POST", f"/{name}/_close?wait_for_active_shards=0")
-            node.os.request("PUT", f"/{name}/_settings", {"index.store.type": want_type})
-        if index_state(node, name)["status"] != "open":
-            node.os.request("POST", f"/{name}/_open?wait_for_active_shards=all")
-            log(f"  opened {name}")
+        for member in indices_ext.members(cfg["indices"][key]):
+            name = member["name"]
+            st = index_state(node, name)
+            if want_type and st["store_type"] != want_type:
+                if st["status"] == "open":
+                    node.os.request("POST", f"/{name}/_close?wait_for_active_shards=0")
+                node.os.request("PUT", f"/{name}/_settings", {"index.store.type": want_type})
+            if index_state(node, name)["status"] != "open":
+                node.os.request("POST", f"/{name}/_open?wait_for_active_shards=all")
+                log(f"  opened {name}")
     node.wait_green()
 
 
@@ -328,6 +341,15 @@ def verify_indices(node, cfg, arm, agent_arm=None):
     out = {}
     for key in arm["open"]:
         idx = cfg["indices"][key]
+        if idx.get("members"):
+            # multi-index target: every member verified like a single index, with its own expected values
+            sub = {"indices": {f"{key}/{m['name']}": m for m in idx["members"]}}
+            want_type = arm.get("store_types", {}).get(key)
+            sub_arm = {**arm, "open": list(sub["indices"]), "store_types": {k: want_type for k in sub["indices"]} if want_type else {}}
+            infos = list(verify_indices(node, sub, sub_arm, agent_arm).values())
+            out[key] = {"name": idx["name"], "members": infos, "uuids": [i["uuid"] for i in infos],
+                        "docs": sum(i["docs"] for i in infos)}
+            continue
         name = idx["name"]
         st = index_state(node, name)
         segs = node.os.request("GET", f"/_cat/segments/{name}?format=json&h=shard,prirep,segment,docs.count,size,searchable")
@@ -571,6 +593,8 @@ class Session:
         rec = {"type": "sample", "mode": mode, **run, "op": op["name"], "iter": i, "took_ms": res["took_ms"],
                "wall_ms": res["wall_ms"], "requests": res["requests"], "digest": res["canonical"]["digest"],
                "cold_ok": ok, "checks": checks, "clear": pre_state, "io": io, "post_idle_ms": idle_ms}
+        if res.get("flags"):
+            rec["flags"] = res["flags"]
         self.record(**rec)
         if not ok and self.a.strict:
             raise RuntimeError(f"cold verification failed: {op['name']} iter {i}: {checks} {pre_state}")
@@ -586,6 +610,8 @@ class Session:
         rec = {"type": "sample", "mode": "warm", **run, "op": op["name"], "iter": i, "took_ms": res["took_ms"],
                "wall_ms": res["wall_ms"], "requests": res["requests"], "digest": res["canonical"]["digest"],
                "io": io_delta(pre, post), "post_idle_ms": idle_ms}
+        if res.get("flags"):
+            rec["flags"] = res["flags"]
         self.record(**rec)
         return rec
 
@@ -661,6 +687,10 @@ class Session:
         arm = self.cfg["arms"][arm_name]
         run_id = f"{label}#r{rnd}"
         run = {"arm": arm_name, "label": label, "round": rnd, "run_id": run_id}
+        if indices_ext.not_applicable(arm):
+            self.log(f"run {run_id}: NOT APPLICABLE: {arm['not_applicable']}")
+            self.record(type="run", **run, available=False, reason=f"not applicable: {arm['not_applicable']}")
+            return
         self.log(f"run {run_id} (node {arm['node']})")
         indices = self.start_arm(arm_name, arm)
         try:
@@ -671,7 +701,7 @@ class Session:
             self.record(type="run", **run, available=False, reason=str(e), indices=indices)
             return
         index = self.cfg["indices"][arm["index"]]["name"]
-        uuids = [indices[arm["index"]]["uuid"]]
+        uuids = indices_ext.uuids(indices[arm["index"]])
         ra = arm.get("read_ahead_kb", a.read_ahead_kb)
         readahead = None
         if self.node.agent:
@@ -761,7 +791,7 @@ def cmd_probe(a):
     indices = verify_indices(s.node, s.cfg, arm, arm["node"])
     apply_switches(s.node, s.cfg, a.arm, arm)
     op = next(o for o in s.ops if o["name"] == a.op)
-    it = Iteration(s.node, arm, [indices[arm["index"]]["uuid"]], 1)
+    it = Iteration(s.node, arm, indices_ext.uuids(indices[arm["index"]]), 1)
     run = {"arm": a.arm, "label": a.arm, "round": -1, "run_id": "probe"}
     r = s.cold_sample(it, run, op, s.cfg["indices"][arm["index"]]["name"], 0, mode="probe")
     print(json.dumps(r, indent=1, default=str))
