@@ -56,11 +56,13 @@ public class BufferPoolPrefetchSchedulerIT extends OpenSearchIntegTestCase {
     }
 
     private BufferPoolStorePlugin plugin() {
-        return internalCluster().getInstance(PluginsService.class).filterPlugins(BufferPoolStorePlugin.class).get(0);
+        // the data node's instance: the cluster may also have dedicated cluster-manager nodes, which hold no shard
+        return internalCluster().getDataNodeInstance(PluginsService.class).filterPlugins(BufferPoolStorePlugin.class).get(0);
     }
 
     public void testBudgetSettingsReachTheNode() throws Exception {
-        final ThreadPool.Info info = internalCluster().getInstance(ThreadPool.class).info(BufferPoolStorePlugin.PREFETCH_THREAD_POOL);
+        final ThreadPool.Info info = internalCluster().getDataNodeInstance(ThreadPool.class)
+            .info(BufferPoolStorePlugin.PREFETCH_THREAD_POOL);
         assertEquals(12, info.getMax());
         assertEquals(12, info.getQueueSize().singles());
         final PrefetchScheduler scheduler = plugin().scheduler();
