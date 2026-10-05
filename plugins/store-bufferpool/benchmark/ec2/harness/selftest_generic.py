@@ -727,6 +727,13 @@ def part_f(tmp, fork, fork_commit):
           "(f) driver: per-arm storage from the label, default --storage")
     check("cold_jvm_count" in open(d2).read() and "/cache/drop?pageout=0" in open(d2).read(),
           "(f) driver: cold JVM count read; cold-luceneutil drops through the agent")
+    # luceneutil's comparison reads the JVM runs from the manifest (a driver that kept them only in memory lost them)
+    txt = open(d2).read()
+    check('results = {l: [m["log"] for m in runs if m["label"] == l] for l in labels}' in txt and "expected {jvm_count} per label" in txt,
+          "(f) driver: the result comparison uses every manifest run")
+    rd = run_luceneutil.report_driver(os.path.join(tmp, "lu-mixed"))
+    compile(open(rd).read(), rd, "exec")
+    check("results = {l: [m" in open(rd).read(), "(f) report driver for a finished session compiles")
     for bad_labels in (["L0:EBS", "L0:EBS"], ["L0:XFS"]):
         try:
             run_luceneutil.plan(cfg, table, "warm", "t", "EBS", bad_labels, os.path.join(tmp, "lu-bad2"))
