@@ -24,6 +24,11 @@ Regimes (see storage-model.md):
   s0-mmap-rnd wnread mmap-random: MADV_RANDOM on the mapping (stock mmap of RANDOM-advised files)
   s0-pread   psync buffered, no fadvise, mounted default readahead (stock NIOFS files / plain buffered read)
   direct     psync O_DIRECT (EBS only, reference; EFS refuses direct IO below 1 MiB)
+
+EFS connection evidence per job: the mount's tcp xprt line at the start and the end (connect_count delta =
+reconnects during the job) and a summary of the NFS 4.1 SEQUENCE replies (nfs4:nfs4_sequence_done: highest slot
+used, server highest_slotid and target_highest_slotid). --xprt-log samples the xprt line every second for the
+whole run; --ref runs a fixed reference job at the start and end of every repetition (a state indicator).
 """
 import argparse, json, os, random, re, subprocess, sys, threading, time
 
@@ -95,6 +100,18 @@ def efs_read_stat():
             "xprt": x}
 
 
+# kernel tcp xprt line (net/sunrpc/xprtsock.c xs_tcp_print_stats): srcport bind_count connect_count
+# connect_time idle_time sends recvs bad_xids req_u bklog_u max_slots sending_u pending_u
+XPRT_FIELDS = ["srcport", "bind_count", "connect_count", "connect_time", "idle_time", "sends", "recvs",
+               "bad_xids", "req_u", "bklog_u", "max_slots", "sending_u", "pending_u"]
+
+
+def xprt_dict(x):
+    if x and x[0] == "tcp":
+        x = x[1:]
+    return {k: int(v) for k, v in zip(XPRT_FIELDS, x)}
+
+
 def proxy_cpu():
     try:
         pid = sh("pgrep -f 'efs-proxy.*fs-060fb5da13f9a7e5b' | head -1").strip()
@@ -104,21 +121,33 @@ def proxy_cpu():
         return {"error": str(e)}
 
 
+TRACE_EVENTS = ("block/block_rq_issue", "nfs/nfs_initiate_read", "nfs4/nfs4_sequence_done")
+
+
 def trace_start(storage):
     with open(f"{TRACE}/tracing_on", "w") as f: f.write("0")
-    for ev in ("block/block_rq_issue", "nfs/nfs_initiate_read"):
+    for ev in TRACE_EVENTS:
         with open(f"{TRACE}/events/{ev}/enable", "w") as f: f.write("0")
     if open(f"{TRACE}/buffer_size_kb").read().split()[0] != "16384":
         with open(f"{TRACE}/buffer_size_kb", "w") as f: f.write("16384")
     with open(f"{TRACE}/trace", "w") as f: f.write("")
-    ev = "block/block_rq_issue" if storage == "ebs" else "nfs/nfs_initiate_read"
-    with open(f"{TRACE}/events/{ev}/enable", "w") as f: f.write("1")
+    # EFS: also the NFS 4.1 SEQUENCE replies, which carry the slot the client used and the server's
+    # highest_slotid / target_highest_slotid (how many session slots the server grants)
+    evs = ["block/block_rq_issue"] if storage == "ebs" else ["nfs/nfs_initiate_read", "nfs4/nfs4_sequence_done"]
+    for ev in evs:
+        with open(f"{TRACE}/events/{ev}/enable", "w") as f: f.write("1")
     with open(f"{TRACE}/tracing_on", "w") as f: f.write("1")
+
+
+SEQ_RE = re.compile(r"nfs4_sequence_done: error=(-?\d+) .*?slot_nr=(\d+) seq_nr=\d+ highest_slotid=(\d+) "
+                    r"target_highest_slotid=(\d+)")
 
 
 def trace_stop(storage, raw=False):
     with open(f"{TRACE}/tracing_on", "w") as f: f.write("0")
     hist, overrun, reqs = {}, 0, []
+    seq = {"events": 0, "errors": 0, "max_slot_nr": None, "max_highest_slotid": None,
+           "min_target_highest_slotid": None, "max_target_highest_slotid": None}
     for cpu in os.listdir(f"{TRACE}/per_cpu"):
         st = open(f"{TRACE}/per_cpu/{cpu}/stats").read()
         overrun += int(re.search(r"overrun: (\d+)", st).group(1))
@@ -139,6 +168,18 @@ def trace_stop(storage, raw=False):
                 if raw:
                     reqs.append((int(m.group(4)) * 512, size))
             else:
+                s = SEQ_RE.search(line)
+                if s:
+                    err, slot, hi, tgt = (int(x) for x in s.groups())
+                    seq["events"] += 1
+                    seq["errors"] += 1 if err != 0 else 0
+                    seq["max_slot_nr"] = max(slot, seq["max_slot_nr"] or 0)
+                    if err == 0:  # a failed SEQUENCE (reconnect) carries no slot grant from the server
+                        seq["max_highest_slotid"] = max(hi, seq["max_highest_slotid"] or 0)
+                        seq["min_target_highest_slotid"] = min(tgt, tgt if seq["min_target_highest_slotid"] is None
+                                                               else seq["min_target_highest_slotid"])
+                        seq["max_target_highest_slotid"] = max(tgt, seq["max_target_highest_slotid"] or 0)
+                    continue
                 m = re.search(r"nfs_initiate_read: fileid=[0-9a-f]+:[0-9a-f]+:(\d+) fhandle=\S+ offset=(\d+) count=(\d+)", line)
                 if not m:
                     continue
@@ -146,9 +187,11 @@ def trace_stop(storage, raw=False):
                 if raw:
                     reqs.append((int(m.group(1)), int(m.group(2)), size))
             hist[size] = hist.get(size, 0) + 1
-    for ev in ("block/block_rq_issue", "nfs/nfs_initiate_read"):
+    for ev in TRACE_EVENTS:
         with open(f"{TRACE}/events/{ev}/enable", "w") as f: f.write("0")
     out = {"hist": {str(k): v for k, v in sorted(hist.items())}, "overrun": overrun}
+    if storage == "efs":
+        out["nfs4_sequence"] = seq
     if raw:
         out["requests"] = reqs
     return out
@@ -171,12 +214,17 @@ def fio_cmd(storage, regime, pat, qd, runtime, ramp):
             "--percentile_list=50:90:99:99.9", "--output-format=json"]
 
 
-def run_job(storage, regime, pat, qd, rep, runtime, ramp, outdir):
+def utc(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + f".{int(t % 1 * 1000):03d}Z"
+
+
+def run_job(storage, regime, pat, qd, rep, runtime, ramp, outdir, name=None):
     ra = 128 if regime == "poc-fio" else 0 if regime == "poc-exact" else default_ra(storage)
     set_ra(storage, ra)
     drop_caches()
     time.sleep(0.5)
     before = ebs_stat() if storage == "ebs" else efs_read_stat()
+    ts_start = time.time()
     pc0 = proxy_cpu() if storage == "efs" else None
     trace_start(storage)
     # readahead must hold for the whole job (efs-utils watchdog rewrote the EFS bdi to 15360 about once a
@@ -216,14 +264,22 @@ def run_job(storage, regime, pat, qd, rep, runtime, ramp, outdir):
         dev["avg_rtt_ms"] = dev["rtt_ms"] / dev["ops"] if dev["ops"] else None
         dev["avg_exec_ms"] = dev["exec_ms"] / dev["ops"] if dev["ops"] else None
         dev["avg_queue_ms"] = dev["queue_ms"] / dev["ops"] if dev["ops"] else None
-    name = f"{storage}_{regime}_{pat}_qd{qd}_rep{rep}"
+        # per-job connection evidence (review-a pass 2, finding 2): the xprt line at the start and at the end
+        # of the job; connect_count_end - connect_count_start = reconnects during the job
+        xs, xe = xprt_dict(before["xprt"]), xprt_dict(after["xprt"])
+        dev["xprt_start"], dev["xprt_end"] = xs, xe
+        dev["reconnects"] = xe["connect_count"] - xs["connect_count"]
+    name = name or f"{storage}_{regime}_{pat}_qd{qd}_rep{rep}"
     with open(os.path.join(outdir, name + ".json"), "w") as f:
         json.dump(tool, f)
     rec = {"name": name, "storage": storage, "regime": regime, "pattern": pat, "qd": qd, "rep": rep,
+           "ts_start_utc": utc(ts_start), "ts_end_utc": utc(time.time()), "runtime_s": runtime, "ramp_s": ramp,
            "read_ahead_kb": ra, "read_ahead_kb_start": ra_start, "read_ahead_kb_after": ra_after,
            "read_ahead_kb_samples": sorted(samples), "ra_valid": ra_start == ra == ra_after and samples == {ra}, "wall_s": round(t1 - t0, 2), "cmd": cmd,
            "device": dev, "device_size_hist": tr["hist"], "trace_overrun": tr["overrun"],
            "summary": summarize(tool, regime)}
+    if "nfs4_sequence" in tr:
+        rec["nfs4_sequence"] = tr["nfs4_sequence"]
     # equal-work check: bytes the tool consumed in the measured phase vs bytes the device delivered (incl. ramp)
     rec["tool_bytes"] = tool["bytes"] if tool.get("tool") == "wnread" else tool["jobs"][0]["read"]["io_bytes"]
     rec["device_bytes"] = dev["read_sectors"] * 512 if storage == "ebs" else sum(int(k) * v for k, v in tr["hist"].items())
@@ -262,8 +318,33 @@ def main():
     ap.add_argument("--plan", default="", help="JSON file: list of [storage, regime, pattern, [qd, ...]]; "
                     "replaces the storages x regimes x patterns x qds grid (per-curve queue depths)")
     ap.add_argument("--block", default="main", help="label stored in every record (separate measurement block)")
+    ap.add_argument("--ref", default="", help="storage,regime,pattern,qd: a reference job run at the start and at "
+                    "the end of every repetition, not shuffled (state indicator for the jobs in between)")
+    ap.add_argument("--pre", default="", help="storage,regime,pattern,qd: a load job run first in every repetition, "
+                    "before the --ref job (tests whether a heavy job changes the state of the jobs after it)")
+    ap.add_argument("--xprt-log", action="store_true", help="sample the EFS mount's xprt line every second for "
+                    "the whole run into xprt-timeline.jsonl (reconnect times independent of the jobs)")
     a = ap.parse_args()
     os.makedirs(os.path.join(a.out, "raw"), exist_ok=True)
+    if a.xprt_log:
+        xstop = threading.Event()
+        def xlog():
+            with open(os.path.join(a.out, "xprt-timeline.jsonl"), "a") as xf:
+                while not xstop.is_set():
+                    s = efs_read_stat()
+                    xf.write(json.dumps({"ts_utc": utc(time.time()), "read_ops": s["ops"], "read_errors": s["errors"],
+                                         **xprt_dict(s["xprt"])}) + "\n")
+                    xf.flush()
+                    xstop.wait(1.0)
+        threading.Thread(target=xlog, daemon=True).start()
+    def spec(s):
+        if not s:
+            return None
+        st_, rg_, pat_, qd_ = s.split(",")
+        if pat_ not in REGIMES[rg_]:
+            raise SystemExit(f"job spec not supported: {s}")
+        return (st_, rg_, pat_, int(qd_))
+    ref, pre = spec(a.ref), spec(a.pre)
     pats = set(a.patterns.split(",")) if a.patterns else None
     jobs = []
     if a.plan:
@@ -289,14 +370,19 @@ def main():
     except FileNotFoundError:
         pass
     for rep in range(a.rep_start, a.rep_start + a.reps):
-        order = jobs[:]
+        order = [(j, "measured") for j in jobs]
         random.Random(a.seed + rep).shuffle(order)  # randomized order per repetition, storages interleaved
-        for i, (st, rg, pat, qd) in enumerate(order):
-            name = f"{st}_{rg}_{pat}_qd{qd}_rep{rep}"
+        if ref:
+            order = [(ref, "ref-start")] + order + [(ref, "ref-end")]
+        if pre:
+            order = [(pre, "load")] + order
+        for i, ((st, rg, pat, qd), role) in enumerate(order):
+            name = f"{st}_{rg}_{pat}_qd{qd}_rep{rep}" + ("" if role == "measured" else f"_{role}")
             if name in done:
                 continue
             for attempt in range(3):
-                rec = run_job(st, rg, pat, qd, rep, a.runtime, a.ramp, os.path.join(a.out, "raw"))
+                rec = run_job(st, rg, pat, qd, rep, a.runtime, a.ramp, os.path.join(a.out, "raw"), name=name)
+                rec["role"] = role
                 if rec["ra_valid"]:
                     break
                 with open(os.path.join(a.out, "invalid-ra.jsonl"), "a") as bad:
@@ -311,6 +397,8 @@ def main():
                   f"p50={s['p50_us']:.0f}us p99={s['p99_us']:.0f}us dev={rec['device_size_hist']}", flush=True)
     # restore the mounted defaults when done
     set_ra("ebs", 128); set_ra("efs", 15360)
+    if a.xprt_log:
+        xstop.set(); time.sleep(1.2)
 
 
 if __name__ == "__main__":

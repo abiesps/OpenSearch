@@ -20,6 +20,11 @@ Rule (stated in review-a fix iteration; applied to every record of every block):
      allows what rateprobe.py measured: at the EBS IOPS or throughput cap the volume serves the first ~0.3 s after
      the idle gap at up to 6 x the provisioned rate (1.75 GB in the first second against 1.06 GB/s sustained),
      which alone gives 1.25 at the cap; 1.30 leaves 0.05 for startup and teardown (0.07-0.45 s measured).
+     The margins are device time, so they carry over to other job lengths: the device may deliver the bytes of
+     0.6 s less and 1.4 s more than ramp + runtime, i.e. (ramp + runtime - 0.6) / runtime <= ratio <=
+     (ramp + runtime + 1.4) / runtime. For 1 + 8 s this is exactly 1.05-1.30; for the state blocks (1 + 4 s,
+     clean 1.25) it is 1.10-1.60. (A first form with fixed ratio margins, clean - 0.075 to clean + 0.175, halved
+     the time margin for 4 s jobs and flagged one record at 1.169; storage-model.md section 2 reports it.)
   For amplifying regimes (kernel readahead or mmap read-around) the ratio is reported as the measured
   amplification and is not checked.
 Prints violations and the ratio distribution per regime class.
@@ -68,8 +73,12 @@ for path in sys.argv[1].split(","):
         share = h.get(expected_size(r), 0) / tot if tot else 0
         if share < 0.99:
             viol.append((r["name"], r.get("block", "main"), "size share %.4f" % share))
-        if not 1.05 <= x <= 1.30:
-            viol.append((r["name"], r.get("block", "main"), "device/tool %.3f" % x))
+        # the clean ratio is (ramp + runtime) / runtime; records before the state block ran 1 + 8 s. The margins
+        # are device time: 0.6 s less and 1.4 s more than ramp + runtime (for 1 + 8 s exactly 1.05 and 1.30)
+        rt, rp = r.get("runtime_s", 8), r.get("ramp_s", 1)
+        lo, hi = (rp + rt - 0.6) / rt, (rp + rt + 1.4) / rt
+        if not lo <= x <= hi:
+            viol.append((r["name"], r.get("block", "main"), "device/tool %.3f (allowed %.3f-%.3f)" % (x, lo, hi)))
 print(f"records {n}, violations {len(viol)}")
 for v in viol:
     print("  VIOLATION", *v)
