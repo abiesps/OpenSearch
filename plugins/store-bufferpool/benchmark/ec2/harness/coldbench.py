@@ -697,6 +697,40 @@ def read_size_trace(a, arm, node, nfs):
 
 
 # ---------------------------------------------------------------- session
+CAP_KEYS = ("cold_iters", "warm_warmup", "warm_iters")
+
+
+def load_op_caps(path, ops, ref):
+    """
+    Pre-registered per-operation iteration caps (common-rules "Per-operation iteration caps"): {"ops": {name:
+    {"cold_iters": c, "warm_warmup": w, "warm_iters": m}}, "preregistration": "<file>"}. The same caps apply to every
+    arm of the session (they are session arguments, not arm keys), so no comparison mixes protocols. A capped op keeps
+    at least 1 cold and 1 measured warm iteration (never dropped); the reference op cannot be capped (it brackets
+    every block for drift).
+    """
+    if not path:
+        return {}
+    spec = json.load(open(path))
+    caps = spec.get("ops") or {}
+    names = {o["name"] for o in ops}
+    for name, c in caps.items():
+        if name not in names:
+            raise ValueError(f"--op-caps: {name} is not an op of this session")
+        if name == ref:
+            raise ValueError(f"--op-caps: the reference op {name} cannot be capped")
+        if set(c) != set(CAP_KEYS):
+            raise ValueError(f"--op-caps {name}: needs exactly {list(CAP_KEYS)}, got {sorted(c)}")
+        if c["cold_iters"] < 1 or c["warm_iters"] < 1 or c["warm_warmup"] < 0:
+            raise ValueError(f"--op-caps {name}: at least 1 cold and 1 measured warm iteration ({c})")
+    return caps
+
+
+def iters(a, caps, op):
+    """(cold_iters, warm_warmup, warm_iters) of one op: the session's, or the op's pre-registered cap."""
+    c = caps.get(op["name"])
+    return (c["cold_iters"], c["warm_warmup"], c["warm_iters"]) if c else (a.cold_iters, a.warm_warmup, a.warm_iters)
+
+
 def op_order(ops, ref, seed):
     others = [o for o in ops if o["name"] != ref]
     random.Random(seed).shuffle(others)
@@ -738,6 +772,9 @@ class Session:
         if self.ref not in {o["name"] for o in ops}:
             sys.exit(f"reference op {self.ref} is not in {a.ops}")
         self.ops = ops
+        self.op_caps = load_op_caps(getattr(a, "op_caps", None), ops, self.ref)
+        if self.op_caps and getattr(a, "executor", "replay") != "replay":
+            sys.exit("--op-caps is implemented for the replay executor only")
         token = open(a.token_file).read().strip() if a.token_file else ""
         self.node = Node(a.url, a.agent, token, a.residency_tolerance)
         os.makedirs(a.out, exist_ok=True)
@@ -940,7 +977,7 @@ class Session:
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
                     readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
-                    args=vars(a))
+                    args=vars(a), op_caps=self.op_caps)
         it = Iteration(self.node, arm, uuids, a.residency_every)
         modes = a.modes.split(",")
         if a.executor == "osb":
@@ -955,15 +992,16 @@ class Session:
             modes = [m for m in modes if m not in ("cold", "warm")]
         if "cold" in modes:
             for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, run_id, "cold"))):
-                for i in range(a.cold_iters):
+                for i in range(iters(a, self.op_caps, op)[0]):
                     r = self.cold_sample(it, {**run, "pos": pos}, op, index, i)
                     if i == 0:
                         self.log(f"  cold {op['name']:<56} took {r['took_ms']:8.1f} ms ok={r['cold_ok']}")
         if "warm" in modes:
             for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, run_id, "warm"))):
-                for i in range(a.warm_warmup):
+                _, n_warmup, n_measure = iters(a, self.op_caps, op)
+                for i in range(n_warmup):
                     self.warm_sample(it, run, op, index, i, "warmup")
-                for i in range(a.warm_iters):
+                for i in range(n_measure):
                     self.warm_sample(it, {**run, "pos": pos}, op, index, i, "measure")
         if "ccold" in modes:
             self.concurrent_cold(it, run, index, self.ops)
@@ -994,7 +1032,8 @@ class Session:
         sched = schedule(labels, self.a.rounds, self.a.order, self.a.seed, getattr(self.a, "round_offset", 0))
         self.record(type="session", ops=[o["name"] for o in self.ops], reference_op=self.ref, schedule=sched,
                     args=vars(self.a), ops_file=os.path.abspath(self.a.ops), arms_file=self.cfg,
-                    format_isolation=self.isolation)
+                    format_isolation=self.isolation, op_caps=self.op_caps,
+                    op_caps_file=os.path.abspath(self.a.op_caps) if getattr(self.a, "op_caps", None) else None)
         self.log(f"session: {len(self.ops)} ops, schedule {[l for _, l in sched]}")
         for rnd, lab in sched:
             self.run_one(rnd, lab)
@@ -1090,6 +1129,8 @@ def main():
     r.add_argument("--cold-iters", type=int, default=3, help="cold iterations per op per JVM run")
     r.add_argument("--warm-warmup", type=int, default=5)
     r.add_argument("--warm-iters", type=int, default=10)
+    r.add_argument("--op-caps", help="JSON of pre-registered per-op iteration caps {\"ops\": {name: {cold_iters, "
+                   "warm_warmup, warm_iters}}}, the same for every arm (common-rules: per-operation iteration caps)")
     r.add_argument("--clients", type=int, default=4)
     r.add_argument("--concurrent-batches", type=int, default=20)
     r.add_argument("--concurrent-seconds", type=float, default=120)

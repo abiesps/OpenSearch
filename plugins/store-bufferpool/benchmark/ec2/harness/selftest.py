@@ -529,6 +529,32 @@ def main():
                         "--modes", "cold", "--out", os.path.join(tmp, "session-tol"), "--residency-tolerance", "4096"],
                        capture_output=True, text=True)
     assert p.returncode != 0 and "only 0 is allowed" in (p.stdout + p.stderr), (p.stdout[-1000:], p.stderr[-1000:])
+    # pre-registered per-op iteration caps: same for every arm, the capped op keeps its runs, others unchanged
+    caps_f = os.path.join(tmp, "caps.json")
+    json.dump({"ops": {"gen:phrase_message": {"cold_iters": 1, "warm_warmup": 2, "warm_iters": 3}}}, open(caps_f, "w"))
+    s6 = os.path.join(tmp, "session-caps")
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S0-EBS,S1-EFS", "--rounds", "2",
+         "--modes", "cold,warm", "--op-caps", caps_f, "--out", s6, "--strict"])
+    recs6 = [json.loads(l) for l in open(os.path.join(s6, "samples.jsonl"))]
+    cnt = {}
+    for r in recs6:
+        if r["type"] == "sample":
+            k = (r["run_id"], r["mode"], r["op"])
+            cnt[k] = cnt.get(k, 0) + 1
+    runs6 = sorted({k[0] for k in cnt})
+    assert len(runs6) == 4, runs6
+    for rid in runs6:
+        assert cnt[(rid, "cold", "gen:phrase_message")] == 1 and cnt[(rid, "warm", "gen:phrase_message")] == 3, cnt
+        assert cnt[(rid, "cold", "gen:term_process.name_high")] == 3 and cnt[(rid, "warm", "gen:term_process.name_high")] == 6, cnt
+    assert [r for r in recs6 if r["type"] == "session"][0]["op_caps"] == {"gen:phrase_message": {"cold_iters": 1, "warm_warmup": 2, "warm_iters": 3}}
+    assert all(r["op_caps"] for r in recs6 if r["type"] == "run" and r.get("available"))
+    for bad, why in (({"gen:range_@timestamp_1d": {"cold_iters": 1, "warm_warmup": 2, "warm_iters": 3}}, "reference op"),
+                     ({"gen:phrase_message": {"cold_iters": 0, "warm_warmup": 2, "warm_iters": 3}}, "at least 1"),
+                     ({"no:such_op": {"cold_iters": 1, "warm_warmup": 2, "warm_iters": 3}}, "not an op")):
+        json.dump({"ops": bad}, open(caps_f, "w"))
+        p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
+                            "--op-caps", caps_f, "--out", os.path.join(tmp, "session-caps-bad")], capture_output=True, text=True)
+        assert p.returncode != 0 and why in p.stderr, (why, p.stderr[-800:])
     # a broken clear must be caught
     m.broken_clear = True
     s3 = os.path.join(tmp, "session-broken")
