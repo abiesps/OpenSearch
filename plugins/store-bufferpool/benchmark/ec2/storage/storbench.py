@@ -29,6 +29,10 @@ EFS connection evidence per job: the mount's tcp xprt line at the start and the 
 reconnects during the job) and a summary of the NFS 4.1 SEQUENCE replies (nfs4:nfs4_sequence_done: highest slot
 used, server highest_slotid and target_highest_slotid). --xprt-log samples the xprt line every second for the
 whole run; --ref runs a fixed reference job at the start and end of every repetition (a state indicator).
+--reconnect remount forces a new EFS connection (umount + mount) every --reps-per-connection repetitions and
+records it in connections.jsonl; every record then carries conn and conn_pos, and every EFS record the
+efs-proxy backend TCP connections sampled once mid-job (proxy_backend_midjob). --pre-positions limits the --pre
+job to some positions inside a connection group (e.g. 2: the second cycle of every connection).
 """
 import argparse, json, os, random, re, subprocess, sys, threading, time
 
@@ -112,9 +116,38 @@ def xprt_dict(x):
     return {k: int(v) for k, v in zip(XPRT_FIELDS, x)}
 
 
+def efs_mount_port():
+    # the local port efs-proxy listens on for the current mount (a remount picks a new port; the old proxy
+    # lingers until the watchdog's unmount grace period ends, so the pid must be found by port)
+    for line in open("/proc/mounts"):
+        f = line.split()
+        if len(f) > 3 and f[1] == "/mnt/efs":
+            m = re.search(r"(?:^|,)port=(\d+)", f[3])
+            return int(m.group(1)) if m else None
+    return None
+
+
+def proxy_pid():
+    port = efs_mount_port()
+    out = sh(f"pgrep -f 'efs-proxy .*fs-060fb5da13f9a7e5b\\.mnt\\.efs\\.{port}( |$)' || true").split()
+    return int(out[0]) if out else None
+
+
+def proxy_backend():
+    """efs-proxy's TCP connections to the EFS mount target (port 2049): count and local/remote addresses."""
+    pid = proxy_pid()
+    conns = []
+    for line in sh("ss -tnpH state established '( dport = :2049 )' || true").splitlines():
+        if pid is not None and f"pid={pid}," not in line:
+            continue
+        f = line.split()
+        conns.append({"local": f[2], "remote": f[3]})
+    return {"proxy_pid": pid, "count": len(conns), "conns": conns}
+
+
 def proxy_cpu():
     try:
-        pid = sh("pgrep -f 'efs-proxy.*fs-060fb5da13f9a7e5b' | head -1").strip()
+        pid = proxy_pid()
         v = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
         return {"pid": int(pid), "ticks": int(v[11]) + int(v[12])}
     except Exception as e:  # recorded as a gap, never as zero
@@ -226,6 +259,7 @@ def run_job(storage, regime, pat, qd, rep, runtime, ramp, outdir, name=None):
     before = ebs_stat() if storage == "ebs" else efs_read_stat()
     ts_start = time.time()
     pc0 = proxy_cpu() if storage == "efs" else None
+    pb0 = proxy_backend()["count"] if storage == "efs" else None
     trace_start(storage)
     # readahead must hold for the whole job (efs-utils watchdog rewrote the EFS bdi to 15360 about once a
     # second before optimize_readahead=false; common-rules.md DECISION ~22:00): sample it every 100 ms
@@ -237,6 +271,16 @@ def run_job(storage, regime, pat, qd, rep, runtime, ramp, outdir, name=None):
             samples.add(int(open(rp).read()))
             stop.wait(0.1)
     th = threading.Thread(target=sampler, daemon=True); th.start()
+    backend = {}
+    if storage == "efs":
+        # efs-proxy's backend TCP connections, sampled once in the measured phase (does the proxy open more
+        # than one connection to the mount target under load?)
+        def sample_backend():
+            try:
+                backend.update(proxy_backend())
+            except Exception as e:  # recorded as a gap, never as zero
+                backend["error"] = str(e)
+        bt = threading.Timer(ramp + min(2.0, runtime / 2), sample_backend); bt.daemon = True; bt.start()
     t0 = time.time()
     if regime in ("poc-exact", "s0-mmap", "s0-mmap-rnd"):
         _, bs = PATTERNS[pat]
@@ -280,6 +324,10 @@ def run_job(storage, regime, pat, qd, rep, runtime, ramp, outdir, name=None):
            "summary": summarize(tool, regime)}
     if "nfs4_sequence" in tr:
         rec["nfs4_sequence"] = tr["nfs4_sequence"]
+    if storage == "efs":
+        bt.cancel()
+        rec["proxy_backend_midjob"] = backend or {"error": "not sampled (job shorter than the sample time)"}
+        rec["proxy_backend_count_start_end"] = [pb0, proxy_backend()["count"]]
     # equal-work check: bytes the tool consumed in the measured phase vs bytes the device delivered (incl. ramp)
     rec["tool_bytes"] = tool["bytes"] if tool.get("tool") == "wnread" else tool["jobs"][0]["read"]["io_bytes"]
     rec["device_bytes"] = dev["read_sectors"] * 512 if storage == "ebs" else sum(int(k) * v for k, v in tr["hist"].items())
@@ -287,6 +335,60 @@ def run_job(storage, regime, pat, qd, rep, runtime, ramp, outdir, name=None):
     if pc0 and pc1 and "ticks" in pc0 and "ticks" in pc1:
         rec["efs_proxy_cpu_pct"] = round((pc1["ticks"] - pc0["ticks"]) / os.sysconf("SC_CLK_TCK") / (t1 - t0) * 100, 1)
     return rec
+
+
+def wait_backend_stable(timeout_s=40.0, stable_s=3.0):
+    """Poll efs-proxy's backend TCP connection count every 0.5 s until it has not changed for stable_s seconds
+    (efs-proxy scales from 1 to max_multiplexed_connections = 5 after 1 s at >= 300 MiB/s; efs-utils 3.3.2
+    src/proxy/src/controller.rs DEFAULT_SCALE_UP_CONFIG, should_scale_up). Returns the timeline."""
+    t0, tl, last, since = time.time(), [], None, time.time()
+    while time.time() - t0 < timeout_s:
+        b = proxy_backend()
+        tl.append([round(time.time() - t0, 1), b["count"]])
+        if b["count"] != last:
+            last, since = b["count"], time.time()
+        elif time.time() - since >= stable_s:
+            break
+        time.sleep(0.5)
+    return {"count": last, "stable": time.time() - since >= stable_s, "timeline": tl}
+
+
+def reconnect_efs(conn, outdir, kill_old_proxy=False):
+    """Force a new EFS connection: umount + mount (fstab: efs _netdev,tls). This gives a new efs-proxy process
+    on a new local port, a new NFS client and session, and a new TLS/TCP connection from efs-proxy to the mount
+    target (review-a pass 3, finding 1: the connection is the unit of replication). Records the evidence.
+    kill_old_proxy: stop the unmounted mount's efs-proxy right away (the watchdog does it after its unmount grace
+    period of about 1 minute); needed when a firewall rule allows only one backend connection at a time."""
+    before = {"proxy_backend": proxy_backend(), "mount_port": efs_mount_port()}
+    t0 = time.time()
+    for attempt in range(3):
+        drop_caches()
+        old_pid = proxy_pid()
+        u = subprocess.run("umount /mnt/efs", shell=True, capture_output=True, text=True)
+        if kill_old_proxy and old_pid:
+            subprocess.run(f"kill -TERM {old_pid}", shell=True, capture_output=True)
+            for _ in range(100):
+                if not os.path.exists(f"/proc/{old_pid}"):
+                    break
+                time.sleep(0.1)
+        m = subprocess.run("mount /mnt/efs", shell=True, capture_output=True, text=True)
+        if subprocess.run("mountpoint -q /mnt/efs", shell=True).returncode == 0 and os.path.exists(EFS_FILE):
+            break
+        time.sleep(5)
+    else:
+        raise SystemExit(f"remount failed: umount {u.returncode} {u.stderr.strip()} mount {m.returncode} {m.stderr.strip()}")
+    t1 = time.time()
+    os.stat(EFS_FILE)  # one metadata round trip, so the backend connection exists before it is recorded
+    s = efs_read_stat()
+    ev = {"conn": conn, "ts_utc": utc(t1), "remount_s": round(t1 - t0, 3), "attempts": attempt + 1,
+          "before": before, "mount_port": efs_mount_port(), "bdi": efs_bdi(),
+          "read_ahead_kb_after_mount": int(open(ra_path("efs")).read()), "proxy_backend": proxy_backend(),
+          "xprt": xprt_dict(s["xprt"]),
+          "proxies_running": sh("pgrep -af 'efs-proxy .*fs-060fb5da13f9a7e5b' || true").strip().splitlines()}
+    with open(os.path.join(outdir, "connections.jsonl"), "a") as f:
+        f.write(json.dumps(ev) + "\n")
+    print(f"conn {conn}: remount {ev['remount_s']} s, port {ev['mount_port']}, backend {ev['proxy_backend']}", flush=True)
+    return ev
 
 
 def summarize(tool, regime):
@@ -322,6 +424,17 @@ def main():
                     "the end of every repetition, not shuffled (state indicator for the jobs in between)")
     ap.add_argument("--pre", default="", help="storage,regime,pattern,qd: a load job run first in every repetition, "
                     "before the --ref job (tests whether a heavy job changes the state of the jobs after it)")
+    ap.add_argument("--reconnect", choices=("none", "remount"), default="none", help="remount: force a new EFS "
+                    "connection (umount + mount) before the first repetition of every connection group")
+    ap.add_argument("--reps-per-connection", type=int, default=1, help="repetitions (cycles) per forced connection")
+    ap.add_argument("--warmup", default="", help="storage,regime,pattern,qd: a job run right after every forced "
+                    "reconnect, followed by a wait until efs-proxy's backend connection count is stable (so the "
+                    "cycles run on the scaled-up connection set); stored with role warmup")
+    ap.add_argument("--warmup-runtime", type=int, default=3)
+    ap.add_argument("--kill-old-proxy", action="store_true", help="stop the unmounted mount's efs-proxy at once "
+                    "on every forced reconnect (needed with a one-backend-connection firewall rule)")
+    ap.add_argument("--pre-positions", default="", help="comma list of 1-based positions inside a connection group "
+                    "that get the --pre job (default: every repetition)")
     ap.add_argument("--xprt-log", action="store_true", help="sample the EFS mount's xprt line every second for "
                     "the whole run into xprt-timeline.jsonl (reconnect times independent of the jobs)")
     a = ap.parse_args()
@@ -331,9 +444,12 @@ def main():
         def xlog():
             with open(os.path.join(a.out, "xprt-timeline.jsonl"), "a") as xf:
                 while not xstop.is_set():
-                    s = efs_read_stat()
-                    xf.write(json.dumps({"ts_utc": utc(time.time()), "read_ops": s["ops"], "read_errors": s["errors"],
-                                         **xprt_dict(s["xprt"])}) + "\n")
+                    try:
+                        s = efs_read_stat()
+                        xf.write(json.dumps({"ts_utc": utc(time.time()), "read_ops": s["ops"], "read_errors": s["errors"],
+                                             "mount_port": efs_mount_port(), **xprt_dict(s["xprt"])}) + "\n")
+                    except Exception as e:  # the mount is absent for a moment during a forced remount
+                        xf.write(json.dumps({"ts_utc": utc(time.time()), "error": str(e)}) + "\n")
                     xf.flush()
                     xstop.wait(1.0)
         threading.Thread(target=xlog, daemon=True).start()
@@ -344,7 +460,7 @@ def main():
         if pat_ not in REGIMES[rg_]:
             raise SystemExit(f"job spec not supported: {s}")
         return (st_, rg_, pat_, int(qd_))
-    ref, pre = spec(a.ref), spec(a.pre)
+    ref, pre, warm = spec(a.ref), spec(a.pre), spec(a.warmup)
     pats = set(a.patterns.split(",")) if a.patterns else None
     jobs = []
     if a.plan:
@@ -369,13 +485,36 @@ def main():
             done.add(json.loads(line)["name"])
     except FileNotFoundError:
         pass
+    pre_pos = {int(x) for x in a.pre_positions.split(",")} if a.pre_positions else None
+    rpc = max(1, a.reps_per_connection)
+    conn = None
     for rep in range(a.rep_start, a.rep_start + a.reps):
+        pos = (rep - a.rep_start) % rpc + 1  # 1-based position inside the connection group
         order = [(j, "measured") for j in jobs]
         random.Random(a.seed + rep).shuffle(order)  # randomized order per repetition, storages interleaved
         if ref:
             order = [(ref, "ref-start")] + order + [(ref, "ref-end")]
-        if pre:
+        if pre and (pre_pos is None or pos in pre_pos):
             order = [(pre, "load")] + order
+        names = [f"{st}_{rg}_{pat}_qd{qd}_rep{rep}" + ("" if role == "measured" else f"_{role}")
+                 for (st, rg, pat, qd), role in order]
+        if a.reconnect == "remount" and (pos == 1 or conn is None) and any(n not in done for n in names):
+            # a resumed group starts on a fresh connection too; records carry the connection id, so the
+            # analysis groups by connection, never by repetition number
+            cpath = os.path.join(a.out, "connections.jsonl")
+            conn = (sum(1 for _ in open(cpath)) if os.path.exists(cpath) else 0) + 1  # unique per remount
+            reconnect_efs(conn, a.out, kill_old_proxy=a.kill_old_proxy)
+            if warm:
+                st, rg, pat, qd = warm
+                wrec = run_job(st, rg, pat, qd, rep, a.warmup_runtime, a.ramp, os.path.join(a.out, "raw"),
+                               name=f"{st}_{rg}_{pat}_qd{qd}_rep{rep}_warmup_conn{conn}")
+                wst = wait_backend_stable()
+                wrec.update({"role": "warmup", "block": a.block, "conn": conn, "conn_pos": 0,
+                             "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "backend_after_wait": wst})
+                log.write(json.dumps(wrec) + "\n"); log.flush()
+                print(f"conn {conn}: warmup {wrec['summary']['MBps']:.0f} MB/s, backend mid-job "
+                      f"{wrec['proxy_backend_midjob'].get('count')}, after wait {wst['count']} (stable {wst['stable']})",
+                      flush=True)
         for i, ((st, rg, pat, qd), role) in enumerate(order):
             name = f"{st}_{rg}_{pat}_qd{qd}_rep{rep}" + ("" if role == "measured" else f"_{role}")
             if name in done:
@@ -391,6 +530,8 @@ def main():
                 raise SystemExit(f"{name}: read_ahead_kb did not hold in 3 attempts")
             rec["ts_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             rec["block"] = a.block
+            if a.reconnect != "none":
+                rec["conn"], rec["conn_pos"] = conn, pos
             log.write(json.dumps(rec) + "\n"); log.flush()
             s = rec["summary"]
             print(f"rep{rep} {i+1}/{len(order)} {name} iops={s['iops']:.0f} MBps={s['MBps']:.1f} "

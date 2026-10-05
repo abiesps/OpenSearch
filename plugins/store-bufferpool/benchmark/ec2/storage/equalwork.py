@@ -57,32 +57,44 @@ def ratio(r, path):
     return round(db / tb, 3)
 
 
-viol, dist = [], defaultdict(list)
-n = 0
-for path in sys.argv[1].split(","):
-    for l in open(path):
-        r = json.loads(l)
-        n += 1
-        x = ratio(r, path)
-        cls = "checked" if checked(r) else "amplifying"
-        dist[(cls, r["storage"])].append(x)
-        if not checked(r):
-            continue
-        h = {int(k): v for k, v in r["device_size_hist"].items()}
-        tot = sum(h.values())
-        share = h.get(expected_size(r), 0) / tot if tot else 0
-        if share < 0.99:
-            viol.append((r["name"], r.get("block", "main"), "size share %.4f" % share))
-        # the clean ratio is (ramp + runtime) / runtime; records before the state block ran 1 + 8 s. The margins
-        # are device time: 0.6 s less and 1.4 s more than ramp + runtime (for 1 + 8 s exactly 1.05 and 1.30)
-        rt, rp = r.get("runtime_s", 8), r.get("ramp_s", 1)
-        lo, hi = (rp + rt - 0.6) / rt, (rp + rt + 1.4) / rt
-        if not lo <= x <= hi:
-            viol.append((r["name"], r.get("block", "main"), "device/tool %.3f (allowed %.3f-%.3f)" % (x, lo, hi)))
-print(f"records {n}, violations {len(viol)}")
-for v in viol:
-    print("  VIOLATION", *v)
-for k, xs in sorted(dist.items()):
-    xs.sort()
-    print(f"{k[0]:10s} {k[1]}: n={len(xs)} min={xs[0]:.3f} median={xs[len(xs)//2]:.3f} max={xs[-1]:.3f} "
-          f"above 1.125+0.01: {sum(1 for x in xs if x > 1.135)}")
+def violations(r, path):
+    """The rule above for one record: a list of violation strings (empty = the record passes)."""
+    if not checked(r):
+        return []
+    out = []
+    x = ratio(r, path)
+    h = {int(k): v for k, v in r["device_size_hist"].items()}
+    tot = sum(h.values())
+    share = h.get(expected_size(r), 0) / tot if tot else 0
+    if share < 0.99:
+        out.append("size share %.4f" % share)
+    # the clean ratio is (ramp + runtime) / runtime; records before the state block ran 1 + 8 s. The margins
+    # are device time: 0.6 s less and 1.4 s more than ramp + runtime (for 1 + 8 s exactly 1.05 and 1.30)
+    rt, rp = r.get("runtime_s", 8), r.get("ramp_s", 1)
+    lo, hi = (rp + rt - 0.6) / rt, (rp + rt + 1.4) / rt
+    if not lo <= x <= hi:
+        out.append("device/tool %.3f (allowed %.3f-%.3f)" % (x, lo, hi))
+    return out
+
+
+def main():
+    viol, dist = [], defaultdict(list)
+    n = 0
+    for path in sys.argv[1].split(","):
+        for l in open(path):
+            r = json.loads(l)
+            n += 1
+            cls = "checked" if checked(r) else "amplifying"
+            dist[(cls, r["storage"])].append(ratio(r, path))
+            viol.extend((r["name"], r.get("block", "main"), v) for v in violations(r, path))
+    print(f"records {n}, violations {len(viol)}")
+    for v in viol:
+        print("  VIOLATION", *v)
+    for k, xs in sorted(dist.items()):
+        xs.sort()
+        print(f"{k[0]:10s} {k[1]}: n={len(xs)} min={xs[0]:.3f} median={xs[len(xs)//2]:.3f} max={xs[-1]:.3f} "
+              f"above 1.125+0.01: {sum(1 for x in xs if x > 1.135)}")
+
+
+if __name__ == "__main__":
+    main()
