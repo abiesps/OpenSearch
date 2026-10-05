@@ -764,6 +764,8 @@ def main():
          "--ni-boot", "100", "--out", os.path.join(tmp, "analysis-skip")])
     a7 = json.load(open(os.path.join(tmp, "analysis-skip", "analysis.json")))
     assert a7["cold_protocol"] == "jit-cold/skip-iter1" and a7["cold_skipped"]["S1-EFS"] == len(small["ops"]) + 1, a7["cold_skipped"]
+    x = coldbench.parse_xprt("xprt:\ttcp 0 0 70 0 4 19792764 19792728 0 704170016 0 66 4622218 261745959")
+    assert x["connect_count"] == 70 and x["sends"] == 19792764 and coldbench.parse_xprt(None) is None, x
     # node start retries and re-queued runs (common-rules "Node start can fail on Amazon EFS with NoSuchFileException
     # in the cluster-state commit"): the wait between retries is shortened for the test
     coldbench_env = {**os.environ, "COLDBENCH_NODE_START_RETRY_WAIT_S": "0.2"}

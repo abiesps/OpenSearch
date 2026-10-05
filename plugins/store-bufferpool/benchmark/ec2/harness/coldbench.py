@@ -360,6 +360,27 @@ def efs_connections_ok(io, target):
     return efs_level(e["start"], target) and efs_level(e["end"], target) and e["proxy_pid"][0] == e["proxy_pid"][1]
 
 
+# ---------------------------------------------------------------- NFS transport
+XPRT_TCP = ("srcport", "bind_count", "connect_count", "connect_time", "idle_time", "sends", "recvs", "bad_xids",
+            "req_u", "bklog_u", "max_slots", "sending_u", "pending_u")
+
+
+def parse_xprt(line):
+    """mountstats 'xprt: tcp ...' line -> {field: int} (Linux nfs-utils mountstats field order), None if absent."""
+    if not line or not isinstance(line, str):
+        return None
+    parts = line.split()
+    if len(parts) < 3 or parts[0] != "xprt:" or parts[1] != "tcp":
+        return {"raw": line}
+    out = {"proto": "tcp", "raw": line}
+    for k, v in zip(XPRT_TCP, parts[2:]):
+        try:
+            out[k] = int(v)
+        except ValueError:
+            out[k] = v
+    return out
+
+
 # ---------------------------------------------------------------- arms
 class ArmUnavailable(RuntimeError):
     pass
@@ -1087,7 +1108,8 @@ class Session:
             except Exception as e:  # noqa: BLE001 - a start that fails before any measured iteration is retried
                 rec = {"node": arm["node"], "attempt": attempt + 1, "of": NODE_START_RETRIES,
                        "exception": f"{type(e).__name__}: {e}"[:2000], "jvm_gone": n.jvm_gone(),
-                       "efs_connections": self.efs_connection_state(arm), "node_status": self.agent_get("/node/status")}
+                       "efs_connections": self.efs_connection_state(arm), "nfs_xprt": self.nfs_transport(arm),
+                       "node_status": self.agent_get("/node/status")}
                 if attempt == NODE_START_RETRIES or not self.a.restart:
                     self.record(type="node_start_failed", **getattr(self, "current_run", {}), **rec)
                     raise NodeStartFailed(f"node {arm['node']} did not start after {NODE_START_RETRIES} retries: "
@@ -1107,6 +1129,12 @@ class Session:
             return self.node.agent.request("GET", path)
         except Exception as e:  # noqa: BLE001 - recorded, never fatal
             return {"error": f"{type(e).__name__}: {e}"[:300]}
+
+    def nfs_transport(self, arm):
+        """NFS client transport counters of the arm's mount (mountstats xprt line via agent /host), None on EBS:
+        connect_count counts the client's (re)connects to efs-proxy (common-rules: recorded per run)."""
+        host = self.agent_get(f"/host?arm={urllib.parse.quote(arm['node'])}") or {}
+        return parse_xprt(host.get("nfs_xprt"))
 
     def efs_connection_state(self, arm):
         """The EFS backend connection count and efs-proxy pid of the arm's data path (agent v2), None on EBS."""
@@ -1296,7 +1324,7 @@ class Session:
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
                     cold_protocol="jit-warm" if a.jit_warmup else "jit-cold",
                     readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
-                    cache_cleanup=cache_cleanup,
+                    cache_cleanup=cache_cleanup, nfs_xprt=self.nfs_transport(arm) if it.efs else None,
                     efs_connections_target=a.efs_connections if it.efs else None, efs_precondition_start=efs_start,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
                     args=vars(a), op_caps=self.op_caps)
@@ -1342,6 +1370,7 @@ class Session:
         if mism:
             self.log(f"  INVALID run {run_id}: {mism} cold iterations with device reads that are not bufferpool windows")
         self.record(type="run_end", **run, prefetch_pool=self.node.prefetch_pool(), readahead=readahead_end,
+                    nfs_xprt=self.nfs_transport(arm) if self.storage_nfs else None,
                     device_read_mismatches=mism, valid=not mism)
         if readahead_end is not None and not readahead_end["ok"]:
             raise RuntimeError(f"run {run_id}: kernel readahead changed during the run (a remount?): {readahead_end}; "
