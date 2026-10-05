@@ -117,6 +117,12 @@ Request timeout and storage incidents (big5-1000 host C, 2026-10-05: its Amazon 
   every sample whose request overlaps a window (1 s margin) from every comparison and verdict, and reports the count
   as sensitivity. An agent without the endpoint is recorded as `available: false`.
 
+Node memory (common-rules "BLOCKER: native memory growth from one direct allocation per cache block"): during every
+run a monitor thread polls the agent's `GET /node/memory` (v3) every `--mem-interval` s (10): node JVM VmRSS and
+RssAnon against host MemTotal, and the JVM's MALLOC_ARENA_MAX from its environment. Each run records a `node_memory`
+summary (maximum, a series every 60 s, MALLOC_ARENA_MAX). When either value passes `--mem-limit-pct` (70) the run ends
+at the next operation boundary (`run_discarded`, reason `memory limit`) and is re-queued.
+
 ## Index state per run
 Aborted sessions (common-rules "Store type left on the other data path after an aborted session"): (a) a SIGTERM or
 any error during a run triggers an exit trap that closes the configured indices on the running node and resets their

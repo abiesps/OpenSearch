@@ -183,6 +183,7 @@ class Node:
         self.url = url
         self.os = JsonClient(url, timeout=timeout)
         self.agent = JsonClient(agent_url, timeout=900.0, headers={"X-Coldpath-Token": token}) if agent_url else None
+        self.agent_url, self.agent_token = agent_url, token
         if residency_tolerance != 0:
             # common-rules "Agent pageout bug": a cold iteration counts only with 0 resident index pages
             raise SystemExit(f"--residency-tolerance {residency_tolerance}: only 0 is allowed (cold = no index page resident)")
@@ -398,6 +399,91 @@ class NodeDown(RuntimeError):
 
 class NodeStartFailed(RuntimeError):
     """A node start failed after NODE_START_RETRIES retries; the run is re-queued at the end of the session."""
+
+
+class MemoryLimitExceeded(RuntimeError):
+    """The node's resident or anonymous memory passed --mem-limit-pct of host memory (common-rules "BLOCKER: native
+    memory growth ..."): the run ends at the next operation boundary as run_discarded and is re-queued."""
+
+
+class MemoryMonitor:
+    """
+    Polls the agent's GET /node/memory every `interval` s on its own connection during one run: node JVM VmRSS and
+    RssAnon against host MemTotal. Keeps the maximum, a series every `keep_every` s, and flags `exceeded` when either
+    passes `limit_pct`; the run loop checks the flag at every operation boundary (check()). An agent without the
+    endpoint leaves the monitor unavailable (recorded), never a zero.
+    """
+
+    def __init__(self, node, interval=10.0, limit_pct=70.0, keep_every=60.0):
+        self.interval, self.limit_pct, self.keep_every = interval, limit_pct, keep_every
+        self.client = JsonClient(node.agent_url, timeout=30.0, headers={"X-Coldpath-Token": node.agent_token})
+        self.stop_ev = threading.Event()
+        self.lock = threading.Lock()
+        self.first, self.last, self.max_rss_pct, self.max_anon_pct, self.max_rss_kb = None, None, 0.0, 0.0, 0
+        self.samples, self.errors, self.series, self.exceeded, self.available = 0, 0, [], None, True
+        self._last_kept = 0.0
+        self.thread = threading.Thread(target=self._loop, name="node-memory", daemon=True)
+
+    def start(self):
+        self.poll()
+        if self.available:
+            self.thread.start()
+        return self
+
+    def poll(self):
+        try:
+            m = self.client.request("GET", "/node/memory")
+        except HttpError as e:
+            if e.status == 404:
+                self.available = False
+            with self.lock:
+                self.errors += 1
+            return None
+        except Exception:  # noqa: BLE001 - a missed poll is counted, the next one may work
+            with self.lock:
+                self.errors += 1
+            return None
+        now = time.time()
+        with self.lock:
+            self.samples += 1
+            self.first = self.first or {**m, "t": now}
+            self.last = {**m, "t": now}
+            rp, ap = m.get("rss_pct") or 0.0, m.get("anon_pct") or 0.0
+            self.max_rss_pct, self.max_anon_pct = max(self.max_rss_pct, rp), max(self.max_anon_pct, ap)
+            self.max_rss_kb = max(self.max_rss_kb, m.get("vm_rss_kb") or 0)
+            if now - self._last_kept >= self.keep_every:
+                self.series.append({"t": round(now, 1), "rss_kb": m.get("vm_rss_kb"), "anon_kb": m.get("rss_anon_kb")})
+                self._last_kept = now
+            if self.exceeded is None and max(rp, ap) > self.limit_pct:
+                self.exceeded = {"t": now, "rss_pct": rp, "anon_pct": ap, "vm_rss_kb": m.get("vm_rss_kb"),
+                                 "rss_anon_kb": m.get("rss_anon_kb"), "limit_pct": self.limit_pct}
+        return m
+
+    def _loop(self):
+        while not self.stop_ev.wait(self.interval):
+            self.poll()
+
+    def stop(self):
+        self.stop_ev.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=self.interval + 35)
+        self.client.close()
+        return self.summary()
+
+    def summary(self):
+        with self.lock:
+            return {"available": self.available, "interval_s": self.interval, "limit_pct": self.limit_pct,
+                    "samples": self.samples, "errors": self.errors, "max_rss_pct": round(self.max_rss_pct, 2),
+                    "max_anon_pct": round(self.max_anon_pct, 2), "max_rss_kb": self.max_rss_kb, "first": self.first,
+                    "last": self.last, "series": self.series, "exceeded": self.exceeded,
+                    "malloc_arena_max": (self.first or {}).get("malloc_arena_max")}
+
+    def check(self):
+        with self.lock:
+            e = self.exceeded
+        if e:
+            raise MemoryLimitExceeded(f"node memory above {e['limit_pct']:.0f} % of host memory (RSS {e['rss_pct']:.1f} %, "
+                                      f"anonymous {e['anon_pct']:.1f} %, VmRSS {e['vm_rss_kb']} kB)")
 
 
 class RunDiscarded(RuntimeError):
@@ -682,6 +768,7 @@ def jit_warmup(session, run, index, ops, seed):
     t0 = time.monotonic()
     order = op_order(ops, session.ref, seed)
     for op in order:
+        session.mem_check()
         execute(session.node.os, index, op)
     rec = {"ops": len(order), "elapsed_ms": (time.monotonic() - t0) * 1e3, "caches_after": search_cache_bytes(session.node)}
     session.record(type="jit_warmup", **run, **rec)
@@ -1305,6 +1392,24 @@ class Session:
             self.storage_nfs = readahead["nfs"]
             self.log(f"  readahead {readahead['mode']}: " + ", ".join(f"{x['key']}={x['read_ahead_kb']}" for x in readahead["layers"]))
         indices = self.start_arm(arm_name, arm)
+        self.mem_monitor = None
+        if self.node.agent and getattr(a, "mem_limit_pct", 70.0) > 0:
+            self.mem_monitor = MemoryMonitor(self.node, a.mem_interval, a.mem_limit_pct).start()
+        try:
+            self._measure_started_run(a, arm_name, arm, run, run_id, seed_id, indices, readahead)
+        finally:
+            if self.mem_monitor is not None:
+                self.record(type="node_memory", **run, **self.mem_monitor.stop())
+                self.mem_monitor = None
+
+    def mem_check(self):
+        """Operation boundary: ends the run (MemoryLimitExceeded) once the node passed the memory limit."""
+        mm = getattr(self, "mem_monitor", None)
+        if mm is not None:
+            mm.check()
+
+    def _measure_started_run(self, a, arm_name, arm, run, run_id, seed_id, indices, readahead):
+        readahead_open = None
         if self.node.agent:
             readahead_open = check_opened_readahead(self.node, arm, a.poc_read_ahead_kb)
         try:
@@ -1354,6 +1459,7 @@ class Session:
         if "cold" in modes:
             for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, seed_id, "cold"))):
                 for i in range(iters(a, self.op_caps, op)[0]):
+                    self.mem_check()
                     r = self.cold_sample(it, {**run, "pos": pos}, op, index, i)
                     if i == 0:
                         self.log(f"  cold {op['name']:<56} took {r['took_ms']:8.1f} ms ok={r['cold_ok']}")
@@ -1361,8 +1467,10 @@ class Session:
             for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, seed_id, "warm"))):
                 _, n_warmup, n_measure = iters(a, self.op_caps, op)
                 for i in range(n_warmup):
+                    self.mem_check()
                     self.warm_sample(it, run, op, index, i, "warmup")
                 for i in range(n_measure):
+                    self.mem_check()
                     self.warm_sample(it, {**run, "pos": pos}, op, index, i, "measure")
         if "ccold" in modes:
             self.concurrent_cold(it, run, index, self.ops)
@@ -1417,6 +1525,11 @@ class Session:
             self.run_one(rnd, lab, attempt)
         except (NodeStartFailed, ArmUnavailable):
             raise
+        except MemoryLimitExceeded as e:
+            run = getattr(self, "current_run", {})
+            self.record(type="run_discarded", **run, reason=f"memory limit: {e}"[:2000], memory_limit=True,
+                        node_status=self.agent_get("/node/status"))
+            raise RunDiscarded(f"run {run.get('run_id')}: {e}") from e
         except RequestTimeout as e:
             # never a latency sample: cancel what still runs on the node, discard the run, re-queue it
             run = getattr(self, "current_run", {})
@@ -1512,6 +1625,11 @@ def add_common(p):
     p.add_argument("--request-timeout", type=float, default=REQUEST_TIMEOUT_DEFAULT_S,
                    help="client socket timeout in seconds for every OpenSearch request (default 7200); the same "
                         "value applies to every configuration of the session")
+    p.add_argument("--mem-limit-pct", type=float, default=70.0,
+                   help="discard and re-queue a run at the next operation boundary once the node's VmRSS or RssAnon "
+                        "passes this %% of host memory (agent GET /node/memory, polled every --mem-interval s); 0 = off "
+                        "(common-rules BLOCKER: native memory growth)")
+    p.add_argument("--mem-interval", type=float, default=10.0, help="node memory poll interval in seconds")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
     p.add_argument("--efs-connections", type=int, default=EFS_CONNECTIONS_DEFAULT,
                    help="EFS arms: efs-proxy backend TCP connections every sample must have at its start and end (at "

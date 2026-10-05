@@ -61,6 +61,7 @@ Endpoints (JSON in and out):
   GET  /storage/incidents?since=T&until=T  kernel log lines "nfs: server X not responding" / "nfs: server X OK"
                                      between the two epoch times (journalctl -k), as stall windows per NFS server;
                                      samples inside a window are a storage incident (the caller excludes them)
+  GET  /node/memory                  node JVM VmRSS / RssAnon (kB and % of MemTotal), MemAvailable, MALLOC_ARENA_MAX
   GET  /node/status                  running JVM pid and command line, last started arm
   POST /node/stop                    runs every configured stop command; waits until no JVM matches
   POST /node/restart  {"arm": "S1"}  stop as above, then the arm's start command; returns the new pid
@@ -274,6 +275,32 @@ class Agent:
         if len(pids) > 1:
             raise RuntimeError(f"more than one JVM matches [{self.jvm_match}]: {pids}")
         return pids[0] if pids else None
+
+    def node_memory(self):
+        """Resident and anonymous memory of the node JVM against host memory, and its MALLOC_ARENA_MAX (environ)."""
+        def kb(path, key):
+            with open(path) as f:
+                for line in f:
+                    if line.startswith(key + ":"):
+                        return int(line.split()[1])
+            return None
+        total = kb("/proc/meminfo", "MemTotal")
+        out = {"mem_total_kb": total, "mem_available_kb": kb("/proc/meminfo", "MemAvailable"), "pid": self.jvm_pid()}
+        pid = out["pid"]
+        if pid:
+            try:
+                out["vm_rss_kb"] = kb(f"/proc/{pid}/status", "VmRSS")
+                out["rss_anon_kb"] = kb(f"/proc/{pid}/status", "RssAnon")
+                with open(f"/proc/{pid}/environ", "rb") as f:
+                    env = dict(x.split(b"=", 1) for x in f.read().split(b"\0") if b"=" in x)
+                v = env.get(b"MALLOC_ARENA_MAX")
+                out["malloc_arena_max"] = v.decode() if v is not None else None
+            except OSError as e:  # the JVM exited between the two reads
+                out["error"] = str(e)
+            if total and out.get("vm_rss_kb") is not None:
+                out["rss_pct"] = 100.0 * out["vm_rss_kb"] / total
+                out["anon_pct"] = 100.0 * (out.get("rss_anon_kb") or 0) / total
+        return out
 
     # ---- page cache ----
     def _index_mappings(self, pid, data_path):
@@ -774,6 +801,8 @@ def make_handler(agent, token):
                     out = agent.nfs_trace_start()
                 elif route == ("POST", "/trace/nfs/_stop"):
                     out = agent.nfs_trace_stop(agent.trace_index_dirs(q, st))
+                elif route == ("GET", "/node/memory"):
+                    out = agent.node_memory()
                 elif route == ("GET", "/storage/incidents"):
                     now = time.time()
                     out = nfs_incidents(float(q.get("since", now - 3600)), float(q.get("until", now)))

@@ -101,6 +101,11 @@ class Mock:
         self.slow_search_s = 0.0
         # kernel NFS stall windows the agent reports (GET /storage/incidents), as (start, end) epoch pairs
         self.nfs_stalls = []
+        # node memory the agent reports (GET /node/memory): % of host memory; the next mem_high_restarts node starts
+        # come up at mem_high_pct
+        self.mem_pct = 10.0
+        self.mem_high_pct = 80.0
+        self.mem_high_restarts = 0
 
     def search(self, index, body):
         key = json.dumps(body, sort_keys=True)
@@ -424,7 +429,18 @@ def make_agent_handler(m):
                         m.fail_starts[m.binary] -= 1
                     m.cached.clear()
                     m.sort_opt = {"bkd_prefetch": False}
+                    if m.mem_high_restarts > 0:
+                        m.mem_high_restarts -= 1
+                        m.mem_pct = m.mem_high_pct
+                    else:
+                        m.mem_pct = 10.0
                     return self.send(200, {"arm": m.binary, "pid": m.pid})
+                if u.path == "/node/memory":
+                    total = 247 * 1024 * 1024
+                    rss = int(total * m.mem_pct / 100)
+                    return self.send(200, {"mem_total_kb": total, "mem_available_kb": total - rss, "pid": m.pid,
+                                           "vm_rss_kb": rss, "rss_anon_kb": rss, "malloc_arena_max": "2",
+                                           "rss_pct": m.mem_pct, "anon_pct": m.mem_pct})
                 return self.send(404, {"error": "no route"})
 
         def do_GET(self):  # noqa: N802
@@ -857,6 +873,23 @@ def main():
     _, recs = session("session-no-incident", "S1-EBS")
     assert not [r for r in recs if r["type"] == "storage_incident"]
     assert [r["windows"] for r in recs if r["type"] == "storage_incident_check"] == [0]
+    # node memory above the limit (native memory growth): the run ends at the next operation boundary as
+    # run_discarded (reason memory limit) and is re-queued; the re-queued run (memory normal) is measured; every run
+    # records its node_memory summary with MALLOC_ARENA_MAX
+    m.mem_high_restarts = 1
+    out_m = os.path.join(tmp, "session-memory")
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common_pe, "--arm-list", "S1-EBS", "--rounds", "1",
+                        "--modes", "cold", "--cold-iters", "1", "--mem-interval", "0.2", "--out", out_m],
+                       capture_output=True, text=True, env=coldbench_env)
+    assert p.returncode == 0, p.stderr[-1500:]
+    recs = [json.loads(x) for x in open(os.path.join(out_m, "samples.jsonl"))]
+    disc = [r for r in recs if r["type"] == "run_discarded"]
+    assert len(disc) == 1 and disc[0]["reason"].startswith("memory limit") and disc[0]["memory_limit"], disc
+    assert [r["run_id"] for r in recs if r["type"] == "run_end"] == ["S1-EBS#r0.a1"], [r["type"] for r in recs]
+    nm = [r for r in recs if r["type"] == "node_memory"]
+    assert len(nm) == 2 and nm[0]["exceeded"] and nm[0]["max_rss_pct"] == 80.0 and not nm[1]["exceeded"], nm
+    assert all(r["malloc_arena_max"] == "2" and r["samples"] >= 1 for r in nm), nm
+    assert not [r for r in recs if r["type"] == "sample" and r["run_id"] == "S1-EBS#r0"], "samples after the limit"
     import importlib.util
     spec = importlib.util.spec_from_file_location("coldpath_agent_t", os.path.join(here, "agent", "coldpath_agent.py"))
     ag = importlib.util.module_from_spec(spec)
