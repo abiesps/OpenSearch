@@ -6,6 +6,8 @@
  * compatible open source license.
  */
 
+apply plugin: 'opensearch.internal-cluster-test'
+
 opensearchplugin {
   description = 'Adds the bufferpoolfs store type: a directory that reads through a node-wide Caffeine block cache.'
   classname = 'org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin'
