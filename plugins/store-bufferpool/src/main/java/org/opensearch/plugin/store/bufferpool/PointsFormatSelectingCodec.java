@@ -18,9 +18,6 @@ import org.apache.lucene.index.FieldInfo;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.MapperService;
 
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
  * The codec of {@link PostingsFormatSelectingCodec}, except that a one-dimensional points field can pick the split BKD
  * points format in its mapping:
@@ -31,9 +28,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Fields without the entry keep the stock points format, in the stock points files. The segment records the choice
  * in the field attributes and the codec name {@value Lucene104SplitPointsCodec#NAME}, which Lucene SPI resolves to
- * {@link Lucene104SplitPointsCodec} when the segment is read, so reading does not need this class. A mapping that asks
- * for the split format where it cannot be used (index sort, unknown name, more than one dimension) gets the stock
- * format and one WARN log per index and field; it never fails a flush or a merge.
+ * {@link Lucene104SplitPointsCodec} when the segment is read, so reading does not need this class. The only name is
+ * {@value PerFieldPointsFormat#SPLIT_FORMAT_NAME}; {@link FormatMetaMappingValidator} refuses any other when the mapping
+ * is created or updated. A mapping that asks for the split format where it cannot be used (index sort, unknown name,
+ * more than one dimension) gets the stock format and one WARN log per index, field and reason
+ * ({@link FormatMetaWarnings}), not one per shard; it never fails a flush or a merge.
  */
 final class PointsFormatSelectingCodec extends FilterCodec {
     /** Key of the {@code meta} mapping entry that names the points format. */
@@ -47,8 +46,6 @@ final class PointsFormatSelectingCodec extends FilterCodec {
             return choose(field);
         }
     };
-    // (index, field) and (index, field, value) keys already warned about
-    private final Set<String> warned = ConcurrentHashMap.newKeySet();
 
     PointsFormatSelectingCodec(Codec delegate, MapperService mapperService, Logger logger) {
         super(Lucene104SplitPointsCodec.NAME, delegate);
@@ -74,7 +71,7 @@ final class PointsFormatSelectingCodec extends FilterCodec {
         final String index = mapperService.index().getName();
         if (mapperService.getIndexSettings().getIndexSortConfig().hasIndexSort()) {
             // index-sorted merges would take the split writer's heap path
-            if (warned.add(index + "\u0000" + fi.name)) {
+            if (FormatMetaWarnings.first(mapperService, META_KEY, "index sort", fi.name)) {
                 logger.warn(
                     "index [{}] field [{}]: points format [{}] is not used on an index with an index sort, using the stock format",
                     index,
@@ -89,7 +86,7 @@ final class PointsFormatSelectingCodec extends FilterCodec {
             && fi.getPointDimensionCount() == 1) {
             return PerFieldPointsFormat.SPLIT;
         }
-        if (warned.add(index + "\u0000" + fi.name + "\u0000" + name)) {
+        if (FormatMetaWarnings.first(mapperService, META_KEY, "unsupported", fi.name, name)) {
             logger.warn(
                 "index [{}] field [{}]: points format [{}] is unknown or does not support {} dimensions, using the stock format",
                 index,

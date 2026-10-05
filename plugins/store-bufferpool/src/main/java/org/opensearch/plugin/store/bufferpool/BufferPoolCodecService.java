@@ -36,10 +36,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * named {@code Lucene104SplitPoints}, also when no field asks for the split format, the codec name does not show which
  * format a field uses: its {@code PerFieldPointsFormat.format} field attribute and its {@code _Lucene90Split_0.kd*}
  * files do. A codec that cannot be wrapped for one of the two (a codec of another plugin that is not a Lucene104 codec,
- * a codec whose postings format is not per field, the codecs of composite (star-tree) indices) is used as it is,
- * through {@link UnusedFormatMetaWarningCodec}, which logs one WARN per field and mapping key when a segment it writes
- * holds a field whose mapping asks for a format it cannot write. A codec service is built per shard engine, so the
- * WARN and the per-field caches are per shard and engine open.
+ * a codec whose postings format is not per field, every codec of an index with a composite (star-tree) field) is used
+ * as it is, through {@link UnusedFormatMetaWarningCodec}, which logs a WARN when a segment it writes holds a field whose
+ * mapping asks for a format it cannot write. That wrapper keeps a per-field postings format per field, so outer codec
+ * wrappers (OpenSearch's {@code CriteriaBasedCodec} on context-aware indices) work as on the codec itself. Every WARN of
+ * these codecs is logged once per index, field, mapping key and reason ({@link FormatMetaWarnings}), although a codec
+ * service, and its per-field caches, are built per shard engine. A name that is not available is refused earlier, when
+ * the mapping is created or updated ({@link FormatMetaMappingValidator}).
  */
 final class BufferPoolCodecService extends CodecService {
     private final MapperService mapperService;
@@ -68,7 +71,7 @@ final class BufferPoolCodecService extends CodecService {
         final boolean points = composite == false && (codec instanceof Lucene104Codec || codec instanceof Lucene104SplitPointsCodec);
         Codec out = codec;
         if (postings == false || points == false) {
-            out = new UnusedFormatMetaWarningCodec(name, out, points == false, postings == false, mapperService, logger);
+            out = new UnusedFormatMetaWarningCodec(name, out, points == false, postings == false, composite, mapperService, logger);
         }
         if (postings) {
             out = new PostingsFormatSelectingCodec(out, mapperService, logger);

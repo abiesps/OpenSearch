@@ -17,7 +17,6 @@ import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.MapperService;
 
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -28,10 +27,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * "tag_nav": { "type": "keyword", "meta": { "postings_format": "Lucene104Nav" } }
  * </pre>
  *
- * <p>The value is a Lucene SPI postings format name; a name that is not available keeps the wrapped codec's format for
- * that field, with one WARN log per field and name (a flush never fails because of the mapping entry). Fields without
- * the entry keep the postings format the wrapped codec
- * chooses for them (OpenSearch's per-field rules: completion fields, the {@code _id} fuzzy set), and every other format
+ * <p>The value is a Lucene SPI postings format name. {@link FormatMetaMappingValidator} refuses a name that is not
+ * available when the mapping is created or updated; a name that still reaches the codec (for example from an index
+ * template) keeps the wrapped codec's format for that field, with one WARN log per index, field and name
+ * ({@link FormatMetaWarnings}), so a flush never fails because of the mapping entry. Fields without the entry keep the
+ * postings format the wrapped codec chooses for them (OpenSearch's per-field rules: completion fields, the {@code _id} fuzzy set), and every other format
  * (stored fields and their compression mode, doc values, points, norms, vectors) is the wrapped codec's. The codec keeps
  * the wrapped codec's name: the wrapped codec's postings format is a {@link PerFieldPostingsFormat}, which records the
  * format of each field in the segment, so the codec that SPI resolves for that name reads the segment.
@@ -43,8 +43,6 @@ final class PostingsFormatSelectingCodec extends FilterCodec {
     private final MapperService mapperService;
     private final Logger logger;
     private final PerFieldPostingsFormat delegatePostings;
-    // (field, name) pairs already warned about
-    private final Set<String> warned = ConcurrentHashMap.newKeySet();
     private final Map<String, PostingsFormat> formats = new ConcurrentHashMap<>();
     private final PostingsFormat postingsFormat = new PerFieldPostingsFormat() {
         @Override
@@ -87,7 +85,7 @@ final class PostingsFormatSelectingCodec extends FilterCodec {
                 if (PostingsFormat.availablePostingsFormats().contains(name)) {
                     return formats.computeIfAbsent(name, PostingsFormat::forName);
                 }
-                if (warned.add(field + "\u0000" + name)) {
+                if (FormatMetaWarnings.first(mapperService, META_KEY, field, name)) {
                     logger.warn(
                         "index [{}] field [{}]: postings format [{}] is not available, using the codec's own",
                         mapperService.index().getName(),

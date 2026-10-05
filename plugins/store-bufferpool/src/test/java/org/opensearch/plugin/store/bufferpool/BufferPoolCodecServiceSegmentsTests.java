@@ -39,6 +39,7 @@ import org.apache.lucene.store.FSDirectory;
 import org.opensearch.Version;
 import org.opensearch.cluster.ClusterModule;
 import org.opensearch.cluster.metadata.IndexMetadata;
+import org.opensearch.common.UUIDs;
 import org.opensearch.common.compress.CompressedXContent;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
@@ -97,7 +98,8 @@ public class BufferPoolCodecServiceSegmentsTests extends OpenSearchTestCase {
         final MapperService mapperService = MapperTestUtils.newMapperService(
             new NamedXContentRegistry(ClusterModule.getNamedXWriteables()),
             createTempDir(),
-            Settings.EMPTY,
+            // a new index per test: FormatMetaWarnings deduplicates the warnings per index UUID, JVM-wide
+            Settings.builder().put(IndexMetadata.SETTING_INDEX_UUID, UUIDs.randomBase64UUID(random())).build(),
             "test"
         );
         mapperService.merge(indexMetadata, MapperService.MergeReason.MAPPING_UPDATE);
