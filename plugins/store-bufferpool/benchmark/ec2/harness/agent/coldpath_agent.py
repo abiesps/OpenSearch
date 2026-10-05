@@ -37,8 +37,9 @@ Endpoints (JSON in and out):
                                      connections to the mount target port 2049 (count, proxy pid, mount port); also in
                                      every /snapshot as efs_connections (coldpath_efsconn.py)
   POST /efs/precondition?target=5&timeout_s=60  reads a scratch file on the same mount with O_DIRECT 1 MiB reads
-                                     (no page-cache footprint, no index file) until the count is >= target and stable
-                                     for 3 s (efs-proxy scales 1 -> 5 after 3 s at >= 300 MiB/s); config key
+                                     (no page-cache footprint, no index file) until the count is >= target, then
+                                     waits (no reads) until it holds for stable_s=30 s, reading again if it drops
+                                     (efs-proxy scales 1 -> 5 after 3 s at >= 300 MiB/s); config key
                                      efs_precondition_file overrides <mountpoint>/coldpath-efs-precondition.bin
   GET  /host                         kernel, CPU, memory, data mount, device queue settings, EBS volume id
   POST /readahead?kb=N|default       sets read_ahead_kb of the data path's backing device (/sys/class/bdi/<maj:min>,
@@ -587,11 +588,11 @@ class Agent:
         except OSError as e:  # recorded as unknown, never as a count
             return {"count": None, "error": str(e)}
 
-    def efs_precondition(self, st, target, timeout_s):
+    def efs_precondition(self, st, target, timeout_s, stable_s=30.0):
         if not st["nfs"]:
             return {"ok": True, "count": None, "skipped": True, "reason": "not an NFS mount"}
         scratch = self.cfg.get("efs_precondition_file")
-        return coldpath_efsconn.precondition(st["mount"], target, timeout_s=timeout_s, scratch=scratch)
+        return coldpath_efsconn.precondition(st["mount"], target, timeout_s=timeout_s, scratch=scratch, stable_s=stable_s)
 
     def host(self, st):
         def read(p):
@@ -713,7 +714,8 @@ def make_handler(agent, token):
                     out = {"storage": st, "efs_connections": agent.efs_connections(st)}
                 elif route == ("POST", "/efs/precondition"):
                     with agent.lock:
-                        out = agent.efs_precondition(st, int(q.get("target", "5")), float(q.get("timeout_s", "60")))
+                        out = agent.efs_precondition(st, int(q.get("target", "5")), float(q.get("timeout_s", "60")),
+                                                     float(q.get("stable_s", "30")))
                 elif route == ("GET", "/host"):
                     out = agent.host(st)
                 elif route == ("POST", "/readahead"):

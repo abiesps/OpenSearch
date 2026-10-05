@@ -108,8 +108,14 @@ def main():
             seq = iter([1, 1, 1, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5])
             try:
                 r = ec.precondition({"mountpoint": tmp}, 5, timeout_s=20, stable_s=1.0, threads=2, scratch=scratch,
-                                    scratch_bytes=16 << 20,                                     count_fn=lambda: next(seq, 5))
+                                    scratch_bytes=16 << 20, count_fn=lambda: next(seq, 5))
                 check(r["ok"] and r["count"] == 5 and r["count_before"] == 1 and r["read_bytes"] > 0, r)
+                # a lost connection right after the scale-up (back to 1): it reads again and waits for a new stable 5
+                seq = iter([1, 1, 5, 5, 1, 1, 1, 5] + [5] * 20)
+                r = ec.precondition({"mountpoint": tmp}, 5, timeout_s=20, stable_s=1.5, threads=2, scratch=scratch,
+                                    scratch_bytes=16 << 20, count_fn=lambda: next(seq, 5))
+                check(r["ok"] and r["count"] == 5 and [c for _, c in r["timeline"]][:8] == [1, 5, 5, 1, 1, 1, 5, 5]
+                      and r["timeline"][-1][0] >= 3.5, r["timeline"])
             except OSError as e:  # tmpfs refuses O_DIRECT; the data node runs it on EFS
                 print(f"  (O_DIRECT read not available in {tmp}: {e}; checked on the data node)")
         else:

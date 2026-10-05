@@ -30,7 +30,9 @@ latency depends on it (storage/storage-model.md section 4.2.2), so:
 - `coldbench.py --efs-connections 5` (default) holds the count: before each EFS run and before every cold and measured
   warm sample whose mount is below 5, the agent reads a scratch file on the mount with O_DIRECT 1 MiB reads (no
   page-cache page, no index file; `<mountpoint>/coldpath-efs-precondition.bin`, 4 GiB, created once) until efs-proxy
-  has scaled up (up to 360 s, longer than its 300 s back-off after a failed search). A sample is valid only if start and
+  has scaled up, then waits without reading until the count has held for 30 s (a lost connection often restarts the
+  proxy 7-25 s after a scale-up), reading again if it drops (up to 360 s, longer than efs-proxy's 300 s back-off
+  after a failed search). A sample is valid only if start and
   end are both 5 or more (a 6th socket of the previous incarnation can linger) on the same proxy process (cold: `checks.efs_connections_ok`, part of `cold_ok`; warm:
   `efs_connections_ok`). A run whose mount cannot reach 5 is refused;
 - `--efs-connections 1` is the sensitivity of a mount that never scaled up: it needs a fresh mount pinned to one

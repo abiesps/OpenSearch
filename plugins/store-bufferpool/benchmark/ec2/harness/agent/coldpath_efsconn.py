@@ -19,8 +19,11 @@ sample records it and comparisons hold it fixed.
   (socket inodes of /proc/<pid>/fd matched in /proc/net/tcp and tcp6). A mount without efs-proxy (plain NFS to the
   mount target) counts the kernel's connections to addr=<ip>:2049 (inode 0). stdlib only.
 - precondition(mount, ...): reads a scratch file on the same mount with O_DIRECT 1 MiB reads (no page-cache
-  footprint, no index file touched) from 16 threads until the count is at least the target and unchanged for 3 s,
-  or the timeout passes. Creates the scratch file (O_DIRECT 1 MiB writes) the first time.
+  footprint, no index file touched) from 16 threads until the count is at least the target, then stops reading and
+  waits until the count has held for stable_s (30 s), reading again whenever it drops; or the timeout passes.
+  Why 30 s: on the storage host 21 of 69 scale-ups were followed within 7-25 s by a lost backend connection that
+  restarted the proxy incarnation (back to 1 connection; storage-model.md section 4.2.2). Creates the scratch file
+  (O_DIRECT 1 MiB writes) the first time.
 """
 import mmap
 import os
@@ -146,11 +149,12 @@ def ensure_scratch(path, size=SCRATCH_BYTES):
     return {"created": True, "bytes": size, "elapsed_s": round(time.monotonic() - t0, 2)}
 
 
-def precondition(mount, target, timeout_s=60.0, stable_s=3.0, threads=16, scratch=None, proc="/proc", count_fn=None,
+def precondition(mount, target, timeout_s=60.0, stable_s=30.0, threads=16, scratch=None, proc="/proc", count_fn=None,
                  scratch_bytes=SCRATCH_BYTES):
     """
-    Reads the scratch file with O_DIRECT 1 MiB reads from `threads` threads until backend_connections() >= target and
-    unchanged for stable_s seconds (efs-proxy's scale-up needs >= 300 MiB/s for one 3 s window), or timeout_s.
+    Reads the scratch file with O_DIRECT 1 MiB reads from `threads` threads while backend_connections() < target
+    (efs-proxy's scale-up needs >= 300 MiB/s for one 3 s window), and returns once the count has been at the target
+    for stable_s seconds without reading, or after timeout_s.
     Returns {ok, count, timeline [[s, count]], read_MBps, scratch}. A target of 1 or less reads nothing.
     """
     count_fn = count_fn or (lambda: backend_connections(mount, proc)["count"])
@@ -161,7 +165,8 @@ def precondition(mount, target, timeout_s=60.0, stable_s=3.0, threads=16, scratc
     path = scratch or os.path.join(mount["mountpoint"], SCRATCH_NAME)
     made = ensure_scratch(path, scratch_bytes)
     size = os.path.getsize(path)
-    stop = threading.Event()
+    stop, heavy = threading.Event(), threading.Event()
+    heavy.set()
     done = [0] * threads
 
     def reader(k):
@@ -170,6 +175,8 @@ def precondition(mount, target, timeout_s=60.0, stable_s=3.0, threads=16, scratc
         fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
         try:
             while not stop.is_set():
+                if not heavy.wait(0.2):
+                    continue
                 os.preadv(fd, [buf], rng.randrange(size // IO) * IO)
                 done[k] += IO
         finally:
@@ -185,6 +192,10 @@ def precondition(mount, target, timeout_s=60.0, stable_s=3.0, threads=16, scratc
             time.sleep(0.5)
             c = count_fn()
             tl.append([round(time.monotonic() - t0, 1), c])
+            if c is not None and c >= target:
+                heavy.clear()  # scaled up: stop reading, watch whether it holds
+            else:
+                heavy.set()
             if c != last:
                 last, since = c, time.monotonic()
             elif c is not None and c >= target and time.monotonic() - since >= stable_s:
