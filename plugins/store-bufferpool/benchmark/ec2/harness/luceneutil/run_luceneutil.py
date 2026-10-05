@@ -22,8 +22,9 @@ simpleReport, i.e. what searchBench.run does for two competitors) for N arms:
     interleave the same arm on EBS and EFS; competition.cold_jvm_count (default jvm_count) sets the cold JVM count;
     mode cold-strict: one task at a time (numConcurrentQueries 1) and, before EVERY task, the coldpath agent pages
     out the JVM's index mappings, syncs and drops the page cache, and checks mincore residency (patch 0002);
-  - after the runs, luceneutil's simpleReport for each arm against the base arm (its QPS table and p-values, and its
-    verifyScores / verifyCounts result comparison: a difference fails the session).
+  - after the runs, luceneutil's simpleReport (warm: its QPS table and p-values) or its compareHits (cold modes) for
+    each arm against the base arm, i.e. its verifyScores / verifyCounts result comparison: a difference fails the
+    session after every comparison is written to luceneutil-report.json.
 Every JVM run is appended to <out>/manifest.jsonl (arm, iteration, storage, log file, seed, switches, java command),
 which analyze_luceneutil.py converts into a coldbench session for analyze.py.
 
@@ -188,7 +189,9 @@ rand = random.Random(comp.randomSeed)
 static_seed = rand.randint(-10000000, 1000000)
 labels = list(comps)
 results = {l: [] for l in labels}
-manifest = open(os.path.join(OUT, "manifest.jsonl"), "a")
+if os.path.exists(os.path.join(OUT, "manifest.jsonl")):
+    raise SystemExit(f"{OUT}/manifest.jsonl exists: a session writes a new directory (luceneutil log names use its basename)")
+manifest = open(os.path.join(OUT, "manifest.jsonl"), "w")
 for it in range(comp.jvmCount):
     seed = rand.randint(-10000000, 1000000)
     order = labels[it % len(labels):] + labels[:it % len(labels)]
@@ -228,13 +231,23 @@ for it in range(comp.jvmCount):
                                    "switches": c.coldpath["switches"], "wall_s": time.time() - t0}) + "\n")
         manifest.flush()
 base = labels[0]
-reports = {}
+reports, failed = {}, []
 for label in labels[1:]:
-    details, diffs, heap = r.simpleReport(results[base], results[label], False, False, baseDesc=base, cmpDesc=label)
+    if S["mode"] == "warm":
+        # luceneutil's QPS report (it skips the first WARM_SKIP instances of each task as warm-up) and its result check
+        details, diffs, heap = r.simpleReport(results[base], results[label], False, False, baseDesc=base, cmpDesc=label)
+    else:
+        # cold: each task runs only a few times per JVM, so luceneutil's warm QPS report does not apply; its result
+        # check (compareHits, verifyScores / verifyCounts) does
+        diffs = benchUtil.compareHits(benchUtil.parseResults(results[base])[0], benchUtil.parseResults(results[label])[0],
+                                      comp.verifyScores, comp.verifyCounts)
     reports[label] = {"diffs": diffs}
     if diffs is not None and (diffs[1] or diffs[2] < 1.0):
-        raise SystemExit(f"luceneutil result comparison {base} vs {label} FAILED: {diffs}")
-json.dump({"base": base, "reports": reports}, open(os.path.join(OUT, "luceneutil-report.json"), "w"), indent=1, default=str)
+        failed.append(label)
+json.dump({"base": base, "mode": S["mode"], "reports": reports, "failed": failed},
+          open(os.path.join(OUT, "luceneutil-report.json"), "w"), indent=1, default=str)
+if failed:
+    raise SystemExit(f"luceneutil result comparison vs {base} FAILED for {failed}: see luceneutil-report.json")
 print("session done")
 '''
 

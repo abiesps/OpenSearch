@@ -19,8 +19,10 @@ must be identical; tie groups (equal score and sort values) must hold the same k
 must have the same size (the cut inside a tie depends on doc order). scroll ops compare the hit count and the
 order-free digest of keys.
 
-  index_equality.py --ops ops/nested.json --url-a http://DATA:9200 --index-a sonested \
-      --url-b http://DATA:9200 --index-b sonested_split --key-field qid --out results/nested/split-equality.json
+  index_equality.py run --ops ops/nested.json --url http://DATA:9200 --index sonested --key-field qid --out a.json
+  (restart the node with the other arm)
+  index_equality.py run --ops ops/nested.json --url http://DATA:9200 --index sonested_split --key-field qid --out b.json
+  index_equality.py compare --ops ops/nested.json a.json b.json --out split-equality.json
 """
 import argparse
 import copy
@@ -105,22 +107,10 @@ def run(ops, url, index, key_field):
     return out, client.missing
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ops", required=True)
-    ap.add_argument("--url-a", required=True)
-    ap.add_argument("--index-a", required=True)
-    ap.add_argument("--url-b")
-    ap.add_argument("--index-b", required=True)
-    ap.add_argument("--key-field")
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args()
-    ops = json.load(open(a.ops))["ops"]
-    ra, ma = run(ops, a.url_a, a.index_a, a.key_field)
-    rb, mb = run(ops, a.url_b or a.url_a, a.index_b, a.key_field)
+def compare(ops, ra, rb):
     rows, n_eq = [], 0
     for op in ops:
-        x, y = ra[op["name"]], rb[op["name"]]
+        x, y = ra.get(op["name"], {"error": "not run"}), rb.get(op["name"], {"error": "not run"})
         if "error" in x or "error" in y:
             ok, why = False, f"error: a={x.get('error')} b={y.get('error')}"
         else:
@@ -130,15 +120,46 @@ def main():
                      "digest_a": x.get("canonical", {}).get("digest"), "digest_b": y.get("canonical", {}).get("digest"),
                      "total_a": x.get("canonical", {}).get("total"), "total_b": y.get("canonical", {}).get("total"),
                      "aggs_items": x.get("canonical", {}).get("aggs_size")})
-    res = {"ops": len(ops), "equal": n_eq, "different": len(ops) - n_eq, "key_field": a.key_field,
-           "hits_without_key": {"a": ma, "b": mb}, "a": {"url": a.url_a, "index": a.index_a},
-           "b": {"url": a.url_b or a.url_a, "index": a.index_b}, "rows": rows, "results_a": ra, "results_b": rb}
-    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    return rows, n_eq
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run", help="one side: every op on one index of the running node")
+    r.add_argument("--ops", required=True)
+    r.add_argument("--url", required=True)
+    r.add_argument("--index", required=True)
+    r.add_argument("--key-field")
+    r.add_argument("--out", required=True)
+    c = sub.add_parser("compare", help="two sides written by run (the two indices may live on different nodes)")
+    c.add_argument("--ops", required=True)
+    c.add_argument("a")
+    c.add_argument("b")
+    c.add_argument("--out", required=True)
+    a = ap.parse_args()
+    ops = json.load(open(a.ops))["ops"]
+    if a.cmd == "run":
+        res, miss = run(ops, a.url, a.index, a.key_field)
+        side = {"url": a.url, "index": a.index, "key_field": a.key_field, "hits_without_key": miss,
+                "node": JsonClient(a.url).request("GET", "/"), "results": res}
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+        json.dump(side, open(a.out, "w"), indent=1)
+        print(json.dumps({"ops": len(ops), "errors": sum(1 for v in res.values() if "error" in v), "hits_without_key": miss}))
+        return
+    sa, sb = json.load(open(a.a)), json.load(open(a.b))
+    if sa["key_field"] != sb["key_field"]:
+        raise SystemExit("the two sides use different key fields")
+    rows, n_eq = compare(ops, sa["results"], sb["results"])
+    res = {"ops": len(ops), "equal": n_eq, "different": len(ops) - n_eq, "key_field": sa["key_field"],
+           "hits_without_key": {"a": sa["hits_without_key"], "b": sb["hits_without_key"]},
+           "a": {k: sa[k] for k in ("url", "index", "node")}, "b": {k: sb[k] for k in ("url", "index", "node")},
+           "rows": rows}
     json.dump(res, open(a.out, "w"), indent=1)
     print(json.dumps({k: res[k] for k in ("ops", "equal", "different", "hits_without_key")}))
-    for r in rows:
-        if not r["equal"]:
-            print("DIFF", r["op"], r["reason"])
+    for row in rows:
+        if not row["equal"]:
+            print("DIFF", row["op"], row["reason"])
     sys.exit(0 if n_eq == len(ops) else 1)
 
 
