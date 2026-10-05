@@ -25,7 +25,7 @@ Analyses the blocks run by run_conn_blocks.sh, following preregistration-connect
 - partition: the id efs-proxy logs when it scales up (short sha1 of the id bytes).
 """
 import glob, hashlib, json, math, os, random, re, statistics as stt, sys
-from collections import defaultdict
+from collections import Counter as collections_counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import equalwork  # noqa: E402  (same directory; the acceptance rule of section 2)
@@ -99,8 +99,66 @@ def conn_events(c, conns):
     return [e for e in events.get(conns[c]["mount_port"], []) if t0 <= e[0] < t1 and (pid is None or e[3] == pid)]
 
 
+def incarnations(evs):
+    """
+    efs-proxy incarnations of one mount from its log events: a restart starts a new incarnation (all backend
+    connections closed, the NFS client reconnects). Cause of a restart: "scale_up" if it follows an "established"
+    within 0.1 s (efs-proxy found 5 connections on another partition), else "connection_lost" (a child task exited:
+    a backend connection was closed or failed; src/proxy/src/controller.rs run_proxy_status_loop). The partition of an
+    incarnation is the one its scale-up bound to (unknown until it scaled up).
+    Returns (restarts [(t, cause, incarnation_after)], partition per incarnation).
+    """
+    restarts, part, inc = [], {}, 0
+    for i, e in enumerate(evs):
+        if e[1] == "established":
+            nxt = evs[i + 1] if i + 1 < len(evs) else None
+            if nxt and nxt[1] == "restart" and nxt[0] - e[0] <= 0.1:
+                part[inc + 1] = e[2]
+            else:
+                part[inc] = e[2]
+        elif e[1] == "restart":
+            prev = evs[i - 1] if i else None
+            cause = "scale_up" if prev and prev[1] == "established" and e[0] - prev[0] <= 0.1 else "connection_lost"
+            inc += 1
+            restarts.append((e[0], cause, inc))
+    return restarts, part
+
+
 def lvl(x):
     return "fast" if x >= FAST_MIN else "slow" if x < SLOW_MAX else "degraded"
+
+
+def knee_of(r):
+    knee, nxt = 1, None
+    for q in GRID[1:]:
+        if r[q] <= KNEE:
+            knee = q
+        else:
+            nxt = q
+            break
+    return knee, nxt
+
+
+def summarize(cs):
+    """Per-connection (or per-incarnation) curve from its valid cycles (preregistration-connections.md)."""
+    states = {x["state"] for x in cs}
+    r_c = {q: stt.mean(x["ratio"][q] for x in cs) for q in GRID}
+    knee, nxt = knee_of(r_c)
+    refs = [v for x in cs for v in x["ref_iops"]]
+    out = {"state": states.pop() if len(states) == 1 else "mixed",
+           "backend": cs[0]["backend"] if len({x["backend"] for x in cs}) == 1 else "varies",
+           "same_incarnation": len({x["incarnation"] for x in cs}) == 1,
+           "ref_median": round(stt.median(refs)), "ref_range": [min(refs), max(refs)],
+           "r_c": {q: round(v, 4) for q, v in r_c.items()}, "knee": knee, "next_qd_above_knee": nxt,
+           "throughput_MBps": {q: round(stt.mean(x["iops"][q] for x in cs) * 131072 / 1e6) for q in GRID},
+           "p50_us_qd1": round(stt.mean(x["p50_us"][1] for x in cs))}
+    ca = [x for x in cs if not x["heavy"]]
+    cb = [x for x in cs if x["heavy"]]
+    if ca and cb:
+        out["heavy_minus_none"] = {q: round(cb[0]["ratio"][q] - ca[0]["ratio"][q], 4) for q in (24, 32)}
+    if ca:
+        out["knee_cycle_no_heavy"] = knee_of(ca[0]["ratio"])[0]
+    return out
 
 
 def analyse(d, block, pinned):
@@ -151,7 +209,10 @@ def analyse(d, block, pinned):
         ia, ib = a["summary"]["iops"], b["summary"]["iops"]
         state = lvl(ia) if lvl(ia) == lvl(ib) else "mixed"
         ratios = {q: jobs[q]["summary"]["p50_us"] / jobs[1]["summary"]["p50_us"] for q in GRID}
+        rs, part = incarnations([e for e in conn_events(c, conns) if e[1] in SCALE_KINDS])
+        inc = sum(1 for t, _, _ in rs if t < t_first)
         cycles.append({"conn": c, "rep": rep, "heavy": "load" in jobs, "valid": not reasons, "reasons": reasons,
+                       "incarnation": inc, "partition": part.get(inc),
                        "state": state, "ref_iops": [round(ia), round(ib)], "backend": backend,
                        "ratio": {q: round(x, 4) for q, x in ratios.items()},
                        "p50_us": {q: jobs[q]["summary"]["p50_us"] for q in GRID},
@@ -166,6 +227,11 @@ def analyse(d, block, pinned):
         evs = conn_events(c, conns)
         est = [e for e in evs if e[1] == "established"]
         w = warm.get(c)
+        rs, _ = incarnations([e for e in evs if e[1] in SCALE_KINDS])
+        spans = [(ts(r["ts_start_utc"]), ts(r["ts_end_utc"]), f"{r.get('role')} {r['pattern']} qd{r['qd']}")
+                 for r in recs if r.get("conn") == c]
+        restarts = [{"t_rel_s": round(t - ts(conns[c]["ts_utc"]), 1), "cause": cause,
+                     "job": next((lab for t0, t1, lab in spans if t0 <= t <= t1), "between jobs")} for t, cause, _ in rs]
         entry = {"conn": c, "ts_utc": conns[c]["ts_utc"], "mount_port": conns[c]["mount_port"],
                  "backend_local_at_mount": [x["local"] for x in conns[c]["proxy_backend"]["conns"]],
                  "cycles": len(allc), "valid_cycles": len(cs),
@@ -174,41 +240,23 @@ def analyse(d, block, pinned):
                               "established": len(est), "restarts": sum(1 for e in evs if e[1] == "restart"),
                               "failed": sum(1 for e in evs if e[1] == "scale_up_failed"),
                               "partition": est[-1][2] if est else None},
+                 "restarts": restarts,
                  "warmup": None if w is None else {"MBps": round(w["summary"]["MBps"]),
                                                    "backend_after_wait": w["backend_after_wait"]["count"],
                                                    "stable": w["backend_after_wait"]["stable"]}}
         if cs:
-            states = {x["state"] for x in cs}
-            r_c = {q: stt.mean(x["ratio"][q] for x in cs) for q in GRID}
-            knee, nxt = 1, None
-            for q in GRID[1:]:
-                if r_c[q] <= KNEE:
-                    knee = q
-                else:
-                    nxt = q
-                    break
-            refs = [v for x in cs for v in x["ref_iops"]]
-            entry.update({"state": states.pop() if len(states) == 1 else "mixed",
-                          "backend": cs[0]["backend"] if len({x["backend"] for x in cs}) == 1 else "varies",
-                          "ref_median": round(stt.median(refs)), "ref_range": [min(refs), max(refs)],
-                          "r_c": {q: round(v, 4) for q, v in r_c.items()}, "knee": knee, "next_qd_above_knee": nxt,
-                          "throughput_MBps": {q: round(stt.mean(x["iops"][q] for x in cs) * 131072 / 1e6) for q in GRID},
-                          "p50_us_qd1": round(stt.mean(x["p50_us"][1] for x in cs))})
-            ca = [x for x in cs if not x["heavy"]]
-            cb = [x for x in cs if x["heavy"]]
-            if ca and cb:
-                entry["heavy_minus_none"] = {q: round(cb[0]["ratio"][q] - ca[0]["ratio"][q], 4) for q in (24, 32)}
-            if ca:
-                ra = ca[0]["ratio"]
-                k = 1
-                for q in GRID[1:]:
-                    if ra[q] <= KNEE:
-                        k = q
-                    else:
-                        break
-                entry["knee_cycle_no_heavy"] = k
+            entry.update(summarize(cs))
         per.append(entry)
-    return {"cycles": cycles, "connections": per}
+    # sensitivity (deviation from the pre-registration, stated in storage-model.md): one efs-proxy incarnation as the
+    # unit; a mount can restart its incarnation (new connections, maybe a new partition) between its two cycles
+    groups = defaultdict(list)
+    for x in cycles:
+        if x["valid"]:
+            groups[(x["conn"], x["incarnation"])].append(x)
+    incs = []
+    for (c, inc), cs in sorted(groups.items()):
+        incs.append({"conn": c, "incarnation": inc, "partition": cs[0]["partition"], "valid_cycles": len(cs), **summarize(cs)})
+    return {"cycles": cycles, "connections": per, "incarnations": incs}
 
 
 def boot(xs, f=stt.median, n=10000):
@@ -326,6 +374,35 @@ for c in scaled:
         parts[c["scale_up"]["partition"]].append({"conn": c["conn"], "ref_median": c["ref_median"], "state": c["state"],
                                                   "knee": c[kkey], "r_c32": c["r_c"][32]})
 
+# sensitivity: the efs-proxy incarnation as the unit (scaled-up incarnations only)
+inc_scaled = [g for g in main["incarnations"] if isinstance(g.get("backend"), int) and g["backend"] >= 2]
+inc_knees = [g[kkey] for g in inc_scaled if g.get(kkey) is not None]
+inc_heavy = {}
+for st in ("fast", "degraded", "slow", "mixed"):
+    ds = {q: [g["heavy_minus_none"][q] for g in inc_scaled if g["state"] == st and "heavy_minus_none" in g] for q in (24, 32)}
+    if ds[24]:
+        inc_heavy[st] = {q: {"incarnations": len(v), "median": round(stt.median(v), 4), "ci95": boot(v)} for q, v in ds.items()}
+inc_sens = {"incarnations": len(main["incarnations"]), "scaled_up": len(inc_scaled),
+            "states": {s: sum(1 for g in inc_scaled if g["state"] == s) for s in ("fast", "degraded", "slow", "mixed")},
+            "knee_distribution": {str(k): inc_knees.count(k) for k in sorted(set(inc_knees))},
+            "min_knee": min(inc_knees) if inc_knees else None,
+            "below": {q: {"incarnations_below": sum(1 for x in inc_knees if x < q), "of": len(inc_knees),
+                          "clopper_pearson_upper95": cp_upper(sum(1 for x in inc_knees if x < q), len(inc_knees)) if inc_knees else None}
+                      for q in (16, 20, 24, 28, 32)},
+            "heavy_job_check_same_incarnation": inc_heavy,
+            "per_incarnation": main["incarnations"]}
+# restarts of the proxy incarnation: by cause and by the job that was running
+rest = [r for c in main["connections"] for r in c["restarts"]]
+ends = [ts(c["end"]) for c in main["cycles"] if "end" in c]
+block_h = (max(ends) - ts(main["connections"][0]["ts_utc"])) / 3600 if ends else None
+lost = [r for r in rest if r["cause"] == "connection_lost"]
+rest_sum = {"total": len(rest), "by_cause": {k: sum(1 for r in rest if r["cause"] == k) for k in ("scale_up", "connection_lost")},
+            "block_hours": round(block_h, 2) if block_h else None,
+            "connection_lost_per_hour": round(len(lost) / block_h, 1) if block_h else None,
+            "connection_lost_by_job": dict(collections_counter(r["job"] for r in lost).most_common()),
+            "invalid_cycle_reasons": {k: sum(1 for c in main["cycles"] if not c["valid"] and any(x.startswith(k) for x in c["reasons"]))
+                                      for k in ("reconnect", "backend count changed", "proxy scale-up events", "missing")}}
+
 # the earlier state blocks' connection epochs, side by side (not pooled)
 st_old = json.load(open(state_json))
 ep = defaultdict(list)
@@ -349,7 +426,8 @@ res = {"rule": {"knee_factor": KNEE, "grid": GRID, "levels": {"fast_min": FAST_M
                 "restarts_at_scale_up": sum(1 for c in used if c["scale_up"]["restarts"]),
                 "knee_distribution": dist, "below": below, "fixed_default_min_knee": fixed_default,
                 "heavy_job_check": heavy, "cycle_a_only": cycle_a_only, "curves": curves, "predictor": pred,
-                "partitions": {k: v for k, v in parts.items()}, "per_connection": main["connections"],
+                "partitions": {k: v for k, v in parts.items()}, "incarnation_sensitivity": inc_sens,
+                "proxy_restarts": rest_sum, "per_connection": main["connections"],
                 "cycle_records": main["cycles"]},
        "old_state_block_epochs": old_epochs}
 if pin:
@@ -402,6 +480,15 @@ with open(out_md, "w") as f:
             f.write(f"<tr><td>{q}</td><td>{p['median_r_c']}</td><td>{p['ci95']}</td><td>{p['share_above_1.10']}</td><td>{p['median_MBps']}</td></tr>\n")
         f.write("</table>\n\n")
     f.write(f"Heavy-job check: {heavy}\n\nPredictor: {pred}\n\nPartitions: {dict(parts)}\n\n")
+    f.write(f"Proxy incarnation restarts: {rest_sum}\n\n")
+    f.write("Sensitivity, efs-proxy incarnation as the unit: " + json.dumps({k: v for k, v in inc_sens.items() if k != "per_incarnation"}, default=str) + "\n\n")
+    f.write("<table><tr><th>connection</th><th>incarnation</th><th>partition</th><th>valid cycles</th><th>reference READs/s</th><th>state</th>"
+            + "".join(f"<th>queue depth {q}</th>" for q in GRID[1:]) + "<th>knee</th></tr>\n")
+    for g in inc_sens["per_incarnation"]:
+        f.write(f"<tr><td>{g['conn']}</td><td>{g['incarnation']}</td><td>{g['partition']}</td><td>{g['valid_cycles']}</td>"
+                f"<td>{g['ref_median']:,}</td><td>{g['state']}</td>" + "".join(f"<td>{g['r_c'][q]:.3f}</td>" for q in GRID[1:])
+                + f"<td>{g['knee']}</td></tr>\n")
+    f.write("</table>\n\n")
     f.write(f"Earlier state-block epochs: {old_epochs}\n\n")
     if pin:
         p = res["conn_pin"]
@@ -422,6 +509,7 @@ with open(out_md, "w") as f:
         f.write("</table>\n")
 print(json.dumps({"conn": {k: res["conn"][k] for k in ("connections", "used", "scaled_up", "single_backend", "valid_cycles",
                                                        "states", "knee_distribution", "fixed_default_min_knee", "cycle_a_only")},
-                  "below": below, "heavy": heavy, "predictor": pred,
+                  "below": below, "heavy": heavy, "predictor": pred, "restarts": rest_sum,
+                  "incarnations": {k: inc_sens[k] for k in ("incarnations", "scaled_up", "states", "knee_distribution", "min_knee")},
                   "pin": None if not pin else {k: res["conn_pin"][k] for k in ("used", "valid_cycles", "states", "knee_distribution", "min_knee")}},
                  indent=1, default=str))
