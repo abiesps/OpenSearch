@@ -1,0 +1,1191 @@
+{
+ "_doc": "Arms of one data node host. node = agent arm (binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS; each has its own data_path in the agent config, so EBS and EFS are separate cluster states). index/open/store_types refer to keys of [indices]. Every index is closed before a node stops; open_indices sets the arm's store type and opens. base_switches are posted before every bufferpool arm's own switches; each switch's verify map is checked; HTTP 400 = switch not in this binary = arm NOT AVAILABLE (a gap, never a zero). Every arm sets search.concurrent_segment_search.mode explicitly. Set segments_per_shard / shards / docs to the verified values of the corpus before the first run.",
+ "indices": {
+  "stock_ebs": {
+   "storage": "EBS",
+   "format": "stock",
+   "members": [
+    {
+     "name": "osmlinestrings",
+     "docs": 20532036,
+     "shards": 6,
+     "segments_per_shard": 10
+    },
+    {
+     "name": "osmmultilinestrings",
+     "docs": 532036,
+     "shards": 6,
+     "segments_per_shard": 10
+    },
+    {
+     "name": "osmpolygons",
+     "docs": 39459211,
+     "shards": 6,
+     "segments_per_shard": 10
+    }
+   ],
+   "name": "osmlinestrings,osmmultilinestrings,osmpolygons"
+  },
+  "stock_efs": {
+   "storage": "EFS",
+   "format": "stock",
+   "members": [
+    {
+     "name": "osmlinestrings",
+     "docs": 20532036,
+     "shards": 6,
+     "segments_per_shard": 10
+    },
+    {
+     "name": "osmmultilinestrings",
+     "docs": 532036,
+     "shards": 6,
+     "segments_per_shard": 10
+    },
+    {
+     "name": "osmpolygons",
+     "docs": 39459211,
+     "shards": 6,
+     "segments_per_shard": 10
+    }
+   ],
+   "name": "osmlinestrings,osmmultilinestrings,osmpolygons"
+  }
+ },
+ "cluster_settings_reset": [
+  "search.concurrent_segment_search.mode"
+ ],
+ "base_switches": [
+  {
+   "method": "POST",
+   "path": "/_bufferpool/agg_batch?mode=off",
+   "verify": {
+    "agg_batch_collection": "false",
+    "agg_prefetch": "false"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/_bufferpool/sort_opt?bkd_prefetch=false&bkd_chunks=8&whole_index=false&whole_index_bytes=65536&index_child_prefetch=false&approx_single=false&approx_bool=false&skipper_range=false&sort_prefetch=false&sort_docs=65536&clamp=false&sample_docs=0&skipper_mode=off&run_cap=false",
+   "verify": {
+    "bkd_prefetch": "false",
+    "bkd_chunks": "8",
+    "whole_index": "false",
+    "whole_index_bytes": "65536",
+    "index_child_prefetch": "false",
+    "approx_single": "false",
+    "approx_bool": "false",
+    "skipper_range": "false",
+    "sort_prefetch": "false",
+    "sort_docs": "65536",
+    "clamp": "false",
+    "sample_docs": "0",
+    "skipper_mode": "off",
+    "run_cap": "false"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/_bufferpool/disjunction_prefetch?blocks=0",
+   "verify": {
+    "disjunction_prefetch_bytes_ahead": "0"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/_bufferpool/topk_prefetch?norms_blocks=0&doc_blocks=0",
+   "verify": {
+    "topk_prefetch_norms_docs_ahead": "0",
+    "topk_prefetch_doc_nodes_ahead": "0"
+   }
+  },
+  {
+   "method": "POST",
+   "path": "/_bufferpool/dual_nav/_mode?mode=doc",
+   "verify": {
+    "dual_nav_read_mode": "doc"
+   }
+  }
+ ],
+ "outcome": {
+  "reference": "S0-EBS",
+  "targets": [
+   "S2-CORE-EFS",
+   "S2-CORE+PLANNER-EFS"
+  ],
+  "aa": "S0-EBS@a,S0-EBS@b",
+  "delta_min": 0.05
+ },
+ "arms": {
+  "S0-EBS": {
+   "node": "S0-EBS",
+   "storage": "EBS",
+   "bufferpool": false,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "REFERENCE of the outcome: stock OpenSearch on EBS gp3"
+  },
+  "S0-EFS": {
+   "node": "S0-EFS",
+   "storage": "EFS",
+   "bufferpool": false,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "stock on EFS: the size of the problem"
+  },
+  "S1-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "POC binary, bufferpoolfs, every switch off: storage layer alone"
+  },
+  "S2-A-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A"
+   ]
+  },
+  "S2-B-EFS": {
+   "not_applicable": "split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points)",
+   "was": {
+    "atoms": [
+     "B"
+    ],
+    "index": "split_efs"
+   }
+  },
+  "S2-B+A-EFS": {
+   "not_applicable": "split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); without B it is the same arm as S2-A-EFS",
+   "was": {
+    "atoms": [
+     "A",
+     "B"
+    ],
+    "index": "split_efs"
+   }
+  },
+  "S2-C-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "C"
+   ],
+   "note": "planner"
+  },
+  "S2-E-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "E"
+   ]
+  },
+  "S2-E8-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true&sort_lookahead=8",
+     "verify": {
+      "sort_prefetch": "true",
+      "sort_lookahead": "8"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "E8"
+   ],
+   "note": "look-ahead 8: set the real parameter name from the final POC binary; until then 400 = NOT AVAILABLE"
+  },
+  "S2-K2-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K2"
+   ]
+  },
+  "S2-K3-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K3"
+   ]
+  },
+  "S2-K4-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K4"
+   ]
+  },
+  "S2-AGG-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "AGG"
+   ],
+   "note": "agg batch collection C2 + doc-values prefetch C3e (pfwc)"
+  },
+  "S2-ORPF-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "ORPF"
+   ],
+   "note": "OR-query postings prefetch; set blocks from the final POC report"
+  },
+  "S2-TOPK-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "TOPK"
+   ],
+   "note": "top-k norms/postings prefetch; set blocks from the final POC report"
+  },
+  "S2-K1-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?clamp=true",
+     "verify": {
+      "clamp": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K1"
+   ],
+   "note": "SHORTCUT, informational"
+  },
+  "S2-Da-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_single=true",
+     "verify": {
+      "approx_single": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "Da"
+   ],
+   "note": "SHORTCUT, informational"
+  },
+  "S2-Db-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_bool=true",
+     "verify": {
+      "approx_bool": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "Db"
+   ],
+   "note": "SHORTCUT, informational"
+  },
+  "S2-CORE-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK"
+   ],
+   "note": "TARGET: every core change [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S2-CORE+PLANNER-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK",
+    "C"
+   ],
+   "note": "TARGET (headline) [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S2-ALL-EFS": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?clamp=true",
+     "verify": {
+      "clamp": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_single=true",
+     "verify": {
+      "approx_single": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_bool=true",
+     "verify": {
+      "approx_bool": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK",
+    "C",
+    "K1",
+    "Da",
+    "Db"
+   ],
+   "note": "informational only (includes shortcuts) [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S1-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "informational"
+  },
+  "S2-CORE-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK"
+   ],
+   "note": "informational [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S0-EBS-css": {
+   "node": "S0-EBS",
+   "storage": "EBS",
+   "bufferpool": false,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
+  },
+  "S0-EFS-css": {
+   "node": "S0-EFS",
+   "storage": "EFS",
+   "bufferpool": false,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
+  },
+  "S1-EFS-css": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
+  },
+  "S2-CORE-EFS-css": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK"
+   ],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext) [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S2-CORE+PLANNER-EFS-css": {
+   "node": "POC-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK",
+    "C"
+   ],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext) [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  }
+ },
+ "_generic": {
+  "corpus": "geoshape",
+  "layout": "multi",
+  "base_arms_file": "arms.example.json",
+  "base_arms_sha256": "8284b40436b78e17696edb88a8af740ea8d786c27a86bd76480472b052a8ebff",
+  "split_bkd": {
+   "applicable": false,
+   "reason": "no date field (shape is a geo_shape: 7-D triangle points)"
+  },
+  "changes": [
+   "S2-B-EFS: not applicable (B only)",
+   "S2-B+A-EFS: not applicable (without B = S2-A-EFS)",
+   "S2-CORE-EFS: without B on stock_efs",
+   "S2-CORE+PLANNER-EFS: without B on stock_efs",
+   "S2-ALL-EFS: without B on stock_efs",
+   "S2-CORE-EBS: without B on stock_ebs",
+   "S2-CORE-EFS-css: without B on stock_efs",
+   "S2-CORE+PLANNER-EFS-css: without B on stock_efs"
+  ]
+ }
+}

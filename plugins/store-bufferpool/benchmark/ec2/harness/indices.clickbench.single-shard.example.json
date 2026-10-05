@@ -1,0 +1,23 @@
+{
+ "_doc": "clickbench single copies (arms_generic.py); use with coldbench --indices",
+ "indices": {
+  "stock_ebs": {
+   "storage": "EBS",
+   "format": "stock",
+   "name": "clickbench_1s",
+   "docs": 99997497,
+   "shards": 1,
+   "segments_per_shard": 10,
+   "min_store_bytes": 32212254720
+  },
+  "stock_efs": {
+   "storage": "EFS",
+   "format": "stock",
+   "name": "clickbench_1s",
+   "docs": 99997497,
+   "shards": 1,
+   "segments_per_shard": 10,
+   "min_store_bytes": 32212254720
+  }
+ }
+}
