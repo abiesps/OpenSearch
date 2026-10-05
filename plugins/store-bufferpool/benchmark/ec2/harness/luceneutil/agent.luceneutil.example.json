@@ -1,9 +1,9 @@
 {
- "_doc": "coldpath agent on the luceneutil host: one arm per storage. data_path holds luceneutil's indices/ directory (INDEX_DIR_BASE = <data_path>/indices), so /cache/residency?uuids=<index name> checks <data_path>/indices/<name>/index/ and /cache/drop pages out the SearchPerfTest JVM's mappings under it. No OpenSearch node: start/stop are no-ops and /node/restart is not used.",
+ "_doc": "coldpath agent on the luceneutil host: one arm per storage. Each arm's data_path is luceneutil's INDEX_DIR_BASE of that storage (<base>/indices), so /cache/residency?uuids=<index name> checks <base>/indices/<name>/index/ and <name>/facets/ (residency_dirs; the taxonomy index of the facet tasks) and /cache/drop pages out the SearchPerfTest JVM's mappings under it; the walk never enters the Lucene checkouts. No OpenSearch node: start/stop are no-ops and /node/restart is not used.",
  "listen": "127.0.0.1",
  "port": 9700,
  "token_file": "/etc/coldpath-agent/token",
- "data_path": "/data/ebs/lu",
+ "data_path": "/data/ebs/lu/indices",
  "device": null,
  "jvm_match": "perf.SearchPerfTest",
  "command_timeout_s": 300,
@@ -18,7 +18,7 @@
    "stop": [
     "/bin/true"
    ],
-   "data_path": "/data/ebs/lu"
+   "data_path": "/data/ebs/lu/indices"
   },
   "LU-EFS": {
    "start": [
@@ -27,7 +27,11 @@
    "stop": [
     "/bin/true"
    ],
-   "data_path": "/mnt/efs/lu"
+   "data_path": "/mnt/efs/lu/indices"
   }
- }
+ },
+ "residency_dirs": [
+  "index",
+  "facets"
+ ]
 }

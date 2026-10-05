@@ -16,7 +16,10 @@ simpleReport, i.e. what searchBench.run does for two competitors) for N arms:
   - JVM iteration it runs every arm once, the arm order rotated by `it` (luceneutil rotates its two competitors the
     same way), with the same per-iteration seed for every arm (same tasks);
   - mode warm: luceneutil's normal run (taskRepeatCount instances of each task in one JVM);
-    mode cold-luceneutil: luceneutil's cold=True (its dropCaches before each JVM);
+    mode cold-luceneutil: what luceneutil's cold=True does (sync + drop_caches before each JVM), done through the
+    agent because luceneutil's dropCaches.sh path is wrong at the pin, plus a residency check of the index files;
+  - an arm label ARM:STORAGE@REPEAT reads the index copy on STORAGE (default --storage), so one session can
+    interleave the same arm on EBS and EFS; competition.cold_jvm_count (default jvm_count) sets the cold JVM count;
     mode cold-strict: one task at a time (numConcurrentQueries 1) and, before EVERY task, the coldpath agent pages
     out the JVM's index mappings, syncs and drops the page cache, and checks mincore residency (patch 0002);
   - after the runs, luceneutil's simpleReport for each arm against the base arm (its QPS table and p-values, and its
@@ -50,26 +53,31 @@ def load_config(path):
     return cfg
 
 
-def arm_spec(cfg, label):
-    arm = label.split("@", 1)[0]
+def arm_spec(cfg, label, default_storage=None):
+    """label = ARM[:STORAGE][@REPEAT]: the arm, the storage whose index copy it reads (default: --storage), and an
+    optional repeat tag (A/A). One session may interleave arms on several storages."""
+    head = label.split("@", 1)[0]
+    arm, _, storage = head.partition(":")
+    storage = storage or default_storage
     if arm not in cfg["arms"]:
         raise ValueError(f"unknown arm {label}; arms: {sorted(cfg['arms'])}")
-    return arm, cfg["arms"][arm]
+    if storage not in cfg["storages"]:
+        raise ValueError(f"arm {label}: storage {storage}: one of {sorted(cfg['storages'])}")
+    return arm, cfg["arms"][arm], storage
 
 
 def plan(cfg, table, mode, tasks, storage, labels, out):
     if mode not in MODES:
         raise ValueError(f"mode {mode}: one of {MODES}")
-    if storage not in cfg["storages"]:
-        raise ValueError(f"storage {storage}: one of {sorted(cfg['storages'])}")
-    st = cfg["storages"][storage]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"duplicate arm label in {labels}")
     params = cfg.get("params", {})
     comp = cfg["competition"]
     arms = []
     for label in labels:
-        name, a = arm_spec(cfg, label)
+        name, a, st_name = arm_spec(cfg, label, storage)
         if a.get("not_applicable"):
-            arms.append({"label": label, "arm": name, "not_applicable": a["not_applicable"]})
+            arms.append({"label": label, "arm": name, "storage": st_name, "not_applicable": a["not_applicable"]})
             continue
         checkout = cfg["checkouts"][a["checkout"]]
         idx = cfg["indices"][a["index"]]
@@ -77,13 +85,16 @@ def plan(cfg, table, mode, tasks, storage, labels, out):
         if resolved and a["checkout"] != "poc":
             raise ValueError(f"arm {label}: switches need the POC Lucene (stock Lucene has none)")
         java = cfg["java_command"] + (" " + flag if flag else "")
-        arms.append({"label": label, "arm": name, "checkout": checkout["path"], "index": a["index"],
-                     "index_spec": idx, "java_command": java, "switches": resolved})
+        arms.append({"label": label, "arm": name, "storage": st_name, "storage_spec": cfg["storages"][st_name],
+                     "checkout": checkout["path"], "index": a["index"], "index_spec": idx, "java_command": java,
+                     "switches": resolved})
     runnable = [x for x in arms if not x.get("not_applicable")]
     if not runnable:
         raise ValueError("no runnable arm")
+    storages = sorted({x["storage"] for x in runnable})
     os.makedirs(out, exist_ok=True)
-    session = {"mode": mode, "tasks": tasks, "storage": storage, "storage_spec": st, "labels": labels, "arms": arms,
+    session = {"mode": mode, "tasks": tasks, "storage": ",".join(storages),
+               "storage_spec": {s: cfg["storages"][s] for s in storages}, "labels": labels, "arms": arms,
                "competition": comp, "luceneutil": cfg["luceneutil"], "params": params,
                "switches_fork_commit": table.get("fork_commit"), "id": os.path.basename(os.path.abspath(out))}
     driver = os.path.join(out, "driver.py")
@@ -106,29 +117,39 @@ OUT = @OUT@
 comp_cfg = S["competition"]
 cold_luceneutil = S["mode"] == "cold-luceneutil"
 strict = S["mode"] == "cold-strict"
-comp = competition.Competition(cold=cold_luceneutil, verifyScores=comp_cfg.get("verify_scores", True),
+jvm_count = comp_cfg["jvm_count"] if S["mode"] == "warm" else comp_cfg.get("cold_jvm_count", comp_cfg["jvm_count"])
+# cold=False for luceneutil itself: its cold=True runs "sudo BENCH_BASE_DIR/dropCaches.sh", a path that does not exist
+# at the pin (the script is in scripts/); the driver does the same thing (sync + drop_caches) through the agent before
+# each JVM and checks the residency of the arm's index files afterwards
+comp = competition.Competition(cold=False, verifyScores=comp_cfg.get("verify_scores", True),
                                verifyCounts=comp_cfg.get("verify_counts", True), randomSeed=comp_cfg["random_seed"],
                                taskCountPerCat=comp_cfg.get("task_count_per_cat", 1),
                                taskRepeatCount=comp_cfg["cold_task_repeat_count" if strict else "task_repeat_count"],
-                               jvmCount=comp_cfg["jvm_count"])
+                               jvmCount=jvm_count)
 tasks_file = os.path.join(constants.BENCH_BASE_DIR, "tasks", S["tasks"])
 if not os.path.exists(tasks_file):
     raise SystemExit(f"no tasks file {tasks_file}")
-st = S["storage_spec"]
-# the index copy of this storage: luceneutil resolves every index path through constants.INDEX_DIR_BASE
-constants.INDEX_DIR_BASE = st["index_dir_base"]
-# kernel readahead of every layer of the storage's data path, set through the agent, verified and recorded: every
-# luceneutil arm reads through MMapDirectory (no bufferpool), so all arms use the same mode, "default" = as mounted
-# (common-rules: stock mmap keeps the kernel readahead); a run whose value differs is refused
 import urllib.request
-tok = open(st["agent_token_file"]).read().strip()
-req = urllib.request.Request(f"{st['agent_url']}/readahead/mode?arm={st['agent_arm']}&mode={st.get('read_ahead_mode', 'default')}",
-                             method="POST", headers={"X-Coldpath-Token": tok})
-ra = json.loads(urllib.request.urlopen(req, timeout=60).read())
-json.dump(ra, open(os.path.join(OUT, "readahead.json"), "w"))
-print("readahead", ra)
-if not ra.get("ok"):
-    raise SystemExit(f"readahead is not {st.get('read_ahead_mode', 'default')}: {ra}; not measuring")
+
+
+def agent(st, method, path):
+    tok = open(st["agent_token_file"]).read().strip()
+    req = urllib.request.Request(f"{st['agent_url']}{path}", method=method, headers={"X-Coldpath-Token": tok})
+    return json.loads(urllib.request.urlopen(req, timeout=900).read())
+
+
+# kernel readahead of every layer of each storage's data path, set through the agent, verified and recorded: every
+# luceneutil arm reads through MMapDirectory (no bufferpool), so all arms use the same mode, "default" = as mounted
+# (common-rules: stock mmap keeps the kernel readahead); a storage whose value differs refuses the session. The JVMs
+# start after this, so every index file is opened with the verified value.
+ra_all = {}
+for name, st in S["storage_spec"].items():
+    ra = agent(st, "POST", f"/readahead/mode?arm={st['agent_arm']}&mode={st.get('read_ahead_mode', 'default')}")
+    ra_all[name] = ra
+    print("readahead", name, ra)
+    if not ra.get("ok"):
+        raise SystemExit(f"readahead of {name} is not {st.get('read_ahead_mode', 'default')}: {ra}; not measuring")
+json.dump(ra_all, open(os.path.join(OUT, "readahead.json"), "w"), indent=1)
 indices, comps = {}, {}
 for a in S["arms"]:
     if a.get("not_applicable"):
@@ -150,10 +171,11 @@ for a in S["arms"]:
     c.coldpath = a
     comps[a["label"]] = c
 r = benchUtil.RunAlgs(constants.JAVA_COMMAND, comp.verifyScores, comp.verifyCounts)
-for name, idx in indices.items():
-    path = benchUtil.nameToIndexPath(idx.getName())
-    if not os.path.exists(path):
-        raise SystemExit(f"index {name} not built at {path}: build it with run_luceneutil.py index first")
+for c in comps.values():
+    path = os.path.join(c.coldpath["storage_spec"]["index_dir_base"], c.index.getName())
+    if not os.path.isdir(os.path.join(path, "index")):
+        raise SystemExit(f"arm {c.name}: index {c.coldpath['index']} not at {path}: build it (run_luceneutil.py index) "
+                         f"and copy it (run_luceneutil.py copy) first")
 print("compile:")
 for c in comps.values():
     r.compile(c)
@@ -167,8 +189,12 @@ for it in range(comp.jvmCount):
     order = labels[it % len(labels):] + labels[:it % len(labels)]
     for label in order:
         c = comps[label]
+        st = c.coldpath["storage_spec"]
+        # the index copy of this arm's storage: luceneutil resolves every index path through constants.INDEX_DIR_BASE
+        constants.INDEX_DIR_BASE = st["index_dir_base"]
         base_cmd = c.coldpath["java_command"]
         cold_log = None
+        jvm_drop = None
         if strict:
             cold_log = os.path.join(OUT, f"{S['id']}.{label}.{it}.cold.jsonl")
             props = {"coldpath.cold.agent": st["agent_url"], "coldpath.cold.tokenFile": st["agent_token_file"],
@@ -178,12 +204,21 @@ for it in range(comp.jvmCount):
             c.javaCommand = base_cmd + "".join(f" -D{k}={v}" for k, v in props.items())
         else:
             c.javaCommand = base_cmd
+        if cold_luceneutil:
+            # luceneutil cold=True: sync + drop_caches once before the JVM (no JVM runs, so nothing is mapped)
+            drop = agent(st, "POST", f"/cache/drop?pageout=0&arm={st['agent_arm']}")
+            res = agent(st, "GET", f"/cache/residency?arm={st['agent_arm']}&uuids={c.index.getName()}")
+            ok = res["resident_bytes"] <= st.get("residency_tolerance", 1 << 20) and res["files"] > 0
+            jvm_drop = {"cold_ok": ok, "resident_bytes": res["resident_bytes"], "files": res["files"],
+                        "bytes": res["bytes"], "drop_ms": drop.get("drop_ms"), "sync_ms": drop.get("sync_ms")}
+            if not ok:
+                raise SystemExit(f"{label} iteration {it}: index files still resident after the drop: {jvm_drop}")
         t0 = time.time()
-        log = r.runSimpleSearchBench(it, S["id"], c, cold_luceneutil, seed, static_seed)
+        log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
         results[label].append(log)
         manifest.write(json.dumps({"iter": it, "label": label, "arm": c.coldpath["arm"], "log": log,
-                                   "stdout": log + ".stdout", "cold_log": cold_log, "seed": seed,
-                                   "static_seed": static_seed, "mode": S["mode"], "storage": S["storage"],
+                                   "stdout": log + ".stdout", "cold_log": cold_log, "jvm_drop": jvm_drop, "seed": seed,
+                                   "static_seed": static_seed, "mode": S["mode"], "storage": c.coldpath["storage"],
                                    "tasks": S["tasks"], "index": c.index.getName(), "java_command": c.javaCommand,
                                    "switches": c.coldpath["switches"], "wall_s": time.time() - t0}) + "\n")
         manifest.flush()

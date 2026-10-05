@@ -614,6 +614,21 @@ def part_f(tmp, fork, fork_commit):
     compile(open(driver).read(), driver, "exec")
     check("-Dcoldpath.switches=" + B + "setIntersectPrefetch=true" in s["arms"][1]["java_command"], "(f) driver: arm flags")
     check(s["arms"][0]["java_command"] == cfg["java_command"], "(f) driver: stock arm has the base java command only")
+    # one session interleaving arms on both storages (label ARM:STORAGE@REPEAT)
+    d2, s2 = run_luceneutil.plan(cfg, table, "cold-strict", "wikimedium.10M.nostopwords.tasks", "EBS",
+                                 ["L0:EBS@a", "L0:EFS@a", "L1:EFS", "L1"], os.path.join(tmp, "lu-mixed"))
+    compile(open(d2).read(), d2, "exec")
+    check([x["storage"] for x in s2["arms"]] == ["EBS", "EFS", "EFS", "EBS"] and s2["storage"] == "EBS,EFS"
+          and s2["arms"][1]["storage_spec"]["index_dir_base"] == cfg["storages"]["EFS"]["index_dir_base"],
+          "(f) driver: per-arm storage from the label, default --storage")
+    check("cold_jvm_count" in open(d2).read() and "/cache/drop?pageout=0" in open(d2).read(),
+          "(f) driver: cold JVM count read; cold-luceneutil drops through the agent")
+    for bad_labels in (["L0:EBS", "L0:EBS"], ["L0:XFS"]):
+        try:
+            run_luceneutil.plan(cfg, table, "warm", "t", "EBS", bad_labels, os.path.join(tmp, "lu-bad2"))
+            check(False, f"(f) driver: labels {bad_labels} rejected")
+        except ValueError:
+            check(True, f"(f) driver: labels {bad_labels} rejected")
     try:
         run_luceneutil.plan(dict(cfg, arms={"X": {"checkout": "stock", "index": "stock", "switches": {B + "setIntersectPrefetch": True}}}),
                             table, "warm", "t", "EBS", ["X"], os.path.join(tmp, "lu-bad"))

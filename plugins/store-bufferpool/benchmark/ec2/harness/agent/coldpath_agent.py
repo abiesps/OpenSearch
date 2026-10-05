@@ -95,6 +95,9 @@ class Agent:
     def __init__(self, config):
         self.cfg = config
         self.jvm_match = config.get("jvm_match", "org.opensearch.bootstrap.OpenSearch")
+        # names of the directories whose files the residency check covers: OpenSearch keeps Lucene files in
+        # <uuid>/<shard>/index/; luceneutil also keeps a taxonomy index in <name>/facets/
+        self.residency_dirs = frozenset(config.get("residency_dirs", ["index"]))
         self.lock = threading.Lock()  # one state-changing action at a time
         self.last_arm = None
         # (data_path, device) per arm; resolved to mounts on every call, so a mount made after agent start is seen
@@ -350,7 +353,7 @@ class Agent:
         top = []
         for d in self.index_dirs(st["data_path"], uuids):
             for root, _, names in os.walk(d):
-                if os.path.basename(root) != "index":
+                if os.path.basename(root) not in self.residency_dirs:
                     continue  # Lucene files only (<uuid>/<shard>/index/), not translog or _state
                 for name in names:
                     p = os.path.join(root, name)
