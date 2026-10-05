@@ -26,9 +26,14 @@ OSB's Query runner, so OSB's service time covers only the search requests. The r
 its own client and records network time only (`wall_ms`) and the server's `took`.
 
 ## Cold protocol (before EVERY iteration of EVERY op)
+Cold means data-cold on a JIT-warm JVM (common-rules DECISION "cold means data-cold on a JIT-warm JVM"): before the
+cold block of every JVM run, every op runs once, unmeasured (record `jit_warmup`; run record `cold_protocol`
+`jit-warm`; `--no-jit-warmup` = the old `jit-cold` protocol). Then, before every cold iteration:
 1. wait until the bufferpool prefetch pool is idle;
-2. `POST /_bufferpool/cache/_clear` (bufferpool arms); `POST /_cache/clear?query&fielddata&request`; searches use
-   `request_cache=false`;
+2. `POST /_bufferpool/cache/_clear` (bufferpool arms); `POST /_cache/clear?query&fielddata&request`, then the node's
+   fielddata (it holds the global ordinals), query cache and request cache must report 0 bytes and 0 entries
+   (`/_nodes/_local/stats/indices/fielddata,query_cache,request_cache`, re-cleared up to 3 times; check
+   `search_caches_empty`); searches use `request_cache=false`;
 3. agent `/cache/drop`: `process_madvise(MADV_PAGEOUT)` on the JVM's mappings of index files (stock hybridfs mmaps
    Lucene files, and `drop_caches` does not evict pages that are mapped), `sync`, `echo 3 > drop_caches`;
 4. verify: bufferpool `cached_blocks == 0`; page-cache residency of the arm's index files <= 1 MiB (mincore, EBS
@@ -104,6 +109,9 @@ agent must have `coldpath_segformat.py` installed next to it (`../harness.json`,
 the check stops with that message.
 
 ## Statistics (`analyze.py`)
+- One analysis uses one cold protocol: sessions whose runs have different `cold_protocol` are refused together.
+  `--cold-skip-iters 1` leaves out cold iteration 0 (the primary result of `jit-cold` sessions; protocol
+  `jit-cold/skip-iter1`).
 - Per-run median per op, then across runs. Change of the median with a bootstrap 95% CI resampling runs; exact
   Mann-Whitney p on run medians; Benjamini-Hochberg across ops; significance also needs |change| > A/A floor.
 - A/A floor from two labels of one arm (`ARM@a,ARM@b`). Warm regression bar: CI above 0 and beyond the floor.

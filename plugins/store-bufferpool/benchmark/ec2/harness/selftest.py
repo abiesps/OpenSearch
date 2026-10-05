@@ -72,9 +72,17 @@ class Mock:
         self.calls = []
         self.bdi = {}
         self.opened = []
+        # search caches: aggregations build fielddata / global ordinals; _cache/clear?fielddata drops them
+        self.fielddata = 0
+        self.fielddata_at_clear = []
+        self.broken_cache_clear = False
+        self.events = []  # ("search", body key) / ("cache_clear",) in call order
 
     def search(self, index, body):
         key = json.dumps(body, sort_keys=True)
+        self.events.append(("search", key))
+        if "aggs" in body:
+            self.fielddata += 4096  # global ordinals of the aggregated keyword field
         blocks = [f"{index}:{key}:{i}" for i in range(4)]
         miss = [b for b in blocks if b not in self.cached]
         bp = self.binary.startswith("POC")
@@ -152,6 +160,11 @@ def make_os_handler(m):
                     return self.send(200, {"status": "green"})
                 if p.startswith("/_cat/plugins"):
                     return self.send(200, [{"component": "store-bufferpool"}] if bp else [])
+                if p.startswith("/_nodes/_local/stats/indices/"):
+                    return self.send(200, {"nodes": {"n1": {"indices": {
+                        "fielddata": {"memory_size_in_bytes": m.fielddata},
+                        "query_cache": {"memory_size_in_bytes": 0, "cache_size": 0},
+                        "request_cache": {"memory_size_in_bytes": 0}}}}})
                 if p.startswith("/_nodes/_local/stats/thread_pool"):
                     tp = {"bufferpool_prefetch": {"active": 0, "queue": 0, "rejected": 0, "completed": 1}} if bp else {}
                     return self.send(200, {"nodes": {"n1": {"thread_pool": tp}}})
@@ -197,6 +210,10 @@ def make_os_handler(m):
                 if p.startswith("/_cat/segments/"):
                     return self.send(200, [{"shard": str(s), "prirep": "p", "segment": "_0", "searchable": "true"} for s in range(2)])
                 if p == "/_cache/clear":
+                    m.fielddata_at_clear.append(m.fielddata)
+                    m.events.append(("cache_clear",))
+                    if q.get("fielddata") == "true" and not m.broken_cache_clear:
+                        m.fielddata = 0
                     return self.send(200, {"_shards": {"failed": 0}})
                 if p.startswith("/_bufferpool/"):
                     if not bp:
@@ -462,6 +479,17 @@ def main():
     # kernel readahead per arm session: stock arms as mounted, bufferpool arms 0 (common-rules), read sizes traced
     assert m.readahead.get("POC-EFS") == "0" and m.readahead.get("S0-EBS") == "default", m.readahead
     runs = [json.loads(l) for l in open(os.path.join(s2, "samples.jsonl"))]
+    # cold = data-cold on a JIT-warm JVM: an unmeasured warm-up of every op precedes the cold block of every run, and
+    # the clear before every cold iteration empties fielddata / global ordinals (built by the warm-up's aggregations)
+    for run_rec in [r for r in runs if r["type"] == "run" and r.get("available")]:
+        rid = run_rec["run_id"]
+        seq = [r["type"] if r["type"] != "sample" else r["mode"] for r in runs if r.get("run_id") == rid]
+        assert run_rec["cold_protocol"] == "jit-warm" and "jit_warmup" in seq and seq.index("jit_warmup") < seq.index("cold"), seq
+        assert next(r for r in runs if r["type"] == "jit_warmup" and r["run_id"] == rid)["ops"] == len(small["ops"]) + 1
+    colds = [r for r in runs if r.get("mode") == "cold"]
+    assert colds and all(r["clear"]["caches"]["empty"] and r["checks"]["search_caches_empty"]
+                         and r["clear"]["caches"]["fielddata_bytes"] == 0 for r in colds), "search caches not empty"
+    assert max(m.fielddata_at_clear) > 0, "the warm-up and the aggregations built fielddata that the clear dropped"
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run" and r.get("available")), "readahead not verified"
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run_end"), "readahead not re-checked at run end"
     # set before the index is opened: each file keeps the readahead it was opened with (selftest_order.py: the order)
@@ -561,6 +589,28 @@ def main():
     p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
                         "--modes", "cold", "--out", s3, "--strict"], capture_output=True, text=True)
     assert p.returncode != 0 and "cold verification failed" in p.stderr, (p.stdout[-2000:], p.stderr[-2000:])
+    m.broken_clear = False
+    # fielddata / global ordinals that survive the cache clear must be caught too
+    m.broken_cache_clear = True
+    s6 = os.path.join(tmp, "session-fielddata")
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
+                        "--modes", "cold", "--out", s6, "--strict"], capture_output=True, text=True)
+    assert p.returncode != 0 and "search_caches_empty': False" in p.stderr, (p.stdout[-2000:], p.stderr[-2000:])
+    m.broken_cache_clear = False
+    # the old protocol stays selectable and is recorded
+    s7 = os.path.join(tmp, "session-jitcold")
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1", "--modes", "cold",
+         "--no-jit-warmup", "--no-results", "--out", s7, "--strict"])
+    r7 = [json.loads(l) for l in open(os.path.join(s7, "samples.jsonl"))]
+    assert not any(r["type"] == "jit_warmup" for r in r7) and [r for r in r7 if r["type"] == "run"][0]["cold_protocol"] == "jit-cold"
+    # analyze.py never mixes cold protocols in one analysis; --cold-skip-iters leaves out the first cold iterations
+    p = subprocess.run([PY, os.path.join(here, "analyze.py"), s2, s7, "--base", "S1-EFS", "--boot", "200", "--ni-boot", "100",
+                        "--out", os.path.join(tmp, "analysis-mixed")], capture_output=True, text=True)
+    assert p.returncode != 0 and "different cold protocols" in p.stderr, p.stderr[-800:]
+    run([PY, os.path.join(here, "analyze.py"), s7, "--base", "S1-EFS", "--cold-skip-iters", "1", "--boot", "200",
+         "--ni-boot", "100", "--out", os.path.join(tmp, "analysis-skip")])
+    a7 = json.load(open(os.path.join(tmp, "analysis-skip", "analysis.json")))
+    assert a7["cold_protocol"] == "jit-cold/skip-iter1" and a7["cold_skipped"]["S1-EFS"] == len(small["ops"]) + 1, a7["cold_skipped"]
     print(report[-3000:])
     print(f"\nSELFTEST PASS ({tmp})")
     if not a.keep:

@@ -134,8 +134,27 @@ def bh(ps):
 
 
 # ---------------------------------------------------------------- loading
+def cold_protocols(data, skip):
+    """
+    The cold protocol of every run (run record cold_protocol: "jit-warm" = every op ran once, unmeasured, before the
+    cold block; absent = "jit-cold", sessions before that rule), with "/skip-iter<N" when --cold-skip-iters leaves out
+    the first N cold iterations. One analysis (and so every comparison in it) must use one protocol: mixing is refused
+    (common-rules DECISION "cold means data-cold on a JIT-warm JVM").
+    """
+    seen = {}
+    for r in data.runs.values():
+        if r.get("available", True):
+            p = r.get("cold_protocol", "jit-cold") + (f"/skip-iter{skip}" if skip else "")
+            seen.setdefault(p, set()).add(r["label"])
+    if len(seen) > 1:
+        sys.exit(f"sessions with different cold protocols cannot be compared in one analysis: "
+                 f"{ {p: sorted(ls) for p, ls in seen.items()} }")
+    return next(iter(seen), "none")
+
+
+
 class Data:
-    def __init__(self, dirs, cold_metric, warm_metric):
+    def __init__(self, dirs, cold_metric, warm_metric, cold_skip_iters=0):
         self.samples = collections.defaultdict(list)  # (mode, label, run_id, op) -> [sample]
         self.runs = {}
         self.results = collections.defaultdict(dict)  # (label, op) -> {run_id: canonical}
@@ -144,6 +163,7 @@ class Data:
         self.excluded = collections.Counter()
         self.verify = collections.defaultdict(collections.Counter)
         self.batches = []
+        self.skipped = collections.Counter()
         for d in dirs:
             for r in read_jsonl(os.path.join(d, "samples.jsonl")):
                 t = r["type"]
@@ -152,6 +172,9 @@ class Data:
                 elif t == "run":
                     self.runs[r["run_id"]] = r
                 elif t == "sample":
+                    if r["mode"] == "cold" and r.get("iter", 0) < cold_skip_iters:
+                        self.skipped[r["label"]] += 1
+                        continue
                     if r["mode"] in ("cold", "ccold") and r.get("cold_ok") is False:
                         self.excluded[(r["mode"], r["label"])] += 1
                         for k, v in r.get("checks", {}).items():
@@ -580,9 +603,13 @@ def main():
     ap.add_argument("--ni-delta", type=float, default=0.05, help="minimum margin delta")
     ap.add_argument("--ni-boot", type=int, default=5000)
     ap.add_argument("--out", help="directory for report.md and analysis.json (default: first session)")
+    ap.add_argument("--cold-skip-iters", type=int, default=0,
+                    help="leave out cold iterations < N of every op (sessions of the old jit-cold protocol: 1 leaves out "
+                         "iteration 0, which also paid the JIT compilation of its query shape)")
     a = ap.parse_args()
-    data = Data(a.sessions, a.cold_metric, a.warm_metric)
+    data = Data(a.sessions, a.cold_metric, a.warm_metric, a.cold_skip_iters)
     labels = data.labels()
+    protocol = cold_protocols(data, a.cold_skip_iters)
     others = a.compare.split(",") if a.compare else [l for l in labels if l != a.base]
     floors = {}
     if a.aa:
@@ -591,11 +618,14 @@ def main():
     out_dir = a.out or a.sessions[0]
     os.makedirs(out_dir, exist_ok=True)
     md = []
-    res = {"labels": labels, "base": a.base, "floors": floors, "comparisons": {}, "excluded": {str(k): v for k, v in data.excluded.items()}}
+    res = {"labels": labels, "base": a.base, "floors": floors, "comparisons": {}, "excluded": {str(k): v for k, v in data.excluded.items()},
+           "cold_protocol": protocol, "cold_skipped": dict(data.skipped)}
     md.append(f"# coldbench analysis: base {a.base}")
     md.append(f"Sessions: {', '.join(a.sessions)}. Unit = JVM run; per-run median, then median over runs. Cold metric "
               f"{a.cold_metric}, warm metric {a.warm_metric}. Bootstrap {a.boot} resamples of runs; exact Mann-Whitney p "
-              f"on run medians; BH q < {a.alpha} across the ops of each comparison, and |change| above the A/A floor.")
+              f"on run medians; BH q < {a.alpha} across the ops of each comparison, and |change| above the A/A floor. "
+              f"Cold protocol: {protocol}" + (f" ({sum(data.skipped.values())} cold samples of iterations < "
+                                              f"{a.cold_skip_iters} left out)" if a.cold_skip_iters else "") + ".")
     unavailable = [r for r in data.runs.values() if not r.get("available", True)]
     if unavailable:
         md.append("\n## Not available (gaps, not zero effects)")

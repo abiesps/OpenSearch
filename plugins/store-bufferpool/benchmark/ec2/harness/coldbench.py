@@ -493,6 +493,54 @@ def run_metadata(node, cfg, arm_name, arm):
     return md
 
 
+# ---------------------------------------------------------------- search caches
+CACHE_STATS = "/_nodes/_local/stats/indices/fielddata,query_cache,request_cache"
+
+
+def search_cache_bytes(node):
+    """The node's fielddata (including global ordinals, which IndicesFieldDataCache holds), query cache and request
+    cache: bytes and entries. A stat the node does not report is None."""
+    n = next(iter(node.os.request("GET", CACHE_STATS)["nodes"].values())).get("indices", {})
+    fd, qc, rc = n.get("fielddata") or {}, n.get("query_cache") or {}, n.get("request_cache") or {}
+    return {"fielddata_bytes": fd.get("memory_size_in_bytes"), "query_cache_bytes": qc.get("memory_size_in_bytes"),
+            "query_cache_entries": qc.get("cache_size"), "request_cache_bytes": rc.get("memory_size_in_bytes")}
+
+
+def clear_search_caches(node, rounds=3):
+    """
+    POST /_cache/clear (query, fielddata, request) and read the node's cache stats back; repeated (at most `rounds`)
+    until fielddata, query cache and request cache report 0. `empty` is False when a stat stays above 0 or is missing.
+    """
+    out = {"rounds": 0}
+    for i in range(rounds):
+        node.os.request("POST", "/_cache/clear?query=true&fielddata=true&request=true")
+        st = search_cache_bytes(node)
+        out.update(st, rounds=i + 1)
+        if all(v == 0 for v in st.values()):
+            break
+        time.sleep(0.05)
+    out["empty"] = all(out.get(k) == 0 for k in ("fielddata_bytes", "query_cache_bytes", "query_cache_entries",
+                                                  "request_cache_bytes"))
+    return out
+
+
+def jit_warmup(session, run, index, ops, seed):
+    """
+    Cold means data-cold on a JIT-warm JVM (common-rules DECISION "cold means data-cold on a JIT-warm JVM"): before the
+    cold block of a run, every op runs once, unmeasured, so iteration 0 of a cold op no longer pays the JIT compilation
+    of its query shape. The full cold clear before every cold iteration then drops what this warm-up loaded (bufferpool,
+    page cache, fielddata and global ordinals, query and request caches).
+    """
+    t0 = time.monotonic()
+    order = op_order(ops, session.ref, seed)
+    for op in order:
+        execute(session.node.os, index, op)
+    rec = {"ops": len(order), "elapsed_ms": (time.monotonic() - t0) * 1e3, "caches_after": search_cache_bytes(session.node)}
+    session.record(type="jit_warmup", **run, **rec)
+    session.log(f"  JIT warm-up: {len(order)} op executions in {rec['elapsed_ms'] / 1e3:.1f} s (unmeasured)")
+    return rec
+
+
 # ---------------------------------------------------------------- one iteration
 class Iteration:
     def __init__(self, node, arm, uuids, residency_every):
@@ -509,7 +557,7 @@ class Iteration:
         out["idle_wait_ms"], _ = n.wait_prefetch_idle()
         if bp:
             n.os.request("POST", "/_bufferpool/cache/_clear")
-        n.os.request("POST", "/_cache/clear?query=true&fielddata=true&request=true")
+        out["caches"] = clear_search_caches(n)
         checked = False
         if n.agent:
             # until_empty: pageout + sync + drop_caches repeated until mincore finds no resident page of the arm's
@@ -543,6 +591,10 @@ class Iteration:
     def verify(self, pre, io):
         bp = bool(self.arm.get("bufferpool"))
         checks = {}
+        if pre.get("caches") is not None:
+            # fielddata (with global ordinals), query cache and request cache empty after the clear: the JIT warm-up
+            # before the cold block builds them, and a cold iteration must not reuse them
+            checks["search_caches_empty"] = pre["caches"]["empty"]
         if bp:
             checks["bp_empty"] = pre.get("bp_cached_blocks") == 0
         if "resident_bytes" in pre:
@@ -975,11 +1027,14 @@ class Session:
         uuids = indices_ext.uuids(indices[arm["index"]])
         self.read_trace_kind = read_size_trace(a, arm, self.node, self.storage_nfs)
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
+                    cold_protocol="jit-warm" if a.jit_warmup else "jit-cold",
                     readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
                     args=vars(a), op_caps=self.op_caps)
         it = Iteration(self.node, arm, uuids, a.residency_every)
         modes = a.modes.split(",")
+        if a.jit_warmup and any(m in modes for m in ("cold", "ccold")):
+            jit_warmup(self, run, index, self.ops, _seed(a.seed, run_id, "jit"))
         if a.executor == "osb":
             import osb_cold
             osb_ops = [o for o in self.ops if o.get("type", "search") in osb_cold.OSB_TYPE]
@@ -1096,6 +1151,8 @@ def cmd_probe(a):
     if arm.get("bufferpool"):
         print(json.dumps({"io_config": runguards.check_io_config(a.arm, state["bp"], runguards.want_io(a))}))
     op = next(o for o in s.ops if o["name"] == a.op)
+    # data-cold on a JIT-warm JVM, as in a run: the probed op once, unmeasured, before its cold iteration
+    execute(s.node.os, s.cfg["indices"][arm["index"]]["name"], op)
     it = Iteration(s.node, arm, indices_ext.uuids(indices[arm["index"]]), 1)
     run = {"arm": a.arm, "label": a.arm, "round": -1, "run_id": "probe"}
     r = s.cold_sample(it, run, op, s.cfg["indices"][arm["index"]]["name"], 0, mode="probe")
@@ -1141,6 +1198,8 @@ def main():
                         "workload with the coldpath-search runner (see osb_cold.py)")
     r.add_argument("--osb-bin", default="opensearch-benchmark")
     r.add_argument("--no-results", action="store_true", help="skip the result-equality pass")
+    r.add_argument("--no-jit-warmup", dest="jit_warmup", action="store_false",
+                   help="old protocol (jit-cold): no unmeasured execution of every op before the cold block")
     r.add_argument("--strict", action="store_true", help="abort on the first cold-verification failure")
     r.add_argument("--read-ahead-kb", type=int, help="REMOVED: readahead is set per arm (stock arms: as mounted; "
                                                      "bufferpool arms: 0), verified before and after every run")
