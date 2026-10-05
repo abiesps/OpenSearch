@@ -2,9 +2,8 @@
   "corpus": "http_logs",
   "time_field": "@timestamp",
   "keyword_fields": [
-    "geoip.country_name",
-    "geoip.city_name",
-    "request.raw"
+    "request.raw",
+    "clientip"
   ],
   "numeric_fields": [
     "status",
@@ -21,5 +20,5 @@
     "params": {}
   },
   "reference_op": "gen:range_@timestamp_1d",
-  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)"
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules). The mapping has geoip.country_name / geoip.city_name keywords, but no document of the OSB http_logs corpus fills them (cardinality 0 on all 247,249,096 docs), so they cannot drive term or aggregation ops. The keyword role is held by request.raw (keyword, about 60,600 values) and clientip (ip, about 1.15 million values): an ip field keeps sorted-set doc values like a keyword (terms, cardinality, composite, sort), while its term query runs on points."
 }
