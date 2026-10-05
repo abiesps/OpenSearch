@@ -56,6 +56,7 @@ Config (JSON, path in argv[1], example agent.example.json):
   "data_path": optional, "device": optional}} (one arm per binary x storage, e.g. S0-EBS, S0-EFS, POC-EBS, POC-EFS),
   stop_all: [[argv...], ...], command_timeout_s, stop_timeout_s.
 """
+import concurrent.futures
 import ctypes
 import hmac
 import json
@@ -369,38 +370,53 @@ class Agent:
         finally:
             os.close(fd)
 
+    def _resident_or_none(self, p):
+        try:
+            return self._resident(p)
+        except (FileNotFoundError, PermissionError):
+            return None
+        except OSError as e:
+            if e.errno == 2:
+                return None
+            raise
+
     def residency(self, uuids, st):
+        """
+        Page-cache residency of the Lucene files (mincore). The files are checked by a small thread pool
+        (residency_threads, default 16): on NFS every file costs an OPEN/CLOSE round trip, so a serial walk of ~2,000
+        files takes ~5 s per cold iteration on EFS. mincore never faults pages in, so the result does not depend on
+        the order or the concurrency of the checks.
+        """
         t0 = time.monotonic()
         total = resident = files = 0
         by_ext = {}
         top = []
+        paths = []
         for d in self.index_dirs(st["data_path"], uuids):
             for root, _, names in os.walk(d):
                 if os.path.basename(root) not in self.residency_dirs:
                     continue  # Lucene files only (<uuid>/<shard>/index/), not translog or _state
-                for name in names:
-                    p = os.path.join(root, name)
-                    try:
-                        size, res = self._resident(p)
-                    except (FileNotFoundError, PermissionError):
-                        continue
-                    except OSError as e:
-                        if e.errno == 2:
-                            continue
-                        raise
-                    files += 1
-                    total += size
-                    resident += res
-                    ext = name.rsplit(".", 1)[-1] if "." in name else name
-                    e = by_ext.setdefault(ext, {"bytes": 0, "resident_bytes": 0})
-                    e["bytes"] += size
-                    e["resident_bytes"] += res
-                    if res:
-                        top.append((res, p))
+                paths += [(name, os.path.join(root, name)) for name in names]
+        threads = max(1, int(self.cfg.get("residency_threads", 16)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as ex:
+            results = list(ex.map(lambda np: self._resident_or_none(np[1]), paths))
+        for (name, p), r in zip(paths, results):
+            if r is None:
+                continue
+            size, res = r
+            files += 1
+            total += size
+            resident += res
+            ext = name.rsplit(".", 1)[-1] if "." in name else name
+            e = by_ext.setdefault(ext, {"bytes": 0, "resident_bytes": 0})
+            e["bytes"] += size
+            e["resident_bytes"] += res
+            if res:
+                top.append((res, p))
         top.sort(reverse=True)
         return {"files": files, "bytes": total, "resident_bytes": resident, "by_ext": by_ext,
                 "top_resident": [{"path": p, "resident_bytes": r} for r, p in top[:10]],
-                "elapsed_ms": (time.monotonic() - t0) * 1e3}
+                "elapsed_ms": (time.monotonic() - t0) * 1e3, "threads": threads}
 
     def du(self, uuids, st):
         """On-disk size of the index directories (apparent bytes and allocated bytes), Lucene files and all files."""
