@@ -56,10 +56,12 @@ class JsonClient:
         for attempt in (0, 1):
             if self.conn is None:
                 self._connect()
-            if timeout is not None:
-                self.conn.timeout = timeout
-                if self.conn.sock is not None:
-                    self.conn.sock.settimeout(timeout)
+            # a per-call timeout applies to this call only; the next call without one gets the client's timeout back
+            # (a sticky 5 s timeout from a health probe made a 7 s index close fail with TimeoutError)
+            t = self.timeout if timeout is None else timeout
+            self.conn.timeout = t
+            if self.conn.sock is not None:
+                self.conn.sock.settimeout(t)
             try:
                 t0 = time.perf_counter()
                 self.conn.request(method, path, body=data, headers=headers)
