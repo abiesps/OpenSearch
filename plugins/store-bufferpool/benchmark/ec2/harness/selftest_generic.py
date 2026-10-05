@@ -730,13 +730,16 @@ def part_f(tmp, fork, fork_commit):
           "(f) driver: cold JVM count read; cold-luceneutil drops through the agent")
     # luceneutil's comparison reads the JVM runs from the manifest (a driver that kept them only in memory lost them)
     txt = open(d2).read()
-    check('results = {l: [m["log"] for m in runs if m["label"] == l] for l in labels}' in txt and "expected {jvm_count} per label" in txt,
+    check('results = {l: [m["log"] for m in runs if m["label"] == l] for l in labels}' in txt and "expected {jvm_count} or more per label" in txt,
           "(f) driver: the result comparison uses every manifest run")
     d3, s3 = run_luceneutil.plan(cfg, table, "cold-strict", "wikimedium.10M.nostopwords.tasks", "EBS", ["L0:EBS@a", "L1:EFS@a"],
                                  os.path.join(tmp, "lu-cont"), iter_offset=8)
     compile(open(d3).read(), d3, "exec")
     check(s3["iter_offset"] == 8 and "range(iter_offset, iter_offset + comp.jvmCount)" in open(d3).read(),
           "(f) driver: a continuation session continues the JVM iteration sequence")
+    check("def run_one(label, it, seed, remeasure=False):" in txt and "efs_invalid_samples" in txt and "stopping" not in
+          txt.split("def run_one")[1].split("efs_invalid = 0")[1].split("if strict:")[0],
+          "(f) driver: EFS samples off the connection target are re-measured at the end, not a stop")
     rd = run_luceneutil.report_driver(os.path.join(tmp, "lu-mixed"))
     compile(open(rd).read(), rd, "exec")
     check("results = {l: [m" in open(rd).read(), "(f) report driver for a finished session compiles")

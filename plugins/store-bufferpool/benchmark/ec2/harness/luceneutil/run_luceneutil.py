@@ -200,86 +200,116 @@ manifest = open(os.path.join(OUT, "manifest.jsonl"), "w")
 iter_offset = S.get("iter_offset", 0)
 for _ in range(iter_offset):
     rand.randint(-10000000, 1000000)
+def efs_ok(a, b, target):
+    """EFS connection level at the start and the end on one efs-proxy process: target 1 = exactly 1, target 5 = 5 or
+    more (a scaled-up mount can show 6 sockets while the previous proxy incarnation closes); coldbench's rule."""
+    a, b = a or {}, b or {}
+    lvl = lambda n: n is not None and (n == 1 if target == 1 else n >= target)  # noqa: E731
+    return lvl(a.get("count")) and lvl(b.get("count")) and a.get("proxy_pid") == b.get("proxy_pid")
+
+
+def run_one(label, it, seed, remeasure=False):
+    c = comps[label]
+    st = c.coldpath["storage_spec"]
+    # the index copy of this arm's storage: luceneutil resolves every index path through constants.INDEX_DIR_BASE
+    constants.INDEX_DIR_BASE = st["index_dir_base"]
+    base_cmd = c.coldpath["java_command"]
+    cold_log = None
+    jvm_drop = None
+    if strict:
+        cold_log = os.path.join(OUT, f"{S['id']}.{label}.{it}.cold.jsonl")
+        props = {"coldpath.cold.agent": st["agent_url"], "coldpath.cold.tokenFile": st["agent_token_file"],
+                 "coldpath.cold.arm": st["agent_arm"], "coldpath.cold.uuids": c.index.getName(),
+                 "coldpath.cold.residencyTolerance": str(st.get("residency_tolerance", 0)),
+                 "coldpath.cold.dropRounds": str(st.get("drop_rounds", 5)),
+                 "coldpath.cold.log": cold_log}
+        c.javaCommand = base_cmd + "".join(f" -D{k}={v}" for k, v in props.items())
+    else:
+        c.javaCommand = base_cmd
+    # EFS backend connections (common-rules "Amazon EFS connection count is a measured variable"): before every JVM
+    # run on EFS the agent pre-conditions efs-proxy to the target count (O_DIRECT reads of a scratch file on the
+    # mount: no page cache, no index file); the count is recorded at the start and the end of the run (and of every
+    # strict-cold task by the agent snapshots)
+    efs_target = st.get("efs_connections_target")
+    efs_pre = None
+    if efs_target:
+        efs_pre = agent(st, "POST", f"/efs/precondition?arm={st['agent_arm']}&target={efs_target}&timeout_s=360")
+        if not efs_pre.get("ok"):
+            raise SystemExit(f"{label} iteration {it}: EFS mount did not reach {efs_target} backend connections: {efs_pre}")
+    if cold_luceneutil:
+        # luceneutil cold=True: sync + drop_caches once before the JVM (no JVM runs, so nothing is mapped)
+        # repeated until mincore finds no resident page of the index files (agent until_empty); tolerance 0 by default
+        drop = agent(st, "POST", f"/cache/drop?pageout=0&until_empty={st.get('drop_rounds', 5)}"
+                                 f"&uuids={c.index.getName()}&arm={st['agent_arm']}")
+        res = agent(st, "GET", f"/cache/residency?arm={st['agent_arm']}&uuids={c.index.getName()}")
+        ok = res["resident_bytes"] <= st.get("residency_tolerance", 0) and res["files"] > 0
+        jvm_drop = {"cold_ok": ok, "resident_bytes": res["resident_bytes"], "files": res["files"],
+                    "bytes": res["bytes"], "drop_ms": drop.get("drop_ms"), "sync_ms": drop.get("sync_ms"),
+                    "drop_rounds": drop.get("rounds")}
+        if not ok:
+            raise SystemExit(f"{label} iteration {it}: index files still resident after the drop: {jvm_drop}")
+    snap_pre = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
+    t0 = time.time()
+    log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
+    wall = time.time() - t0
+    snap_post = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
+    # an efs-proxy restart drops the mount to 1 connection until 300 MiB/s returns: such samples are not a reason to
+    # stop; they are excluded from the reference verdict by the analysis and the label gets a re-measure JVM run at the end
+    efs_invalid = 0
+    if efs_target:
+        if strict:
+            for x in [json.loads(y) for y in open(cold_log)]:
+                if not efs_ok((x.get("pre") or {}).get("efs_connections"), (x.get("post") or {}).get("efs_connections"), efs_target):
+                    efs_invalid += 1
+        elif not efs_ok(snap_pre.get("efs_connections"), snap_post.get("efs_connections"), efs_target):
+            efs_invalid = 1
+    if strict:
+        # every task must have started with the index files out of the page cache (mincore residency after the
+        # agent's pageout + drop); a JVM run with a task that was not cold invalidates the session's protocol
+        recs = [json.loads(x) for x in open(cold_log)]
+        bad = [x for x in recs if not x.get("cold_ok")]
+        if not recs or bad:
+            raise SystemExit(f"{label} iteration {it}: {len(bad)} of {len(recs)} tasks were not cold (max resident "
+                             f"{max((x.get('resident_bytes', -1) for x in recs), default=None)} bytes): stopping")
+    manifest.write(json.dumps({"iter": it, "label": label, "arm": c.coldpath["arm"], "log": log,
+                               "stdout": log + ".stdout", "cold_log": cold_log, "jvm_drop": jvm_drop, "seed": seed,
+                               "static_seed": static_seed, "mode": S["mode"], "storage": c.coldpath["storage"],
+                               "tasks": S["tasks"], "index": c.index.getName(), "java_command": c.javaCommand,
+                               "switches": c.coldpath["switches"], "wall_s": wall, "efs_connections_target": efs_target,
+                               "efs_precondition": efs_pre, "jvm_snapshots": {"pre": snap_pre, "post": snap_post},
+                               "efs_invalid_samples": efs_invalid, "remeasure": remeasure}) + "\n")
+    manifest.flush()
+    return efs_invalid
+
+
+remeasure_due = {l: 0 for l in labels}
 for it in range(iter_offset, iter_offset + comp.jvmCount):
     seed = rand.randint(-10000000, 1000000)
     order = labels[it % len(labels):] + labels[:it % len(labels)]
     for label in order:
-        c = comps[label]
-        st = c.coldpath["storage_spec"]
-        # the index copy of this arm's storage: luceneutil resolves every index path through constants.INDEX_DIR_BASE
-        constants.INDEX_DIR_BASE = st["index_dir_base"]
-        base_cmd = c.coldpath["java_command"]
-        cold_log = None
-        jvm_drop = None
-        if strict:
-            cold_log = os.path.join(OUT, f"{S['id']}.{label}.{it}.cold.jsonl")
-            props = {"coldpath.cold.agent": st["agent_url"], "coldpath.cold.tokenFile": st["agent_token_file"],
-                     "coldpath.cold.arm": st["agent_arm"], "coldpath.cold.uuids": c.index.getName(),
-                     "coldpath.cold.residencyTolerance": str(st.get("residency_tolerance", 0)),
-                     "coldpath.cold.dropRounds": str(st.get("drop_rounds", 5)),
-                     "coldpath.cold.log": cold_log}
-            c.javaCommand = base_cmd + "".join(f" -D{k}={v}" for k, v in props.items())
-        else:
-            c.javaCommand = base_cmd
-        # EFS backend connections (common-rules "Amazon EFS connection count is a measured variable"): before every JVM
-        # run on EFS the agent pre-conditions efs-proxy to the target count (O_DIRECT reads of a scratch file on the
-        # mount: no page cache, no index file); the count is recorded at the start and the end of the run (and of every
-        # strict-cold task by the agent snapshots)
-        efs_target = st.get("efs_connections_target")
-        efs_pre = None
-        if efs_target:
-            efs_pre = agent(st, "POST", f"/efs/precondition?arm={st['agent_arm']}&target={efs_target}&timeout_s=360")
-            if not efs_pre.get("ok"):
-                raise SystemExit(f"{label} iteration {it}: EFS mount did not reach {efs_target} backend connections: {efs_pre}")
-        if cold_luceneutil:
-            # luceneutil cold=True: sync + drop_caches once before the JVM (no JVM runs, so nothing is mapped)
-            # repeated until mincore finds no resident page of the index files (agent until_empty); tolerance 0 by default
-            drop = agent(st, "POST", f"/cache/drop?pageout=0&until_empty={st.get('drop_rounds', 5)}"
-                                     f"&uuids={c.index.getName()}&arm={st['agent_arm']}")
-            res = agent(st, "GET", f"/cache/residency?arm={st['agent_arm']}&uuids={c.index.getName()}")
-            ok = res["resident_bytes"] <= st.get("residency_tolerance", 0) and res["files"] > 0
-            jvm_drop = {"cold_ok": ok, "resident_bytes": res["resident_bytes"], "files": res["files"],
-                        "bytes": res["bytes"], "drop_ms": drop.get("drop_ms"), "sync_ms": drop.get("sync_ms"),
-                        "drop_rounds": drop.get("rounds")}
-            if not ok:
-                raise SystemExit(f"{label} iteration {it}: index files still resident after the drop: {jvm_drop}")
-        snap_pre = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
-        t0 = time.time()
-        log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
-        wall = time.time() - t0
-        snap_post = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
-        if efs_target:
-            ea, eb = snap_pre.get("efs_connections") or {}, snap_post.get("efs_connections") or {}
-            if not (ea.get("count") == eb.get("count") == efs_target and ea.get("proxy_pid") == eb.get("proxy_pid")):
-                raise SystemExit(f"{label} iteration {it}: EFS backend connections {ea} -> {eb}, not {efs_target} on one "
-                                 f"efs-proxy process: stopping")
-        if strict and efs_target:
-            for x in [json.loads(y) for y in open(cold_log)]:
-                ea, eb = (x.get("pre") or {}).get("efs_connections") or {}, (x.get("post") or {}).get("efs_connections") or {}
-                if not (ea.get("count") == eb.get("count") == efs_target and ea.get("proxy_pid") == eb.get("proxy_pid")):
-                    raise SystemExit(f"{label} iteration {it}: task {x.get('n')} EFS backend connections {ea} -> {eb}: stopping")
-        if strict:
-            # every task must have started with the index files out of the page cache (mincore residency after the
-            # agent's pageout + drop); a JVM run with a task that was not cold invalidates the session's protocol
-            recs = [json.loads(x) for x in open(cold_log)]
-            bad = [x for x in recs if not x.get("cold_ok")]
-            if not recs or bad:
-                raise SystemExit(f"{label} iteration {it}: {len(bad)} of {len(recs)} tasks were not cold (max resident "
-                                 f"{max((x.get('resident_bytes', -1) for x in recs), default=None)} bytes): stopping")
-        manifest.write(json.dumps({"iter": it, "label": label, "arm": c.coldpath["arm"], "log": log,
-                                   "stdout": log + ".stdout", "cold_log": cold_log, "jvm_drop": jvm_drop, "seed": seed,
-                                   "static_seed": static_seed, "mode": S["mode"], "storage": c.coldpath["storage"],
-                                   "tasks": S["tasks"], "index": c.index.getName(), "java_command": c.javaCommand,
-                                   "switches": c.coldpath["switches"], "wall_s": wall, "efs_connections_target": efs_target,
-                                   "efs_precondition": efs_pre, "jvm_snapshots": {"pre": snap_pre, "post": snap_post}}) + "\n")
-        manifest.flush()
+        if run_one(label, it, seed):
+            remeasure_due[label] += 1
+# re-measure: one more JVM run for every run that had EFS samples outside the connection target (excluded from the
+# verdict), until each label has jvm_count clean runs or the limit of jvm_count extra runs per label is reached
+it = iter_offset + comp.jvmCount
+extra = {l: 0 for l in labels}
+while any(remeasure_due[l] > 0 and extra[l] < comp.jvmCount for l in labels):
+    seed = rand.randint(-10000000, 1000000)
+    for label in labels:
+        if remeasure_due[label] > 0 and extra[label] < comp.jvmCount:
+            extra[label] += 1
+            remeasure_due[label] -= 1
+            if run_one(label, it, seed, remeasure=True):
+                remeasure_due[label] += 1
+    it += 1
+
 @REPORT_TAIL@'''
 
 REPORT_TAIL = r'''manifest.close()
 runs = [json.loads(x) for x in open(os.path.join(OUT, "manifest.jsonl"))]
 results = {l: [m["log"] for m in runs if m["label"] == l] for l in labels}
-if any(len(v) != jvm_count for v in results.values()):
-    raise SystemExit(f"manifest has {({l: len(v) for l, v in results.items()})} JVM runs, expected {jvm_count} per label")
+if any(len(v) < jvm_count for v in results.values()):
+    raise SystemExit(f"manifest has {({l: len(v) for l, v in results.items()})} JVM runs, expected {jvm_count} or more per label")
 base = labels[0]
 reports, failed = {}, []
 for label in labels[1:]:
