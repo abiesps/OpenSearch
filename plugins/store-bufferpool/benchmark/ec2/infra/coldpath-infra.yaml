@@ -1,0 +1,798 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The OpenSearch Contributors require contributions made to
+# this file be licensed under the Apache-2.0 license or a
+# compatible open source license.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Shared infrastructure for the store-bufferpool cold-path EC2 benchmarks
+  (project=coldpath-poc). Private-only hosts reached through SSM, one
+  encrypted S3 bucket, an encrypted EFS file system, instance roles,
+  launch templates (IMDSv2 required, encrypted EBS, no public IP) and one
+  cluster placement group per benchmark branch. No inbound rule from the
+  internet anywhere. Every stateful resource is retained on stack delete.
+
+Parameters:
+  PrimaryAzId:
+    Type: String
+    Default: usw2-az2
+    Description: AZ ID for all hosts (us-west-2a in account 823904838333).
+  FallbackAzId:
+    Type: String
+    Default: usw2-az1
+    Description: AZ ID used only on InsufficientInstanceCapacity (us-west-2b).
+  VpcCidr:
+    Type: String
+    Default: 10.42.0.0/16
+  BucketName:
+    Type: String
+    Default: coldpath-poc-823904838333-usw2
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: >-
+      Amazon Linux 2023 x86_64. Resolved once at stack create, so every
+      launch template (and every host) uses the same AMI.
+  DataNodeInstanceType:
+    Type: String
+    Default: r7i.8xlarge
+  LoadGenInstanceType:
+    Type: String
+    Default: c7i.4xlarge
+  BuilderInstanceType:
+    Type: String
+    Default: c7i.8xlarge
+
+Resources:
+  # ---------------------------------------------------------------- network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: coldpath-poc-vpc }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZoneId: !Ref PrimaryAzId
+      CidrBlock: 10.42.0.0/20
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: coldpath-poc-private-a }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZoneId: !Ref FallbackAzId
+      CidrBlock: 10.42.16.0/20
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: coldpath-poc-private-b-fallback }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  # Holds only the NAT gateway. No host is ever launched here.
+  PublicSubnetNat:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZoneId: !Ref PrimaryAzId
+      CidrBlock: 10.42.255.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: coldpath-poc-public-nat-only }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Name, Value: coldpath-poc-igw }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: coldpath-poc-public-rt }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetNatRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetNat
+      RouteTableId: !Ref PublicRouteTable
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - { Key: Name, Value: coldpath-poc-nat-eip }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  # Outbound only: corpora downloads (OSB), Maven/Gradle, GitHub, dnf.
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnetNat
+      Tags:
+        - { Key: Name, Value: coldpath-poc-nat }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: coldpath-poc-private-rt }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Free; keeps S3 traffic (artifacts, snapshots, results) off the NAT.
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+      Tags:
+        - { Key: Name, Value: coldpath-poc-s3-gw }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  # ---------------------------------------------------------- security groups
+  # No security group has an inbound rule from outside the VPC.
+  LoadGenSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: coldpath-poc-loadgen
+      GroupDescription: Load generators. No inbound rules.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: 0.0.0.0/0, Description: outbound via NAT and endpoints }
+      Tags:
+        - { Key: Name, Value: coldpath-poc-loadgen }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  BuilderSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: coldpath-poc-builder
+      GroupDescription: Builder host. No inbound rules.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: 0.0.0.0/0, Description: outbound via NAT and endpoints }
+      Tags:
+        - { Key: Name, Value: coldpath-poc-builder }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  DataNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: coldpath-poc-datanode
+      GroupDescription: >-
+        Single-node OpenSearch data nodes. 9200 (REST) and 9600
+        (cache-clear agent) from load generators only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 9200
+          ToPort: 9200
+          SourceSecurityGroupId: !Ref LoadGenSecurityGroup
+          Description: OpenSearch REST from load generators
+        - IpProtocol: tcp
+          FromPort: 9600
+          ToPort: 9600
+          SourceSecurityGroupId: !Ref LoadGenSecurityGroup
+          Description: cache-clear agent from load generators
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: 0.0.0.0/0, Description: outbound via NAT and endpoints }
+      Tags:
+        - { Key: Name, Value: coldpath-poc-datanode }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: coldpath-poc-endpoints
+      GroupDescription: SSM interface endpoints. 443 from the host security groups.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref DataNodeSecurityGroup, Description: data nodes }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref LoadGenSecurityGroup, Description: load generators }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, SourceSecurityGroupId: !Ref BuilderSecurityGroup, Description: builder }
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: !Ref VpcCidr, Description: within the VPC }
+      Tags:
+        - { Key: Name, Value: coldpath-poc-endpoints }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: coldpath-poc-efs
+      GroupDescription: EFS mount targets. NFS 2049 from data nodes only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref DataNodeSecurityGroup
+          Description: NFS (TLS via efs-utils stunnel) from data nodes
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: !Ref VpcCidr, Description: within the VPC }
+      Tags:
+        - { Key: Name, Value: coldpath-poc-efs }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  # SSM works without the NAT. One AZ (all hosts run in PrimaryAzId).
+  SsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      Tags:
+        - { Key: Name, Value: coldpath-poc-ssm }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  SsmMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      Tags:
+        - { Key: Name, Value: coldpath-poc-ssmmessages }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  Ec2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      Tags:
+        - { Key: Name, Value: coldpath-poc-ec2messages }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  # --------------------------------------------------------------------- S3
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub "${ArtifactBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # -------------------------------------------------------------------- EFS
+  # AOSS-like shared storage for the storage + EFS branch. Empty costs $0.
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      FileSystemTags:
+        - { Key: Name, Value: coldpath-poc-efs }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroups: [!Ref EfsSecurityGroup]
+
+  # -------------------------------------------------------------------- IAM
+  # One role per host class. Each role: SSM managed-instance core plus the
+  # one bucket. Only data nodes may mount EFS.
+  BucketAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: coldpath-poc-bucket-rw
+      Description: Read/write to the coldpath-poc bucket only.
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListBucket
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:ListBucketVersions
+              - s3:ListBucketMultipartUploads
+              - s3:GetBucketLocation
+            Resource: !GetAtt ArtifactBucket.Arn
+          - Sid: ObjectReadWrite
+            Effect: Allow
+            # DeleteObject is needed by repository-s3 (snapshot finalization
+            # removes stale index-N blobs). Versioning keeps prior versions.
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+            Resource: !Sub "${ArtifactBucket.Arn}/*"
+
+  DataNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: coldpath-poc-datanode
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Ref BucketAccessPolicy
+      Policies:
+        - PolicyName: efs-client
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: !GetAtt EfsFileSystem.Arn
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:DescribeMountTargets
+                Resource: !GetAtt EfsFileSystem.Arn
+      Tags:
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  LoadGenRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: coldpath-poc-loadgen
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Ref BucketAccessPolicy
+      Tags:
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  BuilderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: coldpath-poc-builder
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Ref BucketAccessPolicy
+      Tags:
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  DataNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: coldpath-poc-datanode
+      Roles: [!Ref DataNodeRole]
+
+  LoadGenInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: coldpath-poc-loadgen
+      Roles: [!Ref LoadGenRole]
+
+  BuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: coldpath-poc-builder
+      Roles: [!Ref BuilderRole]
+
+  # ------------------------------------------------------- placement groups
+  # One cluster placement group per branch pair (data node + load generator).
+  PgBig5A:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-big5-a }
+        - { Key: branch, Value: big5-a }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+  PgBig5B:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-big5-b }
+        - { Key: branch, Value: big5-b }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+  PgBig5C:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-big5-c }
+        - { Key: branch, Value: big5-c }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+  PgNycTaxis:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-nyc-taxis }
+        - { Key: branch, Value: nyc_taxis }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+  PgHttpLogs:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-http-logs }
+        - { Key: branch, Value: http_logs }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+  PgPmc:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-pmc }
+        - { Key: branch, Value: pmc }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+  PgStorage:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-storage-efs }
+        - { Key: branch, Value: storage-efs }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+  PgBig51000:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+      Tags:
+        - { Key: Name, Value: coldpath-poc-big5-1000gb }
+        - { Key: branch, Value: big5-1000gb }
+        - { Key: project, Value: coldpath-poc }
+        - { Key: owner, Value: spsinght }
+
+  # ------------------------------------------------------- launch templates
+  # Every host is launched from one of these, so IMDSv2, encryption, no
+  # public IP, the instance profile, the AMI and the tags are fixed. Pass
+  # --placement GroupName=<branch pg> and, for big5-1000gb, a 3 TiB
+  # /dev/sdf override at launch.
+  DataNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: coldpath-poc-datanode
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - { Key: project, Value: coldpath-poc }
+            - { Key: owner, Value: spsinght }
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref DataNodeInstanceType
+        EbsOptimized: true
+        IamInstanceProfile: { Arn: !GetAtt DataNodeInstanceProfile.Arn }
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+          InstanceMetadataTags: enabled
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            SubnetId: !Ref PrivateSubnetA
+            Groups: [!Ref DataNodeSecurityGroup]
+            DeleteOnTermination: true
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeType: gp3, VolumeSize: 50, Encrypted: true, DeleteOnTermination: true }
+          # Data volume: gp3 maximum, fixed and recorded (EXEC-PLAN Storage).
+          - DeviceName: /dev/sdf
+            Ebs: { VolumeType: gp3, VolumeSize: 1024, Iops: 16000, Throughput: 1000, Encrypted: true, DeleteOnTermination: true }
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: role, Value: datanode }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+          - ResourceType: volume
+            Tags:
+              - { Key: role, Value: datanode }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+          - ResourceType: network-interface
+            Tags:
+              - { Key: role, Value: datanode }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+
+  LoadGenLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: coldpath-poc-loadgen
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - { Key: project, Value: coldpath-poc }
+            - { Key: owner, Value: spsinght }
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref LoadGenInstanceType
+        EbsOptimized: true
+        IamInstanceProfile: { Arn: !GetAtt LoadGenInstanceProfile.Arn }
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+          InstanceMetadataTags: enabled
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            SubnetId: !Ref PrivateSubnetA
+            Groups: [!Ref LoadGenSecurityGroup]
+            DeleteOnTermination: true
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeType: gp3, VolumeSize: 50, Encrypted: true, DeleteOnTermination: true }
+          # Corpora volume, default gp3 performance.
+          - DeviceName: /dev/sdf
+            Ebs: { VolumeType: gp3, VolumeSize: 500, Encrypted: true, DeleteOnTermination: true }
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: role, Value: loadgen }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+          - ResourceType: volume
+            Tags:
+              - { Key: role, Value: loadgen }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+          - ResourceType: network-interface
+            Tags:
+              - { Key: role, Value: loadgen }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+
+  BuilderLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: coldpath-poc-builder
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - { Key: project, Value: coldpath-poc }
+            - { Key: owner, Value: spsinght }
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref BuilderInstanceType
+        EbsOptimized: true
+        IamInstanceProfile: { Arn: !GetAtt BuilderInstanceProfile.Arn }
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+          InstanceMetadataTags: enabled
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            SubnetId: !Ref PrivateSubnetA
+            Groups: [!Ref BuilderSecurityGroup]
+            DeleteOnTermination: true
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeType: gp3, VolumeSize: 200, Encrypted: true, DeleteOnTermination: true }
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: role, Value: builder }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+          - ResourceType: volume
+            Tags:
+              - { Key: role, Value: builder }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+          - ResourceType: network-interface
+            Tags:
+              - { Key: role, Value: builder }
+              - { Key: project, Value: coldpath-poc }
+              - { Key: owner, Value: spsinght }
+
+Outputs:
+  Region: { Value: !Ref AWS::Region }
+  AccountId: { Value: !Ref AWS::AccountId }
+  VpcId: { Value: !Ref Vpc }
+  VpcCidr: { Value: !Ref VpcCidr }
+  PrivateSubnetAId: { Value: !Ref PrivateSubnetA }
+  PrivateSubnetAAz: { Value: !GetAtt PrivateSubnetA.AvailabilityZone }
+  PrivateSubnetBId: { Value: !Ref PrivateSubnetB }
+  PrivateSubnetBAz: { Value: !GetAtt PrivateSubnetB.AvailabilityZone }
+  PublicSubnetNatId: { Value: !Ref PublicSubnetNat }
+  NatGatewayId: { Value: !Ref NatGateway }
+  NatEipAllocationId: { Value: !GetAtt NatEip.AllocationId }
+  InternetGatewayId: { Value: !Ref InternetGateway }
+  PrivateRouteTableId: { Value: !Ref PrivateRouteTable }
+  S3GatewayEndpointId: { Value: !Ref S3GatewayEndpoint }
+  SsmEndpointId: { Value: !Ref SsmEndpoint }
+  SsmMessagesEndpointId: { Value: !Ref SsmMessagesEndpoint }
+  Ec2MessagesEndpointId: { Value: !Ref Ec2MessagesEndpoint }
+  BucketName: { Value: !Ref ArtifactBucket }
+  BucketArn: { Value: !GetAtt ArtifactBucket.Arn }
+  EfsFileSystemId: { Value: !Ref EfsFileSystem }
+  EfsMountTargetAId: { Value: !Ref EfsMountTargetA }
+  DataNodeSecurityGroupId: { Value: !Ref DataNodeSecurityGroup }
+  LoadGenSecurityGroupId: { Value: !Ref LoadGenSecurityGroup }
+  BuilderSecurityGroupId: { Value: !Ref BuilderSecurityGroup }
+  EndpointSecurityGroupId: { Value: !Ref EndpointSecurityGroup }
+  EfsSecurityGroupId: { Value: !Ref EfsSecurityGroup }
+  BucketAccessPolicyArn: { Value: !Ref BucketAccessPolicy }
+  DataNodeRoleArn: { Value: !GetAtt DataNodeRole.Arn }
+  LoadGenRoleArn: { Value: !GetAtt LoadGenRole.Arn }
+  BuilderRoleArn: { Value: !GetAtt BuilderRole.Arn }
+  DataNodeInstanceProfileName: { Value: !Ref DataNodeInstanceProfile }
+  DataNodeInstanceProfileArn: { Value: !GetAtt DataNodeInstanceProfile.Arn }
+  LoadGenInstanceProfileName: { Value: !Ref LoadGenInstanceProfile }
+  LoadGenInstanceProfileArn: { Value: !GetAtt LoadGenInstanceProfile.Arn }
+  BuilderInstanceProfileName: { Value: !Ref BuilderInstanceProfile }
+  BuilderInstanceProfileArn: { Value: !GetAtt BuilderInstanceProfile.Arn }
+  PlacementGroupBig5A: { Value: !Ref PgBig5A }
+  PlacementGroupBig5B: { Value: !Ref PgBig5B }
+  PlacementGroupBig5C: { Value: !Ref PgBig5C }
+  PlacementGroupNycTaxis: { Value: !Ref PgNycTaxis }
+  PlacementGroupHttpLogs: { Value: !Ref PgHttpLogs }
+  PlacementGroupPmc: { Value: !Ref PgPmc }
+  PlacementGroupStorageEfs: { Value: !Ref PgStorage }
+  PlacementGroupBig51000Gb: { Value: !Ref PgBig51000 }
+  DataNodeLaunchTemplateId: { Value: !Ref DataNodeLaunchTemplate }
+  DataNodeLaunchTemplateVersion: { Value: !GetAtt DataNodeLaunchTemplate.LatestVersionNumber }
+  LoadGenLaunchTemplateId: { Value: !Ref LoadGenLaunchTemplate }
+  LoadGenLaunchTemplateVersion: { Value: !GetAtt LoadGenLaunchTemplate.LatestVersionNumber }
+  BuilderLaunchTemplateId: { Value: !Ref BuilderLaunchTemplate }
+  BuilderLaunchTemplateVersion: { Value: !GetAtt BuilderLaunchTemplate.LatestVersionNumber }
+  AmiId: { Value: !Ref AmiId }
