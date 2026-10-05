@@ -93,12 +93,26 @@ class _Rekeying:
         return self.c.raw(*a, **kw)
 
 
-def run(ops, url, index, key_field):
+def oracle_op(op):
+    """
+    Oracle form of an op (verification only, never measured): search_type=dfs_query_then_fetch makes scores use
+    index-wide term statistics, so BM25 scores do not depend on which shard a document was routed to (the two indices
+    route auto-generated ids differently); profile=true runs every query through the profiler's plain scorer path,
+    which g-nested-percolator found to return the true top hits of nested max sorts where the default path of stock
+    OpenSearch 3.10 / Lucene 10.5.1 does not (phaseA.md, finding "nested sort").
+    """
+    o = dict(op)
+    o["params"] = {**op.get("params", {}), "search_type": "dfs_query_then_fetch"}
+    o["body"] = {**o["body"], "profile": True}
+    return o
+
+
+def run(ops, url, index, key_field, oracle=False):
     client = _Rekeying(JsonClient(url, timeout=3600.0), key_field)
     out = {}
     for op in ops:
-        o = dict(op)
-        o["body"] = with_key_field(op["body"], key_field)
+        o = oracle_op(op) if oracle else dict(op)
+        o["body"] = with_key_field(o["body"], key_field)
         try:
             r = coldbench.execute(client, index, o)
             out[op["name"]] = {"canonical": r["canonical"], "took_ms": r["took_ms"]}
@@ -107,14 +121,28 @@ def run(ops, url, index, key_field):
     return out, client.missing
 
 
-def compare(ops, ra, rb):
+def _drop_keys(v, keys):
+    if isinstance(v, dict):
+        return {k: _drop_keys(x, keys) for k, x in v.items() if k not in keys}
+    if isinstance(v, list):
+        return [_drop_keys(x, keys) for x in v]
+    return v
+
+
+def compare(ops, ra, rb, ignore_agg_keys=()):
+    """ignore_agg_keys: aggregation keys left out of the comparison (recorded), e.g. doc_count_error_upper_bound, an
+    error bound of terms aggregations that depends on how documents are distributed over shards."""
     rows, n_eq = [], 0
     for op in ops:
         x, y = ra.get(op["name"], {"error": "not run"}), rb.get(op["name"], {"error": "not run"})
         if "error" in x or "error" in y:
             ok, why = False, f"error: a={x.get('error')} b={y.get('error')}"
         else:
-            ok, why = analyze.results_equal(x["canonical"], y["canonical"], True)
+            cx, cy = x["canonical"], y["canonical"]
+            if ignore_agg_keys:
+                cx = {**cx, "aggs": _drop_keys(cx.get("aggs"), set(ignore_agg_keys)), "digest": None}
+                cy = {**cy, "aggs": _drop_keys(cy.get("aggs"), set(ignore_agg_keys)), "digest": None}
+            ok, why = analyze.results_equal(cx, cy, True)
         n_eq += ok
         rows.append({"op": op["name"], "equal": ok, "reason": why,
                      "digest_a": x.get("canonical", {}).get("digest"), "digest_b": y.get("canonical", {}).get("digest"),
@@ -131,27 +159,30 @@ def main():
     r.add_argument("--url", required=True)
     r.add_argument("--index", required=True)
     r.add_argument("--key-field")
+    r.add_argument("--oracle", action="store_true", help="verification form: dfs_query_then_fetch + profile (oracle_op)")
     r.add_argument("--out", required=True)
     c = sub.add_parser("compare", help="two sides written by run (the two indices may live on different nodes)")
     c.add_argument("--ops", required=True)
     c.add_argument("a")
     c.add_argument("b")
+    c.add_argument("--ignore-agg-key", action="append", default=[], help="aggregation key left out (recorded)")
     c.add_argument("--out", required=True)
     a = ap.parse_args()
     ops = json.load(open(a.ops))["ops"]
     if a.cmd == "run":
-        res, miss = run(ops, a.url, a.index, a.key_field)
-        side = {"url": a.url, "index": a.index, "key_field": a.key_field, "hits_without_key": miss,
+        res, miss = run(ops, a.url, a.index, a.key_field, a.oracle)
+        side = {"url": a.url, "index": a.index, "key_field": a.key_field, "oracle": a.oracle, "hits_without_key": miss,
                 "node": JsonClient(a.url).request("GET", "/"), "results": res}
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         json.dump(side, open(a.out, "w"), indent=1)
         print(json.dumps({"ops": len(ops), "errors": sum(1 for v in res.values() if "error" in v), "hits_without_key": miss}))
         return
     sa, sb = json.load(open(a.a)), json.load(open(a.b))
-    if sa["key_field"] != sb["key_field"]:
-        raise SystemExit("the two sides use different key fields")
-    rows, n_eq = compare(ops, sa["results"], sb["results"])
+    if sa["key_field"] != sb["key_field"] or sa.get("oracle") != sb.get("oracle"):
+        raise SystemExit("the two sides use different key fields or request forms")
+    rows, n_eq = compare(ops, sa["results"], sb["results"], a.ignore_agg_key)
     res = {"ops": len(ops), "equal": n_eq, "different": len(ops) - n_eq, "key_field": sa["key_field"],
+           "oracle": sa.get("oracle", False), "ignored_agg_keys": a.ignore_agg_key,
            "hits_without_key": {"a": sa["hits_without_key"], "b": sb["hits_without_key"]},
            "a": {k: sa[k] for k in ("url", "index", "node")}, "b": {k: sb[k] for k in ("url", "index", "node")},
            "rows": rows}
