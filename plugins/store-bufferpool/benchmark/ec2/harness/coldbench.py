@@ -935,6 +935,10 @@ class Session:
         self.log(f"session: {len(self.ops)} ops, schedule {[l for _, l in sched]}")
         for rnd, lab in sched:
             self.run_one(rnd, lab)
+        if self.node.up():
+            # leave the node with every configured index closed and in the stock store type, so a later stock start
+            # (another session, another indices file, a manual start) is not red next to a closed bufferpoolfs index
+            close_indices(self.node, self.cfg, self.log)
         invalid = sorted(self.device_mismatches)
         self.record(type="session_end", invalid_runs=invalid, device_read_mismatches=self.device_mismatches)
         self.log("session done" + (f"; INVALID runs (device reads not bufferpool windows): {invalid}" if invalid else ""))

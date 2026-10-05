@@ -121,6 +121,8 @@ def main():
 
         # (1) --no-restart: set, then close and re-open the indices (the node keeps running)
         m.bdi["EFS"] = "0"  # left by a POC arm
+        # a session ends with its indices closed; an index opened by hand since then must be closed after the set
+        m.indices["big5"]["status"] = "open"
         m.calls.clear()
         n_open = len(m.opened)
         coldbench(["run", "--arms", af, *common, *run_args, "--arm-list", "S0-EFS", "--rounds", "1", "--no-restart",
