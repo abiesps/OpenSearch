@@ -1,21 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: coldpath <coldpath@localhost>
-Date: Sun, 4 Oct 2026 18:54:00 -0700
+Date: Sun, 4 Oct 2026 22:26:31 -0700
 Subject: [PATCH 2/3] Drop and verify caches before every task (cold mode)
 
 ---
- src/main/perf/ColdpathCold.java   | 136 ++++++++++++++++++++++++++++++
+ src/main/perf/ColdpathCold.java   | 139 ++++++++++++++++++++++++++++++
  src/main/perf/SearchPerfTest.java |   3 +
  src/main/perf/TaskThreads.java    |   9 ++
- 3 files changed, 148 insertions(+)
+ 3 files changed, 151 insertions(+)
  create mode 100644 src/main/perf/ColdpathCold.java
 
 diff --git a/src/main/perf/ColdpathCold.java b/src/main/perf/ColdpathCold.java
 new file mode 100644
-index 00000000..878f0a8d
+index 00000000..2facbe15
 --- /dev/null
 +++ b/src/main/perf/ColdpathCold.java
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,139 @@
 +package perf;
 +
 +/**
@@ -60,7 +60,9 @@ index 00000000..878f0a8d
 + * needs one task at a time ({@code -numConcurrentQueries 1}), checked by SearchPerfTest.
 + * Properties: coldpath.cold.agent (http://127.0.0.1:9700), coldpath.cold.tokenFile, coldpath.cold.arm (the agent arm
 + * whose data_path holds the index), coldpath.cold.uuids (index directory names under data_path/indices),
-+ * coldpath.cold.residencyTolerance (bytes, default 1 MiB), coldpath.cold.log.
++ * coldpath.cold.residencyTolerance (bytes, default 0: not one page of the index files may be resident when a task starts),
++ * coldpath.cold.dropRounds (default 5: the agent repeats pageout + sync + drop_caches until mincore finds no resident page of
++ * the index files; one pass can leave a few pages that were faulted just before it), coldpath.cold.log.
 + */
 +public final class ColdpathCold {
 +  private static final String AGENT = System.getProperty("coldpath.cold.agent", "");
@@ -120,7 +122,8 @@ index 00000000..878f0a8d
 +  public static synchronized void beforeTask(Task task) throws IOException {
 +    init();
 +    String arm = "arm=" + q(System.getProperty("coldpath.cold.arm", ""));
-+    preDrop = call("POST", "/cache/drop?pageout=1&" + arm);
++    String uuids = "uuids=" + q(System.getProperty("coldpath.cold.uuids", ""));
++    preDrop = call("POST", "/cache/drop?pageout=1&until_empty=" + Integer.getInteger("coldpath.cold.dropRounds", 5) + "&" + uuids + "&" + arm);
 +    preResidency = call("GET", "/cache/residency?" + arm + "&uuids=" + q(System.getProperty("coldpath.cold.uuids", "")));
 +    Matcher m = RESIDENT.matcher(preResidency);
 +    preResident = m.find() ? Long.parseLong(m.group(1)) : -1;
@@ -131,7 +134,7 @@ index 00000000..878f0a8d
 +  public static synchronized void afterTask(Task task) {
 +    String arm = "arm=" + q(System.getProperty("coldpath.cold.arm", ""));
 +    String post = call("GET", "/snapshot?" + arm);
-+    long tolerance = Long.getLong("coldpath.cold.residencyTolerance", 1L << 20);
++    long tolerance = Long.getLong("coldpath.cold.residencyTolerance", 0L);
 +    boolean ok = preResident >= 0 && preResident <= tolerance;
 +    log.println("{\"n\":" + (count++) + ",\"category\":" + json(task.getCategory()) + ",\"task\":" + json(task.toString())
 +        + ",\"run_ms\":" + (task.runTimeNanos / 1e6) + ",\"resident_bytes\":" + preResident + ",\"cold_ok\":" + ok
@@ -187,3 +190,6 @@ index 16509654..5ad84e08 100644
  
            task.threadID = threadID;
          }
+-- 
+2.54.0 (Apple Git-157)
+

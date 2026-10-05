@@ -352,6 +352,29 @@ class Agent:
                     "meminfo_after": self.meminfo()})
         return res
 
+    def drop_until_empty(self, pageout, st, uuids, max_rounds):
+        """
+        drop() repeated until no page of the given indices' files is resident (mincore), at most max_rounds times.
+        One MADV_PAGEOUT pass can leave a few pages that were faulted just before it (measured on the luceneutil host:
+        132 KB of 19.36 GB after one pass, 0 after the second), and drop_caches does not evict pages that are still
+        mapped, so a single pass is not enough for a zero-page cold start. Reports every round and the final residency.
+        """
+        rounds = []
+        res = None
+        for _ in range(max(1, max_rounds)):
+            d = self.drop(pageout, st)
+            res = self.residency(uuids, st)
+            rounds.append({"pageout": d.get("pageout"), "pageout_ms": d["pageout_ms"], "sync_ms": d["sync_ms"],
+                           "drop_ms": d["drop_ms"], "resident_bytes": res["resident_bytes"],
+                           "top_resident": res["top_resident"][:5]})
+            if res["resident_bytes"] == 0:
+                break
+        last = rounds[-1]
+        return {"rounds": len(rounds), "round_detail": rounds, "resident_bytes": res["resident_bytes"],
+                "files": res["files"], "bytes": res["bytes"], "data_path": st["data_path"], "nfs": st["nfs"],
+                "pageout": last["pageout"], "pageout_ms": sum(r["pageout_ms"] for r in rounds),
+                "sync_ms": sum(r["sync_ms"] for r in rounds), "drop_ms": sum(r["drop_ms"] for r in rounds)}
+
     @staticmethod
     def index_dirs(data_path, uuids):
         dirs = []
@@ -637,7 +660,12 @@ def make_handler(agent, token):
                            "jvm_pid": agent.jvm_pid(), "arms": sorted(agent.cfg.get("arms", {}))}
                 elif route == ("POST", "/cache/drop"):
                     with agent.lock:
-                        out = agent.drop(q.get("pageout", "1") not in ("0", "false"), st)
+                        pageout = q.get("pageout", "1") not in ("0", "false")
+                        if "until_empty" in q:
+                            uuids = set(x for x in q.get("uuids", "").split(",") if x)
+                            out = agent.drop_until_empty(pageout, st, uuids, int(q["until_empty"]))
+                        else:
+                            out = agent.drop(pageout, st)
                 elif route == ("GET", "/cache/residency"):
                     uuids = set(x for x in q.get("uuids", "").split(",") if x)
                     out = agent.residency(uuids, st)

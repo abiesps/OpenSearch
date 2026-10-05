@@ -207,18 +207,22 @@ for it in range(comp.jvmCount):
             cold_log = os.path.join(OUT, f"{S['id']}.{label}.{it}.cold.jsonl")
             props = {"coldpath.cold.agent": st["agent_url"], "coldpath.cold.tokenFile": st["agent_token_file"],
                      "coldpath.cold.arm": st["agent_arm"], "coldpath.cold.uuids": c.index.getName(),
-                     "coldpath.cold.residencyTolerance": str(st.get("residency_tolerance", 1 << 20)),
+                     "coldpath.cold.residencyTolerance": str(st.get("residency_tolerance", 0)),
+                     "coldpath.cold.dropRounds": str(st.get("drop_rounds", 5)),
                      "coldpath.cold.log": cold_log}
             c.javaCommand = base_cmd + "".join(f" -D{k}={v}" for k, v in props.items())
         else:
             c.javaCommand = base_cmd
         if cold_luceneutil:
             # luceneutil cold=True: sync + drop_caches once before the JVM (no JVM runs, so nothing is mapped)
-            drop = agent(st, "POST", f"/cache/drop?pageout=0&arm={st['agent_arm']}")
+            # repeated until mincore finds no resident page of the index files (agent until_empty); tolerance 0 by default
+            drop = agent(st, "POST", f"/cache/drop?pageout=0&until_empty={st.get('drop_rounds', 5)}"
+                                     f"&uuids={c.index.getName()}&arm={st['agent_arm']}")
             res = agent(st, "GET", f"/cache/residency?arm={st['agent_arm']}&uuids={c.index.getName()}")
-            ok = res["resident_bytes"] <= st.get("residency_tolerance", 1 << 20) and res["files"] > 0
+            ok = res["resident_bytes"] <= st.get("residency_tolerance", 0) and res["files"] > 0
             jvm_drop = {"cold_ok": ok, "resident_bytes": res["resident_bytes"], "files": res["files"],
-                        "bytes": res["bytes"], "drop_ms": drop.get("drop_ms"), "sync_ms": drop.get("sync_ms")}
+                        "bytes": res["bytes"], "drop_ms": drop.get("drop_ms"), "sync_ms": drop.get("sync_ms"),
+                        "drop_rounds": drop.get("rounds")}
             if not ok:
                 raise SystemExit(f"{label} iteration {it}: index files still resident after the drop: {jvm_drop}")
         t0 = time.time()

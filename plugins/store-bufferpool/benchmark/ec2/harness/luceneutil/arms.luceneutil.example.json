@@ -1,5 +1,5 @@
 {
- "_doc": "luceneutil arms of branch g-luceneutil (GENERIC-PLAN section 5). Values in {braces} are params: the IO sizes come from the IO configuration (8 KiB block, 32 KiB random, 128 KiB sequential); the K2 / ORPF / TOPK values and the CORE set must be copied from artifacts-final.json and the final POC report before phase B (recorded per arm in session.json). Switch names are checked against switches.json (generated from the fork). Stock Lucene arms carry no switches. The index variants are built by luceneutil (run_luceneutil.py index) on EBS and copied with checksums to EFS (run_luceneutil.py copy). Index builds use luceneutil's own defaults (1 indexing thread, LogDocMergePolicy, SerialMergeScheduler): the build is deterministic, so every variant (stock, POC-built stock codec, split BKD, DualNav) has the same doc ids and the same segments, and only the codec differs between variants. Arm labels ARM:STORAGE@REPEAT interleave one arm on EBS and EFS in one session.",
+ "_doc": "luceneutil arms of branch g-luceneutil (GENERIC-PLAN section 5). Values in {braces} are params: the IO sizes come from the IO configuration (8 KiB block, 32 KiB random, 128 KiB sequential); the K2 / ORPF / TOPK values and the CORE set must be copied from artifacts-final.json and the final POC report before phase B (recorded per arm in session.json). Switch names are checked against switches.json (generated from the fork). Stock Lucene arms carry no switches. The index variants are built by luceneutil (run_luceneutil.py index) on EBS and copied with checksums to EFS (run_luceneutil.py copy). Index builds use luceneutil's own defaults (1 indexing thread, LogDocMergePolicy, SerialMergeScheduler): the build is deterministic, so every variant (stock, POC-built stock codec, split BKD, DualNav) has the same doc ids and the same segments, and only the codec differs between variants. Arm labels ARM:STORAGE@REPEAT interleave one arm on EBS and EFS in one session. Storages: residency_tolerance: bytes of the index files (index/ and facets/) that may be resident when a cold task or a cold JVM starts: 0, not one page; drop_rounds: the agent repeats pageout + sync + drop_caches until mincore finds no resident page, at most this many times (one pass can leave a few pages faulted just before it).",
  "python": "python3",
  "luceneutil": {
   "path": "/data/ebs/lu/luceneutil",
@@ -25,16 +25,18 @@
    "agent_arm": "LU-EBS",
    "agent_url": "http://127.0.0.1:9700",
    "agent_token_file": "/etc/coldpath-agent/token",
-   "residency_tolerance": 1048576,
-   "read_ahead_mode": "default"
+   "residency_tolerance": 0,
+   "read_ahead_mode": "default",
+   "drop_rounds": 5
   },
   "EFS": {
    "index_dir_base": "/mnt/efs/lu/indices",
    "agent_arm": "LU-EFS",
    "agent_url": "http://127.0.0.1:9700",
    "agent_token_file": "/etc/coldpath-agent/token",
-   "residency_tolerance": 1048576,
-   "read_ahead_mode": "default"
+   "residency_tolerance": 0,
+   "read_ahead_mode": "default",
+   "drop_rounds": 5
   }
  },
  "indices": {
