@@ -8,9 +8,10 @@
 
 package org.opensearch.plugin.store.bufferpool;
 
-import org.apache.logging.log4j.Logger;
+import org.apache.lucene.codecs.Codec;
+import org.apache.lucene.codecs.FilterCodec;
 import org.apache.lucene.codecs.PostingsFormat;
-import org.opensearch.index.codec.PerFieldMappingPostingFormatCodec;
+import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.MapperService;
 
@@ -18,31 +19,59 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The default OpenSearch codec, except that a field can pick its Lucene postings format by name in its mapping:
+ * A codec of the index (the one {@code index.codec} names), except that a field can pick its Lucene postings format by
+ * name in its mapping:
  *
  * <pre>
  * "tag_nav": { "type": "keyword", "meta": { "postings_format": "Lucene104Nav" } }
  * </pre>
  *
- * <p>The value is a Lucene SPI postings format name. Fields without the entry keep the default postings format, so two
- * fields with the same values, one with and one without the entry, compare two formats on the same data in the same
- * segment. The segment records the format of each field, so reading does not need this codec.
+ * <p>The value is a Lucene SPI postings format name. Fields without the entry keep the postings format the wrapped codec
+ * chooses for them (OpenSearch's per-field rules: completion fields, the {@code _id} fuzzy set), and every other format
+ * (stored fields and their compression mode, doc values, points, norms, vectors) is the wrapped codec's. The codec keeps
+ * the wrapped codec's name: the wrapped codec's postings format is a {@link PerFieldPostingsFormat}, which records the
+ * format of each field in the segment, so the codec that SPI resolves for that name reads the segment.
  */
-final class PostingsFormatSelectingCodec extends PerFieldMappingPostingFormatCodec {
-
+final class PostingsFormatSelectingCodec extends FilterCodec {
     /** Key of the {@code meta} mapping entry that names the postings format. */
     static final String META_KEY = "postings_format";
 
     private final MapperService mapperService;
+    private final PerFieldPostingsFormat delegatePostings;
     private final Map<String, PostingsFormat> formats = new ConcurrentHashMap<>();
+    private final PostingsFormat postingsFormat = new PerFieldPostingsFormat() {
+        @Override
+        public PostingsFormat getPostingsFormatForField(String field) {
+            return choose(field);
+        }
+    };
 
-    PostingsFormatSelectingCodec(Mode compressionMode, MapperService mapperService, Logger logger) {
-        super(compressionMode, mapperService, logger);
+    /**
+     * @param delegate the codec of the index; its postings format must be a {@link PerFieldPostingsFormat}
+     *                 ({@link #supports}), so a segment records each field's format
+     */
+    PostingsFormatSelectingCodec(Codec delegate, MapperService mapperService) {
+        super(delegate.getName(), delegate);
+        if (supports(delegate) == false) {
+            throw new IllegalArgumentException(
+                "codec [" + delegate.getName() + "] does not choose postings formats per field: " + delegate.postingsFormat()
+            );
+        }
         this.mapperService = mapperService;
+        this.delegatePostings = (PerFieldPostingsFormat) delegate.postingsFormat();
+    }
+
+    /** Whether {@code codec}'s segments record a postings format per field, so this codec can wrap it. */
+    static boolean supports(Codec codec) {
+        return codec.postingsFormat() instanceof PerFieldPostingsFormat;
     }
 
     @Override
-    public PostingsFormat getPostingsFormatForField(String field) {
+    public PostingsFormat postingsFormat() {
+        return postingsFormat;
+    }
+
+    PostingsFormat choose(String field) {
         final MappedFieldType fieldType = mapperService.fieldType(field);
         if (fieldType != null) {
             final String name = fieldType.meta().get(META_KEY);
@@ -50,6 +79,6 @@ final class PostingsFormatSelectingCodec extends PerFieldMappingPostingFormatCod
                 return formats.computeIfAbsent(name, PostingsFormat::forName);
             }
         }
-        return super.getPostingsFormatForField(field);
+        return delegatePostings.getPostingsFormatForField(field);
     }
 }

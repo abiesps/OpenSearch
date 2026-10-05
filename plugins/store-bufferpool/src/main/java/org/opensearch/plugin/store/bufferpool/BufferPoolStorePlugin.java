@@ -272,8 +272,9 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
     }
 
     /**
-     * For {@value #STORE_TYPE} indices, the default codec lets each field choose its postings format through the
-     * {@code meta.postings_format} mapping entry, see {@link PostingsFormatSelectingCodec}.
+     * For {@value #STORE_TYPE} indices, every codec ({@code index.codec}, any mode) lets each field choose its postings
+     * format and its points format through the {@code meta.postings_format} and {@code meta.points_format} mapping
+     * entries, see {@link BufferPoolCodecService}.
      *
      * @param indexSettings settings of the index the codec is for
      */
