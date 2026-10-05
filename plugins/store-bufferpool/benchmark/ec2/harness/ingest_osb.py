@@ -243,6 +243,10 @@ def index_metrics(client, names):
                   "index_time_ms": st["indexing"]["index_time_in_millis"], "index_total": st["indexing"]["index_total"],
                   "merge_total_time_ms": st["merges"]["total_time_in_millis"], "merges_total": st["merges"]["total"],
                   "merge_throttled_ms": st["merges"].get("total_throttled_time_in_millis"),
+                  # bytes and docs the merges rewrote: write amplification of the codec and store (ingest check)
+                  "merges_total_size_bytes": st["merges"].get("total_size_in_bytes"),
+                  "merges_total_docs": st["merges"].get("total_docs"),
+                  "refresh_total": st["refresh"].get("total"), "flush_total": st["flush"].get("total"),
                   "refresh_total_time_ms": st["refresh"]["total_time_in_millis"],
                   "flush_total_time_ms": st["flush"]["total_time_in_millis"],
                   "store_bytes": st["store"]["size_in_bytes"]}
