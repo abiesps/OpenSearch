@@ -223,7 +223,14 @@ for it in range(comp.jvmCount):
                 raise SystemExit(f"{label} iteration {it}: index files still resident after the drop: {jvm_drop}")
         t0 = time.time()
         log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
-        results[label].append(log)
+        if strict:
+            # every task must have started with the index files out of the page cache (mincore residency after the
+            # agent's pageout + drop); a JVM run with a task that was not cold invalidates the session's protocol
+            recs = [json.loads(x) for x in open(cold_log)]
+            bad = [x for x in recs if not x.get("cold_ok")]
+            if not recs or bad:
+                raise SystemExit(f"{label} iteration {it}: {len(bad)} of {len(recs)} tasks were not cold (max resident "
+                                 f"{max((x.get('resident_bytes', -1) for x in recs), default=None)} bytes): stopping")
         manifest.write(json.dumps({"iter": it, "label": label, "arm": c.coldpath["arm"], "log": log,
                                    "stdout": log + ".stdout", "cold_log": cold_log, "jvm_drop": jvm_drop, "seed": seed,
                                    "static_seed": static_seed, "mode": S["mode"], "storage": c.coldpath["storage"],
