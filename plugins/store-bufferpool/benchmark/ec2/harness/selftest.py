@@ -45,6 +45,8 @@ class Mock:
         self.binary = "POC-EFS"
         self.nfs_reads = 0
         self.readahead = {}
+        self.trace_from = 0
+        self.split_reads = False
         self.cached = set()
         self.page_cache = set()
         self.files = {}
@@ -67,10 +69,16 @@ class Mock:
         cold = bool(miss) if bp else any(b not in self.page_cache for b in blocks)
         if bp:
             f = self.files.setdefault("_0.kdd", {"requests": 0, "loads": 0, "prefetch_requests": 0, "prefetch_loads": 0,
-                                                  "bytes_loaded": 0, "load_time_micros": 0})
+                                                  "bytes_loaded": 0, "load_time_micros": 0, "reads": 0,
+                                                  "prefetch_reads": 0, "bytes_read": 0, "reads_by_size": {}})
             f["requests"] += len(blocks)
             f["loads"] += len(miss)
             f["bytes_loaded"] += 8192 * len(miss)
+            # one storage read per missing block (read size = block size in this mock)
+            f["reads"] += len(miss)
+            f["bytes_read"] += 8192 * len(miss)
+            if miss:
+                f["reads_by_size"]["8192"] = f["reads_by_size"].get("8192", 0) + len(miss)
             self.cached.update(blocks)
         new_dev = [b for b in blocks if b not in self.page_cache]
         if efs:
@@ -267,9 +275,28 @@ def make_agent_handler(m):
                                            "top_resident": [], "elapsed_ms": 1.0})
                 if u.path == "/index/du":
                     return self.send(200, {"u": {"apparent_bytes": 1000000, "allocated_bytes": 1003520, "lucene_bytes": 999000}})
-                if u.path == "/readahead":
-                    m.readahead[q.get("arm")] = int(q["kb"])
-                    return self.send(200, {"bdi": "0:53", "read_ahead_kb": int(q["kb"])})
+                if u.path in ("/readahead", "/readahead/mode"):
+                    arm = q.get("arm")
+                    default = 15360 if arm.endswith("EFS") else 128
+                    if u.path == "/readahead/mode":
+                        m.readahead[arm] = q["mode"]
+                    cur = m.readahead.get(arm, "default")
+                    v = default if cur == "default" else int(cur)
+                    mode = q.get("mode")
+                    want = None if mode is None else (default if mode == "default" else int(mode))
+                    return self.send(200, {"nfs": arm.endswith("EFS"), "mode": mode, "ok": None if mode is None else v == want,
+                                           "layers": [{"key": "bdi:0:53" if arm.endswith("EFS") else "blk:nvme1n1",
+                                                       "read_ahead_kb": v, "default_kb": default, "target_kb": want}]})
+                if u.path.startswith("/trace/") and u.path.endswith("/_start"):
+                    m.trace_from = m.nfs_reads + m.disk_reads
+                    return self.send(200, {})
+                if u.path.startswith("/trace/") and u.path.endswith("/_stop"):
+                    n = m.nfs_reads + m.disk_reads - m.trace_from
+                    if m.split_reads:  # the device split every read in two (what read_ahead_kb=0 does)
+                        return self.send(200, {"reads": 2 * n, "bytes_hist": {"4096": 2 * n} if n else {},
+                                               "max_bytes": 4096 if n else None, "total_bytes": 8192 * n})
+                    return self.send(200, {"reads": n, "bytes_hist": {"8192": n} if n else {}, "max_bytes": 8192 if n else None,
+                                           "total_bytes": 8192 * n, "source": u.path.split("/")[2]})
                 if u.path == "/host":
                     return self.send(200, {"uname": "mock", "device": "nvme1n1"})
                 if u.path == "/node/status":
@@ -352,7 +379,7 @@ def main():
          "--rounds", "4", "--out", s1, "--strict"])
     s2 = os.path.join(tmp, "session-arms")
     run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S0-EBS,S1-EFS,S2-X-EFS,S2-NA-EFS", "--rounds", "4",
-         "--modes", "cold,warm,ccold,cwarm", "--read-ahead-kb", "128", "--clients", "3", "--concurrent-batches", "2", "--concurrent-seconds", "1",
+         "--modes", "cold,warm,ccold,cwarm", "--clients", "3", "--concurrent-batches", "2", "--concurrent-seconds", "1",
          "--out", s2, "--strict"])
     out = os.path.join(tmp, "analysis")
     report = run([PY, os.path.join(here, "analyze.py"), s1, s2, "--base", "S1-EFS", "--compare", "S1-EFS@b,S2-X-EFS,S0-EBS",
@@ -372,7 +399,34 @@ def main():
     nfs_checked = [r for r in nfs_checked if r.get("mode") == "cold" and r.get("arm") == "S2-X-EFS"]
     assert nfs_checked and all(r["checks"].get("reads_reached_nfs_server") for r in nfs_checked), "EFS reads not verified by NFS counters"
     assert all(r["checks"].get("io_size_ok") for r in nfs_checked), "NFS read size check missing"
-    assert m.readahead.get("POC-EFS") == 128 and m.readahead.get("S0-EBS") == 128, m.readahead
+    # kernel readahead per arm session: stock arms as mounted, bufferpool arms 128 KiB (common-rules), read sizes traced
+    assert m.readahead.get("POC-EFS") == "128" and m.readahead.get("S0-EBS") == "default", m.readahead
+    runs = [json.loads(l) for l in open(os.path.join(s2, "samples.jsonl"))]
+    assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run" and r.get("available")), "readahead not verified"
+    assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run_end"), "readahead not re-checked at run end"
+    ebs = [r for r in runs if r.get("mode") == "cold" and r.get("arm") == "S0-EBS"]
+    assert ebs and all(r["io"].get("block_read_sizes", {}).get("reads") for r in ebs), "EBS read sizes not traced"
+    assert all("io_size_ok" not in r["checks"] for r in ebs), "stock arms keep the default readahead: no size limit"
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
+                        "--read-ahead-kb", "128", "--out", os.path.join(tmp, "session-ra")], capture_output=True, text=True)
+    assert p.returncode != 0 and "no longer used" in p.stderr, "--read-ahead-kb must be refused"
+    assert m.readahead.get("POC-EFS") == "128", "POC arms run with read_ahead_kb 128 (largest bufferpool window)"
+    bp_cold = [r for r in runs if r.get("mode") == "cold" and r.get("arm") == "S2-X-EFS"]
+    assert bp_cold and all(r["checks"].get("device_reads_are_windows") for r in bp_cold), "device reads vs bufferpool reads"
+    assert all(r["io"]["device_vs_bufferpool"]["device_reads"] == r["io"]["device_vs_bufferpool"]["bufferpool_reads"]
+               for r in bp_cold)
+    # device reads that are not bufferpool windows make the run invalid
+    m.split_reads = True
+    s5 = os.path.join(tmp, "session-split")
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1", "--modes", "cold",
+         "--out", s5])
+    recs5 = [json.loads(l) for l in open(os.path.join(s5, "samples.jsonl"))]
+    assert all(not r["cold_ok"] and r["checks"]["device_reads_are_windows"] is False for r in recs5
+               if r.get("mode") == "cold" and r["io"].get("bp", {}).get("reads")), "split device reads not caught"
+    assert [r for r in recs5 if r["type"] == "run_end"][0]["valid"] is False, "run not marked invalid"
+    assert [r for r in recs5 if r["type"] == "session_end"][0]["invalid_runs"] == ["S1-EFS#r0"]
+    m.split_reads = False
+
     eq = res["equality"]
     assert eq["across"] and all(e["equal"] for e in eq["across"]), eq
     assert not res["amdahl"], res["amdahl"]

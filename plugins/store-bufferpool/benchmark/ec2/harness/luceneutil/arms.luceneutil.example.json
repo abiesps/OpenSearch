@@ -26,7 +26,7 @@
    "agent_url": "http://127.0.0.1:9700",
    "agent_token_file": "/etc/coldpath-agent/token",
    "residency_tolerance": 1048576,
-   "read_ahead_kb": 128
+   "read_ahead_mode": "default"
   },
   "EFS": {
    "index_dir_base": "/mnt/efs/lu/indices",
@@ -34,7 +34,7 @@
    "agent_url": "http://127.0.0.1:9700",
    "agent_token_file": "/etc/coldpath-agent/token",
    "residency_tolerance": 1048576,
-   "read_ahead_kb": 128
+   "read_ahead_mode": "default"
   }
  },
  "indices": {

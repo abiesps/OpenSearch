@@ -5,17 +5,34 @@
   "python": "load generator: python3 >= 3.8 stdlib (jinja2 only for queries.py OSB rendering, installed with opensearch-benchmark); data node agent: python3 stdlib, root",
   "selftest": "python3 harness/selftest.py [--osb-bin opensearch-benchmark]",
   "data_node_agent": {
-    "install": "copy harness/agent/coldpath_agent.py to /opt/coldpath/; write /etc/coldpath-agent/agent.json from harness/agent/agent.example.json (one arm per binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS with data_path and start/stop argv); umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token; install harness/agent/coldpath-agent.service; systemctl enable --now coldpath-agent",
+    "install": "copy harness/agent/coldpath_agent.py and harness/agent/coldpath_readahead.py to /opt/coldpath/; write /etc/coldpath-agent/agent.json from harness/agent/agent.example.json (one arm per binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS with data_path and start/stop argv); umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token; install harness/agent/coldpath-agent.service; systemctl enable --now coldpath-agent",
     "port": 9700,
     "auth": "header X-Coldpath-Token; allow the port only from the load generator security group",
-    "endpoints": ["GET /health", "POST /cache/drop?pageout=1&arm=A", "GET /cache/residency?arm=A&uuids=U", "GET /snapshot?arm=A", "GET /host?arm=A", "GET /index/du?arm=A&uuids=U", "POST /readahead?arm=A&kb=N|default", "POST /trace/nfs/_start", "POST /trace/nfs/_stop", "GET /node/status", "POST /node/stop", "POST /node/restart {arm}"]
+    "endpoints": [
+      "GET /health",
+      "POST /cache/drop?pageout=1&arm=A",
+      "GET /cache/residency?arm=A&uuids=U",
+      "GET /snapshot?arm=A",
+      "GET /host?arm=A",
+      "GET /index/du?arm=A&uuids=U",
+      "POST /readahead?arm=A&kb=N|default",
+      "GET /readahead?arm=A&mode=default|KIB",
+      "POST /readahead/mode?arm=A&mode=default|KIB",
+      "POST /trace/block/_start?arm=A",
+      "POST /trace/block/_stop?arm=A",
+      "POST /trace/nfs/_start",
+      "POST /trace/nfs/_stop",
+      "GET /node/status",
+      "POST /node/stop",
+      "POST /node/restart {arm}"
+    ]
   },
   "entrypoints": {
     "build_ops": "python3 harness/queries.py build --corpus {big5|nyc_taxis|http_logs|pmc} --osb-workloads <opensearch-benchmark-workloads checkout> --osb-commit <sha> --url http://DATA:9200 --index <stock index> --out ops/<corpus>.json --check-coverage   (once per corpus after ingest, BEFORE any measurement; the file is the pre-registered op set)",
     "check_ops": "python3 harness/queries.py check --ops ops/<corpus>.json --url http://DATA:9200 --index <index>",
     "prepare_single_shard": "python3 harness/indexprep.py single-shard --url http://DATA:9200 --source <index> --target <index>_1s [--range-gte .. --range-lt ..] --min-size-gb 30; indexprep.py forcemerge --index <index>_1s --segments N; indexprep.py clone --source <index>_1s --target <index>_1s_1seg --segments 1; indexprep.py describe --index X --agent http://DATA:9700 --token-file TOKEN --agent-arm S0-EBS",
-    "aa_run": "python3 harness/coldbench.py run --arms arms.json --ops ops/<corpus>.json --arm-list S0-EBS@a,S0-EBS@b,S1-EFS@a,S1-EFS@b --rounds 5 --modes cold,warm --url http://DATA:9200 --agent http://DATA:9700 --token-file TOKEN --read-ahead-kb 128 --nfs-trace --executor {replay|osb} --out results/<corpus>/aa-1",
-    "cold_and_warm_run": "python3 harness/coldbench.py run --arms arms.json --ops ops/<corpus>.json --arm-list S0-EBS,S0-EFS,S1-EFS,S2-CORE-EFS,S2-CORE+PLANNER-EFS --rounds 5 --modes cold,warm --cold-iters 3 --warm-warmup 5 --warm-iters 10 --order abba --url http://DATA:9200 --agent http://DATA:9700 --token-file TOKEN --read-ahead-kb 128 --nfs-trace --executor {replay|osb} --out results/<corpus>/session-1",
+    "aa_run": "python3 harness/coldbench.py run --arms arms.json --ops ops/<corpus>.json --arm-list S0-EBS@a,S0-EBS@b,S1-EFS@a,S1-EFS@b --rounds 5 --modes cold,warm --url http://DATA:9200 --agent http://DATA:9700 --token-file TOKEN --nfs-trace --executor {replay|osb} --out results/<corpus>/aa-1",
+    "cold_and_warm_run": "python3 harness/coldbench.py run --arms arms.json --ops ops/<corpus>.json --arm-list S0-EBS,S0-EFS,S1-EFS,S2-CORE-EFS,S2-CORE+PLANNER-EFS --rounds 5 --modes cold,warm --cold-iters 3 --warm-warmup 5 --warm-iters 10 --order abba --url http://DATA:9200 --agent http://DATA:9700 --token-file TOKEN --nfs-trace --executor {replay|osb} --out results/<corpus>/session-1",
     "cold_only_run": "same as cold_and_warm_run with --modes cold",
     "warm_only_run": "same as cold_and_warm_run with --modes warm",
     "attribution_run": "same as cold_and_warm_run with --arm-list S1-EFS,S2-<x>-EFS (one change on vs S1-EFS)",
@@ -37,5 +54,6 @@
     "store-bufferpool reads exactly one cache block per miss (BlockCache.load reads blockSize bytes; prefetch issues one read per missing block); there is no setting for an IO size larger than the block size and the directory ignores IOContext/ReadAdvice. 8 KiB blocks with 32 KiB random / 128 KiB sequential reads need a plugin change on ec2-bench (settings: block size, random IO size, sequential IO size) and a rebuild.",
     "prefetched_not_read is not exported by /_bufferpool/stats (only by the bufferpool trace).",
     "EFS server-side cache cannot be cleared from the client (same for every EFS arm)."
-  ]
+  ],
+  "readahead": "kernel readahead is set per arm run by coldbench through the agent and verified before and after it: stock arms (bufferpool false) keep the as-mounted default (EBS device default, EFS 15360 KiB from efs-utils), bufferpool arms run with read_ahead_kb 128 (--poc-read-ahead-kb; with the bufferpool's POSIX_FADV_RANDOM one window = one device read); a run whose value differs is refused. Every cold iteration traces the device read sizes (NFS READ on EFS, block reads on EBS); for bufferpool arms the device reads must equal the bufferpool's reads, bytes_read and reads_by_size, else the iteration fails verification and the run is marked invalid (run_end valid=false, session_end invalid_runs). common-rules.md: kernel readahead section and DECISION 2026-10-04 ~19:45"
 }

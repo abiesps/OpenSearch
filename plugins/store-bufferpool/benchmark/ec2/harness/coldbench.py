@@ -216,7 +216,13 @@ def _delta_files(a, b):
         prev = fa.get(key, {})
         e = out.setdefault(ext, {})
         for k, x in v.items():
-            e[k] = e.get(k, 0) + x - prev.get(k, 0)
+            if isinstance(x, dict):  # reads_by_size: count per size class
+                h = e.setdefault(k, {})
+                for sk, sx in x.items():
+                    h[sk] = h.get(sk, 0) + sx - (prev.get(k) or {}).get(sk, 0)
+                e[k] = {sk: sx for sk, sx in h.items() if sx}
+            else:
+                e[k] = e.get(k, 0) + x - prev.get(k, 0)
     return {ext: e for ext, e in out.items() if any(e.values())}
 
 
@@ -227,7 +233,12 @@ def io_delta(pre, post):
         tot = {}
         for e in d["bp_files"].values():
             for k, x in e.items():
-                tot[k] = tot.get(k, 0) + x
+                if isinstance(x, dict):
+                    h = tot.setdefault(k, {})
+                    for sk, sx in x.items():
+                        h[sk] = h.get(sk, 0) + sx
+                else:
+                    tot[k] = tot.get(k, 0) + x
         d["bp"] = tot
         for k in ("agg_prefetch_requests", "sort_prefetch_requests", "agg_prefetch_planners", "sort_prefetch_planners"):
             if k in post["bp"]:
@@ -499,6 +510,88 @@ class Iteration:
         return ok, checks
 
 
+# ---------------------------------------------------------------- kernel readahead and device read sizes
+POC_READ_AHEAD_KB = 128  # the largest bufferpool window (DECISION 2026-10-04 ~19:45 in common-rules.md)
+
+
+def readahead_mode(arm, poc_kb=POC_READ_AHEAD_KB):
+    """Stock arms keep the as-mounted kernel readahead (mmap); bufferpool arms run with read_ahead_kb = the largest
+    bufferpool window (128 KiB): with the bufferpool's POSIX_FADV_RANDOM it only caps a request, so one pread of a
+    window is one device read (0 would split it into 4 KiB reads). An arm may set "readahead": "default" | KiB."""
+    if "read_ahead_kb" in arm:
+        raise ValueError("arm key read_ahead_kb is replaced by \"readahead\": \"default\" | <KiB> (common-rules: "
+                         "stock arms as mounted, POC arms 128)")
+    mode = arm.get("readahead", "default" if not arm.get("bufferpool") else poc_kb)
+    if mode != "default" and not str(mode).isdigit():
+        raise ValueError(f"readahead {mode!r}: default or a value in KiB")
+    return str(mode)
+
+
+def set_readahead(node, arm, poc_kb=POC_READ_AHEAD_KB):
+    """Sets the arm's readahead on every layer of its data path, reads it back; refuses to measure if it differs."""
+    mode = readahead_mode(arm, poc_kb)
+    q = f"arm={urllib.parse.quote(arm['node'])}&mode={mode}"
+    res = node.agent.request("POST", f"/readahead/mode?{q}")
+    if not res.get("ok"):
+        raise RuntimeError(f"arm {arm['node']}: readahead is not {mode} after setting it: {json.dumps(res)[:800]}; not measuring")
+    return res
+
+
+def check_readahead(node, arm, poc_kb=POC_READ_AHEAD_KB):
+    q = f"arm={urllib.parse.quote(arm['node'])}&mode={readahead_mode(arm, poc_kb)}"
+    return node.agent.request("GET", f"/readahead?{q}")
+
+
+def device_vs_bufferpool(io):
+    """
+    Device reads of one cold iteration against the bufferpool's storage reads (bufferpool arms): every device read must
+    be one bufferpool window (a 32 or 128 KiB pread, clipped at end of file), so the device read count, bytes and size
+    histogram (bucketed into the bufferpool's reads_by_size classes) equal the bufferpool's reads + prefetch_reads,
+    bytes_read and reads_by_size. Source: the agent trace (NFS READ RPCs on EFS, block read requests on EBS), else
+    mountstats (READ ops, server_read_bytes) or diskstats (reads, sectors). ok None = nothing to compare with.
+    """
+    bp = io.get("bp") or {}
+    hist = {int(k): v for k, v in (bp.get("reads_by_size") or {}).items() if v}
+    out = {"bufferpool_reads": bp.get("reads", 0) + bp.get("prefetch_reads", 0), "bufferpool_bytes_read": bp.get("bytes_read", 0),
+           "bufferpool_reads_by_size": {str(k): v for k, v in sorted(hist.items())}}
+    if "bytes_read" not in bp and "reads" not in bp:
+        out["ok"] = None
+        out["gap"] = "bufferpool stats without reads / bytes_read (binary before the IO-window change)"
+        return out
+    trace = io.get("nfs_read_sizes") or io.get("block_read_sizes")
+    if trace:
+        classes = sorted(hist)
+        dev = {}
+        for size, n in trace.get("bytes_hist", {}).items():
+            c = next((k for k in classes if int(size) <= k), None)
+            key = str(c) if c is not None else f"unmatched:{size}"
+            dev[key] = dev.get(key, 0) + n
+        out.update({"source": trace.get("source") or ("nfs:nfs_initiate_read" if "nfs_read_sizes" in io else "block"),
+                    "device_reads": trace.get("reads"), "device_bytes": trace.get("total_bytes"),
+                    "device_bytes_hist": trace.get("bytes_hist"), "device_reads_by_class": dict(sorted(dev.items()))})
+        out["ok"] = (out["device_reads"] == out["bufferpool_reads"] and out["device_bytes"] == out["bufferpool_bytes_read"]
+                     and dev == out["bufferpool_reads_by_size"])
+    elif io.get("nfs"):
+        r = io["nfs"].get("READ") or {}
+        out.update({"source": "mountstats", "device_reads": r.get("ops", 0), "device_bytes": io["nfs"].get("server_read_bytes")})
+        out["ok"] = out["device_reads"] == out["bufferpool_reads"] and out["device_bytes"] == out["bufferpool_bytes_read"]
+    elif io.get("disk"):
+        out.update({"source": "diskstats", "device_reads": io["disk"].get("reads", 0), "device_bytes": io["disk"].get("read_bytes")})
+        out["ok"] = out["device_reads"] == out["bufferpool_reads"] and out["device_bytes"] == out["bufferpool_bytes_read"]
+    else:
+        out["ok"] = None
+    return out
+
+
+def read_size_trace(a, arm, node, nfs):
+    """'nfs' (EFS), 'block' (EBS) or None: the agent trace that records every device read of a cold iteration."""
+    if node.agent is None or getattr(a, "no_read_size_trace", False):
+        return None
+    if nfs is None:
+        nfs = arm.get("storage") == "EFS"
+    return "nfs" if nfs else "block"
+
+
 # ---------------------------------------------------------------- session
 def op_order(ops, ref, seed):
     others = [o for o in ops if o["name"] != ref]
@@ -544,6 +637,7 @@ class Session:
         os.makedirs(a.out, exist_ok=True)
         self.w = JsonlWriter(os.path.join(a.out, "samples.jsonl"))
         self.log_f = open(os.path.join(a.out, "session.log"), "a")
+        self.device_mismatches = {}  # run_id -> cold iterations whose device reads were not bufferpool windows
         self.current_arm = None
 
     def log(self, msg):
@@ -570,26 +664,39 @@ class Session:
 
     def cold_sample(self, it, run, op, index, i, mode="cold"):
         pre_state = it.clear()
-        trace = self.a.nfs_trace and it.arm.get("storage") == "EFS" and self.node.agent
+        # device read sizes of every cold iteration, every arm: NFS READ RPCs on EFS, block read requests on EBS
+        trace = read_size_trace(self.a, it.arm, self.node, getattr(self, "storage_nfs", None))
+        q = "arm=" + urllib.parse.quote(it.arm["node"])
         if trace:
-            self.node.agent.request("POST", "/trace/nfs/_start")
+            self.node.agent.request("POST", f"/trace/{trace}/_start?{q}")
         pre = it.snapshot()
         res = execute(self.node.os, index, op)
         idle_ms, _ = self.node.wait_prefetch_idle()
         post = it.snapshot()
         io = io_delta(pre, post)
         if trace:
-            io["nfs_read_sizes"] = self.node.agent.request("POST", "/trace/nfs/_stop")
+            io["nfs_read_sizes" if trace == "nfs" else "block_read_sizes"] = self.node.agent.request(
+                "POST", f"/trace/{trace}/_stop?{q}")
         ok, checks = it.verify(pre_state, io)
-        # IO-size configuration check (separate from cold_ok): no EFS read larger than the largest configured IO size
-        mx = self.a.max_read_bytes
-        if mx:
-            sizes = io.get("nfs_read_sizes")
+        # IO-size configuration check (separate from cold_ok) of the bufferpool arms: no device read larger than the
+        # largest configured IO size. Stock arms keep the kernel's default readahead, so their sizes are only recorded.
+        mx = getattr(self.a, "max_read_bytes", None)
+        if mx and it.arm.get("bufferpool"):
+            sizes = io.get("nfs_read_sizes") or io.get("block_read_sizes")
             avg = (io.get("nfs") or {}).get("read_avg_bytes")
             if sizes and sizes.get("max_bytes") is not None:
                 checks["io_size_ok"] = sizes["max_bytes"] <= mx
             elif avg is not None:
                 checks["io_size_ok"] = avg <= mx + 512  # mountstats average includes the RPC reply header
+        if it.arm.get("bufferpool"):
+            # every device read is one bufferpool window (DECISION 2026-10-04 ~19:45): else the run is invalid
+            dv = device_vs_bufferpool(io)
+            io["device_vs_bufferpool"] = dv
+            if dv["ok"] is not None:
+                checks["device_reads_are_windows"] = dv["ok"]
+                if not dv["ok"]:
+                    ok = False
+                    self.device_mismatches[run["run_id"]] = self.device_mismatches.get(run["run_id"], 0) + 1
         rec = {"type": "sample", "mode": mode, **run, "op": op["name"], "iter": i, "took_ms": res["took_ms"],
                "wall_ms": res["wall_ms"], "requests": res["requests"], "digest": res["canonical"]["digest"],
                "cold_ok": ok, "checks": checks, "clear": pre_state, "io": io, "post_idle_ms": idle_ms}
@@ -702,12 +809,12 @@ class Session:
             return
         index = self.cfg["indices"][arm["index"]]["name"]
         uuids = indices_ext.uuids(indices[arm["index"]])
-        ra = arm.get("read_ahead_kb", a.read_ahead_kb)
-        readahead = None
+        readahead, self.storage_nfs = None, None
         if self.node.agent:
-            q = f"arm={urllib.parse.quote(arm['node'])}"
-            readahead = (self.node.agent.request("POST", f"/readahead?{q}&kb={ra}") if ra is not None
-                         else {"read_ahead_kb": self.node.agent.request("GET", f"/host?{q}").get("bdi_read_ahead_kb"), "set": False})
+            readahead = set_readahead(self.node, arm, a.poc_read_ahead_kb)
+            self.storage_nfs = readahead["nfs"]
+            self.log(f"  readahead {readahead['mode']}: " + ", ".join(f"{x['key']}={x['read_ahead_kb']}" for x in readahead["layers"]))
+        self.read_trace_kind = read_size_trace(a, arm, self.node, self.storage_nfs)
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
                     args=vars(a))
@@ -746,7 +853,15 @@ class Session:
             for op in self.ops:
                 res = execute(self.node.os, index, op)
                 self.record(type="result", **run, op=op["name"], canonical=res["canonical"])
-        self.record(type="run_end", **run, prefetch_pool=self.node.prefetch_pool())
+        readahead_end = check_readahead(self.node, arm, a.poc_read_ahead_kb) if self.node.agent else None
+        mism = self.device_mismatches.get(run_id, 0)
+        if mism:
+            self.log(f"  INVALID run {run_id}: {mism} cold iterations with device reads that are not bufferpool windows")
+        self.record(type="run_end", **run, prefetch_pool=self.node.prefetch_pool(), readahead=readahead_end,
+                    device_read_mismatches=mism, valid=not mism)
+        if readahead_end is not None and not readahead_end["ok"]:
+            raise RuntimeError(f"run {run_id}: kernel readahead changed during the run (a remount?): {readahead_end}; "
+                               "this run is invalid")
 
     def run(self):
         labels = self.a.arm_list.split(",")
@@ -759,7 +874,9 @@ class Session:
         self.log(f"session: {len(self.ops)} ops, schedule {[l for _, l in sched]}")
         for rnd, lab in sched:
             self.run_one(rnd, lab)
-        self.log("session done")
+        invalid = sorted(self.device_mismatches)
+        self.record(type="session_end", invalid_runs=invalid, device_read_mismatches=self.device_mismatches)
+        self.log("session done" + (f"; INVALID runs (device reads not bufferpool windows): {invalid}" if invalid else ""))
 
 
 # ---------------------------------------------------------------- commands
@@ -779,6 +896,10 @@ def add_common(p):
 
 
 def cmd_run(a):
+    if a.read_ahead_kb is not None:
+        sys.exit("--read-ahead-kb is no longer used: the harness sets kernel readahead per arm (stock arms keep the "
+                 "as-mounted default, bufferpool arms run with 0) and verifies it before and after every run "
+                 "(common-rules.md, kernel readahead)")
     Session(a).run()
 
 
@@ -790,6 +911,8 @@ def cmd_probe(a):
     arm = s.cfg["arms"][a.arm]
     indices = verify_indices(s.node, s.cfg, arm, arm["node"])
     apply_switches(s.node, s.cfg, a.arm, arm)
+    if s.node.agent:
+        s.storage_nfs = set_readahead(s.node, arm, a.poc_read_ahead_kb)["nfs"]
     op = next(o for o in s.ops if o["name"] == a.op)
     it = Iteration(s.node, arm, indices_ext.uuids(indices[arm["index"]]), 1)
     run = {"arm": a.arm, "label": a.arm, "round": -1, "run_id": "probe"}
@@ -833,9 +956,14 @@ def main():
     r.add_argument("--osb-bin", default="opensearch-benchmark")
     r.add_argument("--no-results", action="store_true", help="skip the result-equality pass")
     r.add_argument("--strict", action="store_true", help="abort on the first cold-verification failure")
-    r.add_argument("--read-ahead-kb", type=int, help="set read_ahead_kb of the arm's data mount before each run "
-                                                     "(arm key read_ahead_kb overrides); default: record only")
-    r.add_argument("--nfs-trace", action="store_true", help="EFS arms: per cold iteration, histogram of READ RPC sizes (tracefs)")
+    r.add_argument("--read-ahead-kb", type=int, help="REMOVED: readahead is set per arm (stock arms: as mounted; "
+                                                     "bufferpool arms: 0), verified before and after every run")
+    r.add_argument("--nfs-trace", action="store_true", help="accepted for compatibility: the read-size trace is on by "
+                                                            "default for every arm (NFS READ on EFS, block reads on EBS)")
+    r.add_argument("--no-read-size-trace", action="store_true", help="do not trace device read sizes per cold iteration "
+                                                                     "(the device-read check then uses mountstats / diskstats)")
+    r.add_argument("--poc-read-ahead-kb", type=int, default=POC_READ_AHEAD_KB,
+                   help="read_ahead_kb of the bufferpool arms' data devices (stock arms keep the as-mounted default)")
     r.add_argument("--max-read-bytes", type=int, default=131072, help="largest configured IO size; check io_size_ok")
     r.add_argument("--out", required=True)
     p = sub.add_parser("probe")
@@ -846,6 +974,8 @@ def main():
     p.add_argument("--strict", action="store_true")
     p.add_argument("--seed", default="coldpath")
     p.add_argument("--nfs-trace", action="store_true")
+    p.add_argument("--no-read-size-trace", action="store_true")
+    p.add_argument("--poc-read-ahead-kb", type=int, default=POC_READ_AHEAD_KB)
     p.add_argument("--max-read-bytes", type=int, default=131072)
     pl = sub.add_parser("plan")
     pl.add_argument("--ops", required=True)

@@ -49,8 +49,9 @@ python3 selftest_generic.py --osb-workloads OSBW [--lucene-fork LUCENE_FORK --fo
 ## What is kept from the main harness
 - IO configuration: no O_DIRECT (buffered reads), random reads 32 KiB, sequential reads 128 KiB, 8 KiB cache block:
   these are node and arm settings of the main arms file and the POC artifact; `arms_generic.py` copies the arms,
-  base switches and cluster settings unchanged, and the sessions use the same `--read-ahead-kb 128`,
-  `--max-read-bytes 131072` and `--nfs-trace` IO-size checks.
+  base switches and cluster settings unchanged, and the sessions use the same per-arm kernel readahead (stock arms as
+  mounted, bufferpool arms 128 KiB, set and verified before and after every run), device read-size trace and
+  device-reads-equal-bufferpool-windows check (README.md, cold protocol item 5).
 - Cold protocol before every iteration: idle prefetch pool, `POST /_bufferpool/cache/_clear`, `POST /_cache/clear`,
   agent pageout + sync + `drop_caches`, verification (cached_blocks 0, mincore residency of every member's files,
   reads reached the device or the NFS server), `request_cache=false` on every op (also on `cache: true` ops).
@@ -81,7 +82,8 @@ python3 selftest_generic.py --osb-workloads OSBW [--lucene-fork LUCENE_FORK --fo
   stock exits "not available"). The DualNav variant uses luceneutil's own `postingsFormat`.
 - `run_luceneutil.py plan|run|index|copy`: N interleaved arms through luceneutil's own API (rotation per JVM
   iteration, same seeds), modes warm / cold-luceneutil / cold-strict, EBS and EFS index copies (copied with sha256
-  verification), readahead set to 128 KiB through the agent, luceneutil's simpleReport and verifyScores /
+  verification), kernel readahead of the index storage set and verified through the agent (mode "default", as
+  mounted, for every arm: luceneutil reads through MMapDirectory in every arm, there is no bufferpool), luceneutil's simpleReport and verifyScores /
   verifyCounts per arm vs the base. `analyze_luceneutil.py` converts the logs into a coldbench session for analyze.py.
 - Not testable in luceneutil (OpenSearch plugin code): C, D-a, D-b, K1, E/E8, C2/C3e; the bufferpool 8 / 32 /
   128 KiB configuration applies to the OpenSearch arms, luceneutil reads through MMapDirectory and the page cache.

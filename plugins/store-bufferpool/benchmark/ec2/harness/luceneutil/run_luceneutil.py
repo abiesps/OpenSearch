@@ -117,16 +117,18 @@ if not os.path.exists(tasks_file):
 st = S["storage_spec"]
 # the index copy of this storage: luceneutil resolves every index path through constants.INDEX_DIR_BASE
 constants.INDEX_DIR_BASE = st["index_dir_base"]
-# kernel readahead of the storage's data mount set to the non-random IO size (and recorded) through the agent, so
-# MMapDirectory reads are the configured sizes on EBS and EFS alike (buffered IO, no O_DIRECT)
-if st.get("read_ahead_kb") is not None:
-    import urllib.request
-    tok = open(st["agent_token_file"]).read().strip()
-    req = urllib.request.Request(f"{st['agent_url']}/readahead?arm={st['agent_arm']}&kb={st['read_ahead_kb']}",
-                                 method="POST", headers={"X-Coldpath-Token": tok})
-    ra = json.loads(urllib.request.urlopen(req, timeout=60).read())
-    json.dump(ra, open(os.path.join(OUT, "readahead.json"), "w"))
-    print("readahead", ra)
+# kernel readahead of every layer of the storage's data path, set through the agent, verified and recorded: every
+# luceneutil arm reads through MMapDirectory (no bufferpool), so all arms use the same mode, "default" = as mounted
+# (common-rules: stock mmap keeps the kernel readahead); a run whose value differs is refused
+import urllib.request
+tok = open(st["agent_token_file"]).read().strip()
+req = urllib.request.Request(f"{st['agent_url']}/readahead/mode?arm={st['agent_arm']}&mode={st.get('read_ahead_mode', 'default')}",
+                             method="POST", headers={"X-Coldpath-Token": tok})
+ra = json.loads(urllib.request.urlopen(req, timeout=60).read())
+json.dump(ra, open(os.path.join(OUT, "readahead.json"), "w"))
+print("readahead", ra)
+if not ra.get("ok"):
+    raise SystemExit(f"readahead is not {st.get('read_ahead_mode', 'default')}: {ra}; not measuring")
 indices, comps = {}, {}
 for a in S["arms"]:
     if a.get("not_applicable"):

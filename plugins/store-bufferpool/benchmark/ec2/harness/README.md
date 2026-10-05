@@ -33,9 +33,16 @@ its own client and records network time only (`wall_ms`) and the server's `took`
    and EFS); after the query, if anything was read, the reads reached storage: EBS diskstats reads > 0 and JVM
    `read_bytes` > 0; EFS NFS READ ops > 0. With empty caches the first read of the iteration is a miss by
    construction. A sample that fails is marked `cold_ok=false` and excluded (`--strict` aborts).
-5. IO-size check (`--max-read-bytes`, default 128 KiB): EFS READ sizes from the tracefs histogram (`--nfs-trace`)
-   or the mountstats average; `read_ahead_kb` of the data mount is set per run (`--read-ahead-kb` or the arm's
-   `read_ahead_kb`) and recorded.
+5. IO sizes and kernel readahead (common-rules.md, kernel readahead section and DECISION 2026-10-04 ~19:45): before
+   and after every arm run the agent sets and verifies `read_ahead_kb` on every layer of the arm's data path (NFS
+   bdi on EFS; block device and any dm/LUKS layer on EBS, plus `blockdev --setra`): stock arms keep the as-mounted
+   default (mmap readahead), bufferpool arms run with 128 KiB (`--poc-read-ahead-kb`; with the bufferpool's
+   POSIX_FADV_RANDOM one window is one device read). A run whose value differs is refused. Every cold iteration
+   traces the device read sizes (NFS READ RPCs on EFS, block read requests on EBS; `--no-read-size-trace` falls back
+   to mountstats / diskstats); for bufferpool arms the device reads, bytes and size classes must equal the
+   bufferpool's reads + prefetch_reads, bytes_read and reads_by_size (`device_reads_are_windows`), else the iteration
+   fails verification and the run is marked invalid (`run_end.valid`, `session_end.invalid_runs`); `io_size_ok`
+   (`--max-read-bytes`) applies to bufferpool arms only. The agent applies each storage's last mode again after a reboot.
 EFS server-side caching cannot be cleared from the client; it is part of the storage (as in AOSS) and is the same for
 every EFS arm.
 

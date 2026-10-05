@@ -83,9 +83,9 @@ class ColdSearch:
     def _before(self):
         st = _st()
         pre_state = st.it.clear()
-        trace = _cfg.get("nfs_trace") and _cfg["arm"].get("storage") == "EFS" and st.node.agent is not None
+        trace = _cfg.get("read_size_trace") if st.node.agent is not None else None
         if trace:
-            st.node.agent.request("POST", "/trace/nfs/_start")
+            st.node.agent.request("POST", f"/trace/{trace}/_start?arm={_cfg['arm']['node']}")
         return pre_state, st.it.snapshot(), trace
 
     def _after(self, params, pre_state, pre, trace, result, wall):
@@ -94,7 +94,8 @@ class ColdSearch:
         post = st.it.snapshot()
         io = coldbench.io_delta(pre, post)
         if trace:
-            io["nfs_read_sizes"] = st.node.agent.request("POST", "/trace/nfs/_stop")
+            io["nfs_read_sizes" if trace == "nfs" else "block_read_sizes"] = st.node.agent.request(
+                "POST", f"/trace/{trace}/_stop?arm={_cfg['arm']['node']}")
         ok, checks = st.it.verify(pre_state, io)
         op = params["coldpath-op"]
         key = ("cold", op, params["coldpath-pos"])
@@ -196,7 +197,7 @@ def run_block(session, it, run, index, mode, ordered_ops, iters, warmup=0):
     cfg = {"harness_dir": here, "url": a.url, "agent": a.agent, "token_file": a.token_file, "arm": it.arm,
            "uuids": it.uuids, "residency_every": a.residency_every, "residency_tolerance": a.residency_tolerance,
            "samples_path": os.path.join(a.out, "samples.jsonl"), "run": run, "strict": a.strict,
-           "nfs_trace": a.nfs_trace}
+           "read_size_trace": getattr(session, "read_trace_kind", None)}
     cfg_path = os.path.join(base, "coldpath-osb.json")
     with open(cfg_path, "w") as f:
         json.dump(cfg, f)

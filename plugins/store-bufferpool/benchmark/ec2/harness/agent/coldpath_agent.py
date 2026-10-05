@@ -33,6 +33,14 @@ Endpoints (JSON in and out):
   POST /readahead?kb=N|default       sets read_ahead_kb of the data path's backing device (/sys/class/bdi/<maj:min>,
                                      the NFS mount's bdi on EFS) so the kernel does not enlarge reads; "default"
                                      restores the value recorded the first time (state_file)
+  GET  /readahead?mode=default|KIB   kernel readahead of every layer of the data path (NFS bdi; EBS block device and
+                                     any dm/LUKS layer below it, read_ahead_kb and blockdev --getra), the recorded
+                                     as-mounted default of each layer, and ok = every layer at the mode's target
+  POST /readahead/mode?mode=default|KIB  sets every layer (default = as mounted: stock arms; 128 = POC arms, the
+                                     largest bufferpool window), reads back, returns the same as GET /readahead; the
+                                     last mode per arm storage is applied again after a reboot (coldpath_readahead.py)
+  POST /trace/block/_start, _stop    tracefs block:block_rq_issue (private instance): histogram of the size of every
+                                     read request issued to the data path's disks (EBS device read sizes)
   POST /trace/nfs/_start, _stop      tracefs nfs:nfs_initiate_read: histogram of the byte count of every READ RPC
                                      sent to EFS between start and stop (the per-read request size)
   GET  /node/status                  running JVM pid and command line, last started arm
@@ -57,6 +65,9 @@ import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import coldpath_readahead  # noqa: E402 - installed next to this file
 
 VERSION = "1"
 PAGE = os.sysconf("SC_PAGE_SIZE")
@@ -90,6 +101,7 @@ class Agent:
         self.storages = {None: (config["data_path"], config.get("device"))}
         for name, arm in config.get("arms", {}).items():
             self.storages[name] = (arm.get("data_path", config["data_path"]), arm.get("device", config.get("device")))
+        self.readahead = coldpath_readahead.Readahead(config, self.storages, self._storage)
 
     def _storage(self, data_path, device):
         """Where an arm keeps its data: the path, the mount it is on (EBS block device or NFS/EFS), the device."""
@@ -577,6 +589,15 @@ def make_handler(agent, token):
                 elif route == ("POST", "/readahead"):
                     with agent.lock:
                         out = agent.set_readahead(st, q["kb"])
+                elif route == ("GET", "/readahead"):
+                    out = agent.readahead.read(st, q.get("mode"))
+                elif route == ("POST", "/readahead/mode"):
+                    with agent.lock:
+                        out = agent.readahead.set_mode(q.get("arm"), st, q["mode"])
+                elif route == ("POST", "/trace/block/_start"):
+                    out = coldpath_readahead.block_trace_start()
+                elif route == ("POST", "/trace/block/_stop"):
+                    out = coldpath_readahead.block_trace_stop(agent.readahead.layers(st))
                 elif route == ("POST", "/trace/nfs/_start"):
                     out = agent.nfs_trace_start()
                 elif route == ("POST", "/trace/nfs/_stop"):
@@ -622,6 +643,7 @@ def main():
     if len(token) < 16:
         sys.exit("token_file must hold a token of at least 16 characters")
     agent = Agent(cfg)
+    agent.readahead.restore_after_boot(lambda m: sys.stderr.write(m + "\n"))
     server = ThreadingHTTPServer((cfg.get("listen", "127.0.0.1"), int(cfg.get("port", 9700))), make_handler(agent, token))
     sys.stderr.write(f"coldpath agent {VERSION} on {server.server_address}, storages {agent.storages}\n")
     server.serve_forever()
