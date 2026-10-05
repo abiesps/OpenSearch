@@ -122,10 +122,19 @@ def convert(session_dir, out_dir, reference=None):
             jvm_io = _io(js.get("pre"), js.get("post"))
             jvm_io["window"] = "jvm_run"
         efs_target = m.get("efs_connections_target")
+        inc = m.get("storage_incidents") or {}
+        if inc.get("windows"):
+            # luceneutil logs task times relative to the JVM, not wall clock: the whole JVM run is treated as inside the
+            # stall (conservative); every sample of the run gets t = run end, and the window covers the run
+            w.write({"schema": SCHEMA, "type": "storage_incident", "run_id": run_id, "label": label,
+                     "windows": [{"start": m["epoch_start"], "end": m["epoch_end"], "server": x.get("server"),
+                                  "kernel_window": [x["start"], x["end"]]} for x in inc["windows"]]})
         last = {}
         for i, t in enumerate(res["tasks"]):
             rec = {"schema": SCHEMA, "type": "sample", "mode": mode, **run, "op": t.key, "iter": counts[(run_id, t.key)],
                    "took_ms": t.msec, "wall_ms": t.msec, "requests": 1, "digest": t.digest(), "thread": t.thread}
+            if m.get("epoch_end") is not None:
+                rec["t"] = m["epoch_end"]
             counts[(run_id, t.key)] += 1
             if session["mode"] == "cold-luceneutil" and rec["iter"] > 0:
                 last[t.key] = t

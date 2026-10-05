@@ -813,7 +813,10 @@ def part_f(tmp, fork, fork_commit):
         for m in manifest:
             m = dict(m, log=m["log"].replace(sess, efs), stdout=m["stdout"].replace(sess, efs), efs_connections_target=5,
                      jvm_snapshots={"pre": snap(1 if (m["label"] == "L2-A" and m["iter"] == 1) else 5, 77, 0),
-                                    "post": snap(5, 77, 1000)})
+                                    "post": snap(5, 77, 1000)},
+                     epoch_start=1000.0 * (m["iter"] + 1), epoch_end=1000.0 * (m["iter"] + 1) + 50,
+                     storage_incidents={"available": True, "windows": [{"server": "127.0.0.1", "start": 3010.0, "end": 3020.0}]
+                                        if m["iter"] == 2 else []})
             f.write(json.dumps(m) + "\n")
     analyze_luceneutil.convert(efs, os.path.join(efs, "coldbench"))
     smp = [json.loads(l) for l in open(os.path.join(efs, "coldbench", "samples.jsonl")) if '"type": "sample"' in l]
@@ -822,6 +825,10 @@ def part_f(tmp, fork, fork_commit):
     check(bad_run and all(x["efs_connections_ok"] is False for x in bad_run) and all(x["efs_connections_ok"] for x in good)
           and all(x["io"]["efs_connections"]["start"] in (1, 5) for x in smp),
           "(f) EFS warm samples carry the JVM run's connection count; 1 -> 5 is not valid")
+    inc = [json.loads(l) for l in open(os.path.join(efs, "coldbench", "samples.jsonl")) if '"type": "storage_incident"' in l]
+    check(len(inc) == 2 and all(x["windows"][0]["start"] == 3000.0 and x["windows"][0]["end"] == 3050.0 for x in inc)
+          and all(x.get("t") for x in smp),
+          "(f) a kernel NFS stall in a JVM run marks the whole run as a storage incident; samples carry t")
 
 
 def main():

@@ -258,6 +258,7 @@ def run_one(label, it, seed, remeasure=False):
     for attempt in range(JVM_RETRIES + 1):
         snap_pre = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
         t0 = time.time()
+        epoch0 = t0
         try:
             log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
         except RuntimeError as e:
@@ -280,6 +281,15 @@ def run_one(label, it, seed, remeasure=False):
         with open(os.path.join(OUT, "failed-runs.jsonl"), "a") as f:
             f.write(json.dumps({"label": label, "iter": it, "failures": failures}) + "\n")
         raise SystemExit(f"{label} iteration {it}: {len(failures)} JVM attempts failed: stopping")
+    # kernel NFS stall windows ("nfs: server X not responding" .. "OK", agent v3) during the run: a hard mount blocks
+    # every reader while it lasts, so the run measured the stall; it is excluded from verdicts and re-measured
+    incidents = None
+    if st["index_dir_base"].startswith("/mnt/efs") or efs_target:
+        try:
+            incidents = agent(st, "GET", f"/storage/incidents?since={epoch0 - 1:.3f}&until={time.time() + 1:.3f}")
+        except Exception as e:  # an agent without the route: recorded as unknown, never as no stall
+            incidents = {"available": False, "error": str(e)[:300]}
+    stalled = bool(incidents and incidents.get("windows"))
     # an efs-proxy restart drops the mount to 1 connection until 300 MiB/s returns: such samples are not a reason to
     # stop; they are excluded from the reference verdict by the analysis and the label gets a re-measure JVM run at the end
     efs_invalid = 0
@@ -290,6 +300,8 @@ def run_one(label, it, seed, remeasure=False):
                     efs_invalid += 1
         elif not efs_ok(snap_pre.get("efs_connections"), snap_post.get("efs_connections"), efs_target):
             efs_invalid = 1
+    if stalled:
+        efs_invalid = max(efs_invalid, 1)
     if strict:
         # every task must have started with the index files out of the page cache (mincore residency after the
         # agent's pageout + drop); a JVM run with a task that was not cold invalidates the session's protocol
@@ -305,7 +317,8 @@ def run_one(label, it, seed, remeasure=False):
                                "switches": c.coldpath["switches"], "wall_s": wall, "efs_connections_target": efs_target,
                                "efs_precondition": efs_pre, "jvm_snapshots": {"pre": snap_pre, "post": snap_post},
                                "efs_invalid_samples": efs_invalid, "remeasure": remeasure,
-                               "failed_attempts": failures}) + "\n")
+                               "failed_attempts": failures, "epoch_start": epoch0, "epoch_end": epoch0 + wall,
+                               "storage_incidents": incidents}) + "\n")
     manifest.flush()
     return efs_invalid
 
