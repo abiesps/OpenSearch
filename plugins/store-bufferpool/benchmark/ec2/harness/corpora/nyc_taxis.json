@@ -26,6 +26,20 @@
     "params": {}
   },
   "reference_op": "gen:range_pickup_datetime_1d",
+  "ingest_bulk_ops": {
+    "append": [
+      "index"
+    ]
+  },
+  "create_index_settings": {
+    "index.codec": "best_compression",
+    "index.refresh_interval": "30s",
+    "index.translog.flush_threshold_size": "4g"
+  },
+  "known_rejected_docs": {
+    "count": 1,
+    "reason": "the workload maps tip_amount as half_float (max 65504); one corpus document has tip_amount 3950588.8 and every OpenSearch build rejects it with HTTP 400 (stock ingest: br-nyctaxis/ingest.json doc_count_check)"
+  },
   "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
   "date_fields": [
     "dropoff_datetime"

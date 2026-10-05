@@ -128,6 +128,11 @@ def derive(osb_workloads, corpus, out, shards=None, replicas=0, renames=None, sp
         st.pop("number_of_replicas", None)
         st["index.number_of_replicas"] = int(replicas)
         overrides.append(f"{idx['name']}: index.number_of_replicas={replicas}")
+        # the settings the workload's default test procedure adds at create-index (default_index_settings of
+        # common_operations/create_index.json, e.g. nyc_taxis: best_compression, refresh 30s), which index.json lacks
+        for k, v in (profile.get("create_index_settings") or {}).items():
+            st[k] = v
+            overrides.append(f"{idx['name']}: {k}={v} (the default test procedure's create-index settings)")
         if store_type:
             # the POC plugin's codec (split BKD points, per-field postings formats) is used only for bufferpoolfs
             # indices (BufferPoolStorePlugin.getCustomCodecServiceFactory), so a B index and a POC ingest-check entry
@@ -185,7 +190,8 @@ def derive(osb_workloads, corpus, out, shards=None, replicas=0, renames=None, sp
                         "documents": [{k: d.get(k) for k in ("source-file", "document-count", "compressed-bytes",
                                                              "uncompressed-bytes", "target-index")} for d in c["documents"]]}
                        for c in corpora],
-           "expected_docs": {i["name"]: _expected_docs(corpora, i["source_index"], i["name"], len(indices)) for i in indices}}
+           "expected_docs": {i["name"]: _expected_docs(corpora, i["source_index"], i["name"], len(indices)) for i in indices},
+           "known_rejected_docs": profile.get("known_rejected_docs")}
     with open(os.path.join(out, "derivation.json"), "w") as f:
         json.dump(rec, f, indent=1)
     return rec
@@ -268,9 +274,16 @@ def run_osb(derived, url, out_json, osb_bin, user_tag="", force_recreate=False):
     recreated = refuse_existing(JsonClient(url), [i["name"] for i in rec["indices"]], force_recreate)
     results = os.path.splitext(out_json)[0] + ".osb.csv"
     host = url.split("://", 1)[1].rstrip("/")
+    # A corpus whose profile declares documents that every OpenSearch build rejects (mapping limits) is ingested
+    # with OSB's default on-error=continue, like the stock ingest; the doc count must then be exactly
+    # document-count - known rejects (single-index workloads only), so no other failure can pass.
+    known = rec.get("known_rejected_docs")
+    if known and len(rec["indices"]) != 1:
+        raise RuntimeError("known_rejected_docs is supported for single-index workloads only")
+    on_error = "continue" if known else "abort"
     cmd = [osb_bin, osb_cold.osb_subcommand(osb_bin), "--pipeline=benchmark-only", f"--workload-path={derived}",
-           "--test-procedure=coldpath-ingest", f"--target-hosts={host}", "--kill-running-processes", "--on-error=abort",
-           f"--results-file={results}", "--results-format=csv"]
+           "--test-procedure=coldpath-ingest", f"--target-hosts={host}", "--kill-running-processes",
+           f"--on-error={on_error}", f"--results-file={results}", "--results-format=csv"]
     if user_tag:
         cmd.append(f"--user-tag={user_tag}")
     if url.startswith("https"):
@@ -286,10 +299,11 @@ def run_osb(derived, url, out_json, osb_bin, user_tag="", force_recreate=False):
     client = JsonClient(url)
     names = [i["name"] for i in rec["indices"]]
     metrics = index_metrics(client, names)
-    bad = {n: (m["docs"], rec["expected_docs"][n]) for n, m in metrics.items()
-           if rec["expected_docs"].get(n) and m["docs"] != rec["expected_docs"][n] and rec["procedure"] == "append"}
+    expected = {n: v - (int(known["count"]) if known else 0) for n, v in rec["expected_docs"].items() if v}
+    bad = {n: (m["docs"], expected[n]) for n, m in metrics.items()
+           if expected.get(n) and m["docs"] != expected[n] and rec["procedure"] == "append"}
     out = {"derivation": rec, "osb_cmd": cmd, "wall_s": wall, "osb": osb_results(results), "indices": metrics,
-           "recreated_existing": recreated,
+           "recreated_existing": recreated, "on_error": on_error, "expected_docs_after_known_rejects": expected,
            "doc_count_ok": not bad, "doc_count_mismatch": bad,
            "node": client.request("GET", "/"), "t": time.time()}
     with open(out_json, "w") as f:

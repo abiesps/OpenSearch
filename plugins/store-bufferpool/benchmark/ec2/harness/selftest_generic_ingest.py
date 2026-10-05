@@ -76,6 +76,21 @@ def part_g(osbw, tmp, check, generic):
     body = json.load(open(os.path.join(out, "index-logs_split-241998.json")))
     check(body["mappings"]["properties"]["@timestamp"].get("meta") == {"points_format": "Lucene90Split"} and
           body["settings"]["index.store.type"] == "bufferpoolfs", "(g) http_logs: split meta and bufferpoolfs")
+    # nyc_taxis (main workflow): only the index op (not update), the default procedure's create-index settings, and
+    # the one document every build rejects (tip_amount outside half_float) declared, so OSB continues on that error
+    out = os.path.join(tmp, "ingest-nyc_taxis-split")
+    rec = ingest_osb.derive(osbw, "nyc_taxis", out, shards=6, renames={"nyc_taxis": "nyc_taxis_split"},
+                            split_fields=["pickup_datetime", "dropoff_datetime"], store_type="bufferpoolfs")
+    body = json.load(open(os.path.join(out, "index-nyc_taxis_split.json")))
+    st = body["settings"]
+    check(rec["bulk_ops"] == ["index"] and st["index.codec"] == "best_compression" and
+          st["index.refresh_interval"] == "30s" and st["index.translog.flush_threshold_size"] == "4g" and
+          st["index.store.type"] == "bufferpoolfs" and
+          all(body["mappings"]["properties"][f].get("meta") == {"points_format": "Lucene90Split"}
+              for f in ("pickup_datetime", "dropoff_datetime")),
+          "(g) nyc_taxis: index op only, the default procedure's create-index settings, split meta, bufferpoolfs")
+    check(rec["expected_docs"] == {"nyc_taxis_split": 165346692} and rec["known_rejected_docs"]["count"] == 1,
+          "(g) nyc_taxis: expected docs = document-count, one known rejected document recorded")
     try:
         ingest_osb.derive(osbw, "so", os.path.join(tmp, "ingest-bad"), split_fields=["title"])
         check(False, "(g) split meta refused on a text field")
