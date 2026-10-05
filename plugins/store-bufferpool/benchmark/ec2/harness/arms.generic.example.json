@@ -1166,8 +1166,598 @@
     "C"
    ],
    "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext) [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S2-A-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A"
+   ],
+   "note": "[generic: EBS copy of S2-A-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-B-EBS": {
+   "not_applicable": "split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points)",
+   "was": {
+    "atoms": [
+     "B"
+    ],
+    "index": "split_ebs"
+   }
+  },
+  "S2-B+A-EBS": {
+   "not_applicable": "split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); without B it is the same arm as S2-A-EBS",
+   "was": {
+    "atoms": [
+     "A",
+     "B"
+    ],
+    "index": "split_ebs"
+   }
+  },
+  "S2-C-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "C"
+   ],
+   "note": "planner [generic: EBS copy of S2-C-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-E-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "E"
+   ],
+   "note": "[generic: EBS copy of S2-E-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-E8-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true&sort_lookahead=8",
+     "verify": {
+      "sort_prefetch": "true",
+      "sort_lookahead": "8"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "E8"
+   ],
+   "note": "look-ahead 8: set the real parameter name from the final POC binary; until then 400 = NOT AVAILABLE [generic: EBS copy of S2-E8-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-K2-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K2"
+   ],
+   "note": "[generic: EBS copy of S2-K2-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-K3-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K3"
+   ],
+   "note": "[generic: EBS copy of S2-K3-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-K4-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K4"
+   ],
+   "note": "[generic: EBS copy of S2-K4-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-AGG-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "AGG"
+   ],
+   "note": "agg batch collection C2 + doc-values prefetch C3e (pfwc) [generic: EBS copy of S2-AGG-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-ORPF-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "ORPF"
+   ],
+   "note": "OR-query postings prefetch; set blocks from the final POC report [generic: EBS copy of S2-ORPF-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-TOPK-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "TOPK"
+   ],
+   "note": "top-k norms/postings prefetch; set blocks from the final POC report [generic: EBS copy of S2-TOPK-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-K1-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?clamp=true",
+     "verify": {
+      "clamp": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "K1"
+   ],
+   "note": "SHORTCUT, informational [generic: EBS copy of S2-K1-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-Da-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_single=true",
+     "verify": {
+      "approx_single": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "Da"
+   ],
+   "note": "SHORTCUT, informational [generic: EBS copy of S2-Da-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-Db-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_bool=true",
+     "verify": {
+      "approx_bool": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "Db"
+   ],
+   "note": "SHORTCUT, informational [generic: EBS copy of S2-Db-EFS, common-rules: POC arms on both storages]"
+  },
+  "S2-CORE+PLANNER-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK",
+    "C"
+   ],
+   "note": "TARGET (headline) [generic: EBS copy of S2-CORE+PLANNER-EFS, common-rules: POC arms on both storages] [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S2-ALL-EBS": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?clamp=true",
+     "verify": {
+      "clamp": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_single=true",
+     "verify": {
+      "approx_single": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?approx_bool=true",
+     "verify": {
+      "approx_bool": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK",
+    "C",
+    "K1",
+    "Da",
+    "Db"
+   ],
+   "note": "informational only (includes shortcuts) [generic: EBS copy of S2-ALL-EFS, common-rules: POC arms on both storages] [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
   }
  },
+ "other_indices": "close",
  "_generic": {
   "corpus": "geoshape",
   "layout": "multi",
@@ -1178,6 +1768,24 @@
    "reason": "no date field (shape is a geo_shape: 7-D triangle points)"
   },
   "changes": [
+   "S2-A-EBS: added (EBS copy of S2-A-EFS)",
+   "S2-B-EBS: added (EBS copy of S2-B-EFS)",
+   "S2-B+A-EBS: added (EBS copy of S2-B+A-EFS)",
+   "S2-C-EBS: added (EBS copy of S2-C-EFS)",
+   "S2-E-EBS: added (EBS copy of S2-E-EFS)",
+   "S2-E8-EBS: added (EBS copy of S2-E8-EFS)",
+   "S2-K2-EBS: added (EBS copy of S2-K2-EFS)",
+   "S2-K3-EBS: added (EBS copy of S2-K3-EFS)",
+   "S2-K4-EBS: added (EBS copy of S2-K4-EFS)",
+   "S2-AGG-EBS: added (EBS copy of S2-AGG-EFS)",
+   "S2-ORPF-EBS: added (EBS copy of S2-ORPF-EFS)",
+   "S2-TOPK-EBS: added (EBS copy of S2-TOPK-EFS)",
+   "S2-K1-EBS: added (EBS copy of S2-K1-EFS)",
+   "S2-Da-EBS: added (EBS copy of S2-Da-EFS)",
+   "S2-Db-EBS: added (EBS copy of S2-Db-EFS)",
+   "S2-CORE+PLANNER-EBS: added (EBS copy of S2-CORE+PLANNER-EFS)",
+   "S2-ALL-EBS: added (EBS copy of S2-ALL-EFS)",
+   "other_indices: close",
    "S2-B-EFS: not applicable (B only)",
    "S2-B+A-EFS: not applicable (without B = S2-A-EFS)",
    "S2-CORE-EFS: without B on stock_efs",
@@ -1185,7 +1793,11 @@
    "S2-ALL-EFS: without B on stock_efs",
    "S2-CORE-EBS: without B on stock_ebs",
    "S2-CORE-EFS-css: without B on stock_efs",
-   "S2-CORE+PLANNER-EFS-css: without B on stock_efs"
+   "S2-CORE+PLANNER-EFS-css: without B on stock_efs",
+   "S2-B-EBS: not applicable (B only)",
+   "S2-B+A-EBS: not applicable (without B = S2-A-EBS)",
+   "S2-CORE+PLANNER-EBS: without B on stock_ebs",
+   "S2-ALL-EBS: without B on stock_ebs"
   ]
  }
 }

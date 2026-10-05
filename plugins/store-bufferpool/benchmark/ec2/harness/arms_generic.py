@@ -21,6 +21,13 @@ outcome block. Only the [indices] section and what follows from the corpus are c
       a combined arm (CORE, CORE+PLANNER, ALL, their -css variants)  -> runs on the stock-format index without B
     and split_* keys are removed from every arm's open / store_types.
 coldbench reports a not-applicable arm as "Not available (gaps, not zero effects)".
+Also (harness-ext review findings 4 and 7):
+  - every S2-x-EFS arm of the base that has no S2-x-EBS gets one (common-rules "Both storages": every POC arm is
+    first-class on EBS and EFS): the same atoms, switches, cluster settings and bufferpool store types, on node
+    POC-EBS and the *_ebs index keys (the rule that turns the base's S2-CORE-EFS into its S2-CORE-EBS). Arms the base
+    already has on EBS are kept as they are. -css variants are not copied.
+  - "other_indices": "close" (unless the base sets it): on a grouped host the other workloads' open indices are
+    closed before the arm's indices open (GENERIC-PLAN section 2).
 
   arms_generic.py build --base arms.example.json --corpus geoshape --layout multi --shards 6 --segments 10 \
       --out arms.geoshape.json
@@ -32,6 +39,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sys
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -76,6 +84,33 @@ def indices_for(profile, layout, shards, segments, min_store_gb=30, member_segme
                 e["name"] = ",".join(m["name"] for m in members)
             out[key] = e
     return out
+
+
+def _ebs_key(k):
+    if not k.endswith("_efs"):
+        raise ValueError(f"index key {k}: an EFS arm's keys end with _efs")
+    return k[:-4] + "_ebs"
+
+
+def add_ebs_arms(cfg):
+    """Adds S2-x-EBS for every S2-x-EFS (not -css) the arms file lacks; returns the change list."""
+    arms, changes = cfg["arms"], []
+    for n, a in list(arms.items()):
+        m = re.fullmatch(r"(S2-.+)-EFS", n)
+        if not m or a.get("not_applicable") or m.group(1) + "-EBS" in arms:
+            continue
+        if a.get("node") != "POC-EFS" or a.get("storage") != "EFS" or not a.get("bufferpool"):
+            raise ValueError(f"{n}: expected a POC-EFS bufferpool arm on EFS, got node {a.get('node')} storage "
+                             f"{a.get('storage')}")
+        e = copy.deepcopy(a)
+        e["node"], e["storage"] = "POC-EBS", "EBS"
+        e["index"] = _ebs_key(a["index"])
+        e["open"] = [_ebs_key(k) for k in a["open"]]
+        e["store_types"] = {_ebs_key(k): v for k, v in a.get("store_types", {}).items()}
+        e["note"] = (a.get("note", "") + f" [generic: EBS copy of {n}, common-rules: POC arms on both storages]").strip()
+        arms[m.group(1) + "-EBS"] = e
+        changes.append(f"{m.group(1)}-EBS: added (EBS copy of {n})")
+    return changes
 
 
 def adapt_arms(base, profile, indices):
@@ -130,7 +165,12 @@ def cmd_build(a):
     base = json.loads(base_raw)
     profile = load_profile(a.corpus)
     idx = indices_for(profile, a.layout, a.shards, a.segments, a.min_store_gb, _member_segments(a))
-    cfg, changes = adapt_arms(base, profile, idx)
+    with_ebs = copy.deepcopy(base)
+    changes = add_ebs_arms(with_ebs)
+    with_ebs.setdefault("other_indices", "close")
+    changes.append(f"other_indices: {with_ebs['other_indices']}")
+    cfg, more = adapt_arms(with_ebs, profile, idx)
+    changes += more
     cfg["_generic"] = {"corpus": a.corpus, "layout": a.layout, "base_arms_file": a.base,
                        "base_arms_sha256": hashlib.sha256(base_raw).hexdigest(), "split_bkd": profile.get("split_bkd"),
                        "changes": changes}

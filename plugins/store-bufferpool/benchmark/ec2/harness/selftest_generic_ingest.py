@@ -83,3 +83,61 @@ def part_g(osbw, tmp, check, generic):
     one = arms_generic.indices_for(arms_generic.load_profile("geoshape"), "single", 6, 10)
     check(one["stock_ebs"]["name"] == "osmpolygons_1s" and one["stock_ebs"]["shards"] == 1 and
           one["stock_ebs"]["min_store_bytes"] == 30 << 30, "(g) geoshape single shard: osmpolygons, 1 shard, >= 30 GB")
+    # EBS copies of every S2 POC arm (common-rules "Both storages") and other_indices=close (review findings 7, 4)
+    import copy as _copy
+    with_ebs = _copy.deepcopy(base)
+    added = arms_generic.add_ebs_arms(with_ebs)
+    efs = sorted(n for n, a in base["arms"].items() if n.startswith("S2-") and n.endswith("-EFS"))
+    check(all(n[:-4] + "-EBS" in with_ebs["arms"] for n in efs), "(g) every S2-x-EFS arm has an S2-x-EBS arm")
+    check(len(added) == sum(1 for n in efs if n[:-4] + "-EBS" not in base["arms"]) and
+          with_ebs["arms"]["S2-CORE-EBS"] == base["arms"]["S2-CORE-EBS"], "(g) arms the base has on EBS are kept as they are")
+    mirror = arms_generic.add_ebs_arms({"arms": {"S2-CORE-EFS": _copy.deepcopy(base["arms"]["S2-CORE-EFS"])}})
+    check(mirror == ["S2-CORE-EBS: added (EBS copy of S2-CORE-EFS)"], "(g) the copy rule names its source")
+    m = {"arms": {"S2-CORE-EFS": _copy.deepcopy(base["arms"]["S2-CORE-EFS"])}}
+    arms_generic.add_ebs_arms(m)
+    strip = lambda a: {k: v for k, v in a.items() if k != "note"}  # noqa: E731
+    check(strip(m["arms"]["S2-CORE-EBS"]) == strip(base["arms"]["S2-CORE-EBS"]),
+          "(g) the copy rule turns the base's S2-CORE-EFS into exactly its hand-written S2-CORE-EBS")
+    for n in efs:
+        a, e = with_ebs["arms"][n], with_ebs["arms"][n[:-4] + "-EBS"]
+        check(e["node"] == "POC-EBS" and e["storage"] == "EBS" and e.get("switches") == a.get("switches") and
+              e.get("atoms") == a.get("atoms") and e.get("cluster_settings") == a.get("cluster_settings") and
+              all(k.endswith("_ebs") for k in e["open"]), f"(g) {n[:-4]}-EBS: same switches, atoms, settings on EBS")
+    check(not any(n.endswith("-css") for n in set(with_ebs["arms"]) - set(base["arms"])), "(g) -css variants are not copied")
+    ex = json.load(open(os.path.join(here, "arms.generic.example.json")))
+    check(ex["other_indices"] == "close" and "S2-CORE+PLANNER-EBS" in ex["arms"] and "S2-A-EBS" in ex["arms"],
+          "(g) arms.generic.example.json: other_indices close, EBS POC arms present")
+    check(ex["arms"]["S2-B-EBS"].get("not_applicable") and ex["arms"]["S2-CORE+PLANNER-EBS"]["index"] == "stock_ebs",
+          "(g) geoshape: the EBS copies follow the split-BKD applicability like the EFS arms")
+    # ingest_osb.refuse_existing: an index of the workload's own name is never deleted and rebuilt silently
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from common import JsonClient
+
+    have = {"so", "so__ichk1"}
+
+    class H(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):  # noqa: N802
+            name = self.path.split("?")[0].split("/")[-1]
+            body = json.dumps([{"index": name}] if name in have else {"error": "index_not_found_exception"}).encode()
+            self.send_response(200 if name in have else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    cl = JsonClient(f"http://127.0.0.1:{srv.server_address[1]}")
+    try:
+        ingest_osb.refuse_existing(cl, ["so"])
+        check(False, "(g) ingest: an existing index of the workload's name is refused")
+    except RuntimeError as e:
+        check("--force-recreate" in str(e), "(g) ingest: an existing index of the workload's name is refused")
+    check(ingest_osb.refuse_existing(cl, ["so"], force_recreate=True) == ["so"], "(g) ingest: --force-recreate rebuilds it")
+    check(ingest_osb.refuse_existing(cl, ["so__ichk1", "so_split"]) == [],
+          "(g) ingest: the check copies and absent indices are not refused")
+    srv.shutdown()
