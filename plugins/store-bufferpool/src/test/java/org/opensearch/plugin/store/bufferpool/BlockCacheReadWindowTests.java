@@ -516,6 +516,10 @@ public class BlockCacheReadWindowTests extends OpenSearchTestCase {
         final BlockCache.FileStats stats = stats(cache);
         cache.prefetch(file, 1, channel, data.length, 0, 20, stats);
         assertEquals(cache.prefetchTaskPerWindow() ? 2 : 1, cache.rejectedPrefetchTasks());
+        assertEquals(
+            cache.rejectedPrefetchTasks(),
+            (long) cache.scheduler().stats().dropped().get(PrefetchScheduler.DropReason.REJECTED_BY_EXECUTOR)
+        );
         assertEquals(0, cache.pendingPrefetchTasks());
         assertEquals(0, cache.size());
         cache.resetStats();

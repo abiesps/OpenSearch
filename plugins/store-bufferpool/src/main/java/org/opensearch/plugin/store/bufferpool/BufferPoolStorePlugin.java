@@ -27,6 +27,7 @@ import org.opensearch.common.settings.Settings;
 import org.opensearch.common.settings.SettingsFilter;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.OpenSearchExecutors;
+import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
@@ -46,6 +47,7 @@ import org.opensearch.rest.RestHandler;
 import org.opensearch.script.ScriptService;
 import org.opensearch.search.aggregations.DocValuesPrefetch;
 import org.opensearch.search.query.SortIoExperiments;
+import org.opensearch.tasks.TaskResourceTrackingService;
 import org.opensearch.threadpool.ExecutorBuilder;
 import org.opensearch.threadpool.FixedExecutorBuilder;
 import org.opensearch.threadpool.ThreadPool;
@@ -61,6 +63,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -185,9 +188,60 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
         Property.Dynamic
     );
 
-    private static final int PREFETCH_QUEUE_SIZE = 1024;
+    /**
+     * The node read budget: the most prefetch storage reads in flight on this node, and with
+     * {@code bufferpool.prefetch.budget_scope: total} the most prefetch plus demand storage reads at which a prefetch still
+     * starts. Demand reads never wait for it. 1 to 256; default {@code min(8, allocated processors)}, the size of the prefetch
+     * pool before this setting. The {@value #PREFETCH_THREAD_POOL} executor is sized to it, so it needs a node restart. The
+     * value depends on the storage (for example EBS gp3 8 and EFS 24 with scope {@code total}, from the storage model of the
+     * cold-path work); on EFS stay below the NFS session slots of the mount minus a margin.
+     */
+    public static final Setting<Integer> PREFETCH_MAX_IN_FLIGHT_SETTING = new Setting<>(
+        "bufferpool.prefetch.max_in_flight",
+        s -> Integer.toString(Math.min(8, OpenSearchExecutors.allocatedProcessors(s))),
+        s -> Setting.parseInt(s, 1, PrefetchScheduler.MAX_IN_FLIGHT_LIMIT, "bufferpool.prefetch.max_in_flight"),
+        Property.NodeScope
+    );
+
+    /**
+     * What {@code bufferpool.prefetch.max_in_flight} counts: {@code prefetch} (default) prefetch reads only, as before this
+     * setting; {@code total} prefetch plus demand reads, so prefetch uses only the slots that demand reads leave free. Needs a
+     * node restart.
+     */
+    public static final Setting<String> PREFETCH_BUDGET_SCOPE_SETTING = Setting.simpleString(
+        "bufferpool.prefetch.budget_scope",
+        "prefetch",
+        value -> PrefetchScheduler.BudgetScope.parse("bufferpool.prefetch.budget_scope", value),
+        Property.NodeScope
+    );
+
+    /**
+     * The most prefetch items queued on this node while every prefetch slot is busy (0 to 65,536, default 1024). An item that
+     * does not fit is dropped; 0 drops an item when no slot is free. Needs a node restart.
+     */
+    public static final Setting<Integer> PREFETCH_QUEUE_SIZE_SETTING = Setting.intSetting(
+        "bufferpool.prefetch.queue_size",
+        BlockCache.DEFAULT_QUEUE_SIZE,
+        0,
+        PrefetchScheduler.MAX_QUEUE_SIZE,
+        Property.NodeScope
+    );
+
+    /**
+     * Dispatch order of queued prefetch items: {@code fifo} (default) oldest first; {@code fair} round robin over the queries
+     * with queued items, and when the queue is full the longest queue loses an item. Needs a node restart.
+     */
+    public static final Setting<String> PREFETCH_QUEUE_POLICY_SETTING = Setting.simpleString(
+        "bufferpool.prefetch.queue_policy",
+        "fifo",
+        value -> PrefetchScheduler.QueuePolicy.parse("bufferpool.prefetch.queue_policy", value),
+        Property.NodeScope
+    );
 
     private final SetOnce<BlockCache> blockCache = new SetOnce<>();
+    private final SetOnce<PrefetchScheduler> scheduler = new SetOnce<>();
+    /** Registered on every {@value #STORE_TYPE} index; resolves the scheduler when a phase fails. */
+    private final PrefetchTaskListener taskListener = new PrefetchTaskListener(scheduler::get);
     private final SetOnce<ClusterService> clusterService = new SetOnce<>();
     private final SetOnce<IndexNameExpressionResolver> indexNameExpressionResolver = new SetOnce<>();
 
@@ -200,16 +254,30 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
             SEQUENTIAL_READ_SIZE_SETTING,
             READ_HINT_SETTING,
             PREFETCH_TASK_PER_WINDOW_SETTING,
+            PREFETCH_MAX_IN_FLIGHT_SETTING,
+            PREFETCH_BUDGET_SCOPE_SETTING,
+            PREFETCH_QUEUE_SIZE_SETTING,
+            PREFETCH_QUEUE_POLICY_SETTING,
             SIMULATED_LOAD_LATENCY_SETTING
         );
     }
 
+    /**
+     * The prefetch executor: {@code bufferpool.prefetch.max_in_flight} threads, one per prefetch worker, and an executor queue
+     * of as many worker runnables (a worker that released its slot still holds its thread until it returns, so up to twice
+     * the budget of worker runnables exist at once). The items queue in the {@link PrefetchScheduler}, not here, so the
+     * executor's own size settings are refused.
+     */
     @Override
     public List<ExecutorBuilder<?>> getExecutorBuilders(Settings settings) {
-        final int threads = Math.min(8, OpenSearchExecutors.allocatedProcessors(settings));
-        return List.of(
-            new FixedExecutorBuilder(settings, PREFETCH_THREAD_POOL, threads, PREFETCH_QUEUE_SIZE, "thread_pool." + PREFETCH_THREAD_POOL)
-        );
+        final String prefix = "thread_pool." + PREFETCH_THREAD_POOL;
+        for (String key : List.of(prefix + ".size", prefix + ".queue_size")) {
+            if (settings.hasValue(key)) {
+                throw new IllegalArgumentException("[" + key + "] is not supported; set [" + PREFETCH_MAX_IN_FLIGHT_SETTING.getKey() + "]");
+            }
+        }
+        final int maxInFlight = PREFETCH_MAX_IN_FLIGHT_SETTING.get(settings);
+        return List.of(new FixedExecutorBuilder(settings, PREFETCH_THREAD_POOL, maxInFlight, maxInFlight, prefix));
     }
 
     @Override
@@ -228,7 +296,28 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
     ) {
         final Settings settings = environment.settings();
         final long maxBytes = CACHE_SIZE_SETTING.get(settings).getBytes();
-        final BlockCache cache = createBlockCache(settings, maxBytes, threadPool.executor(PREFETCH_THREAD_POOL));
+        final int maxInFlight = PREFETCH_MAX_IN_FLIGHT_SETTING.get(settings);
+        final int poolSize = threadPool.info(PREFETCH_THREAD_POOL).getMax();
+        if (poolSize != maxInFlight) {
+            throw new IllegalStateException(
+                "[" + PREFETCH_THREAD_POOL + "] has [" + poolSize + "] threads, expected [" + maxInFlight + "] (the prefetch budget)"
+            );
+        }
+        final Executor executor = threadPool.executor(PREFETCH_THREAD_POOL);
+        final ThreadContext threadContext = threadPool.getThreadContext();
+        // executors capture the thread context at execute: stash it, so a worker never carries one query's context while it
+        // serves other queries
+        final Consumer<Runnable> workerStarter = worker -> {
+            try (ThreadContext.StoredContext ignored = threadContext.stashContext()) {
+                executor.execute(worker);
+            }
+        };
+        final PrefetchScheduler prefetchScheduler = createScheduler(settings, workerStarter, () -> {
+            final Object taskId = threadContext.getTransient(TaskResourceTrackingService.TASK_ID);
+            return taskListener.ownerOf(taskId instanceof Long id ? id : null);
+        });
+        scheduler.set(prefetchScheduler);
+        final BlockCache cache = createBlockCache(settings, maxBytes, prefetchScheduler);
         setPrefetchNodeBytes(cache.prefetchNodeBytes());
         cache.setSimulatedLoadLatencyNanos(SIMULATED_LOAD_LATENCY_SETTING.get(settings).nanos());
         clusterService.getClusterSettings()
@@ -236,13 +325,18 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
         cache.setPrefetchTaskPerWindow(PREFETCH_TASK_PER_WINDOW_SETTING.get(settings));
         clusterService.getClusterSettings().addSettingsUpdateConsumer(PREFETCH_TASK_PER_WINDOW_SETTING, cache::setPrefetchTaskPerWindow);
         logger.info(
-            "block cache: size [{}], block [{}], random read [{}], sequential read [{}], read hint [{}], prefetch task per window [{}]",
+            "block cache: size [{}], block [{}], random read [{}], sequential read [{}], read hint [{}], prefetch task per window [{}], "
+                + "prefetch max in flight [{}], budget scope [{}], queue size [{}], queue policy [{}]",
             new ByteSizeValue(maxBytes),
             new ByteSizeValue(cache.blockSize()),
             new ByteSizeValue(cache.randomReadSize()),
             new ByteSizeValue(cache.sequentialReadSize()),
             cache.readHints().mode(),
-            cache.prefetchTaskPerWindow()
+            cache.prefetchTaskPerWindow(),
+            prefetchScheduler.maxInFlight(),
+            prefetchScheduler.scope().value(),
+            prefetchScheduler.queueSize(),
+            prefetchScheduler.policy().value()
         );
         blockCache.set(cache);
         this.clusterService.set(clusterService);
@@ -255,11 +349,68 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
      * required and not available.
      */
     static BlockCache createBlockCache(Settings settings, long maxBytes, Executor prefetchExecutor) {
+        // today's defaults (budget 8, scope prefetch, queue 1024, fifo), whatever the prefetch settings say
+        return createBlockCache(settings, maxBytes, BlockCache.defaultScheduler(prefetchExecutor));
+    }
+
+    static BlockCache createBlockCache(Settings settings, long maxBytes, PrefetchScheduler scheduler) {
         final int blockSize = Math.toIntExact(BLOCK_SIZE_SETTING.get(settings).getBytes());
         final int randomReadSize = Math.toIntExact(RANDOM_READ_SIZE_SETTING.get(settings).getBytes());
         final int sequentialReadSize = Math.toIntExact(SEQUENTIAL_READ_SIZE_SETTING.get(settings).getBytes());
         final NativeReadHints readHints = NativeReadHints.create(NativeReadHints.Mode.parse(READ_HINT_SETTING.get(settings)));
-        return new BlockCache(maxBytes, blockSize, randomReadSize, sequentialReadSize, readHints, prefetchExecutor);
+        return new BlockCache(maxBytes, blockSize, randomReadSize, sequentialReadSize, readHints, scheduler);
+    }
+
+    /**
+     * Creates the prefetch scheduler from the node settings; fails if a prefetch setting is invalid.
+     *
+     * @param workerStarter        starts one prefetch worker on the prefetch executor
+     * @param ownerOfCurrentThread who submits a prefetch from the current thread
+     */
+    static PrefetchScheduler createScheduler(
+        Settings settings,
+        Consumer<Runnable> workerStarter,
+        Supplier<PrefetchScheduler.PrefetchOwner> ownerOfCurrentThread
+    ) {
+        return new PrefetchScheduler(
+            workerStarter,
+            PREFETCH_MAX_IN_FLIGHT_SETTING.get(settings),
+            PrefetchScheduler.BudgetScope.parse(PREFETCH_BUDGET_SCOPE_SETTING.getKey(), PREFETCH_BUDGET_SCOPE_SETTING.get(settings)),
+            PREFETCH_QUEUE_SIZE_SETTING.get(settings),
+            PrefetchScheduler.QueuePolicy.parse(PREFETCH_QUEUE_POLICY_SETTING.getKey(), PREFETCH_QUEUE_POLICY_SETTING.get(settings)),
+            ownerOfCurrentThread
+        );
+    }
+
+    /** Registers the prefetch cancellation listener on {@value #STORE_TYPE} indices; other indices pay nothing. */
+    @Override
+    public void onIndexModule(IndexModule indexModule) {
+        if (STORE_TYPE.equals(IndexModule.INDEX_STORE_TYPE_SETTING.get(indexModule.getSettings()))) {
+            indexModule.addSearchOperationListener(taskListener);
+        }
+    }
+
+    PrefetchTaskListener taskListener() {
+        return taskListener;
+    }
+
+    /** The node's prefetch scheduler, or null before {@link #createComponents}. */
+    PrefetchScheduler scheduler() {
+        return scheduler.get();
+    }
+
+    /** The node's block cache, or null before {@link #createComponents}. */
+    BlockCache blockCache() {
+        return blockCache.get();
+    }
+
+    /** Closes the prefetch scheduler if the node created it: queued items are dropped, running reads finish. */
+    @Override
+    public void close() {
+        final PrefetchScheduler s = scheduler.get();
+        if (s != null) {
+            s.close();
+        }
     }
 
     /**
@@ -314,7 +465,10 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
         IndexNameExpressionResolver indexNameExpressionResolver,
         Supplier<DiscoveryNodes> nodesInCluster
     ) {
-        return List.of(new RestBufferPoolStatsAction(blockCache::get), new RestBufferPoolTraceAction(blockCache::get));
+        return List.of(
+            new RestBufferPoolStatsAction(blockCache::get, taskListener::registeredTasks),
+            new RestBufferPoolTraceAction(blockCache::get)
+        );
     }
 
     @Override

@@ -13,7 +13,6 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.opensearch.core.concurrency.OpenSearchRejectedExecutionException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -31,9 +30,13 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -61,8 +64,14 @@ import java.util.stream.Collectors;
  * pool empty allocates one, so the transient amount grows with the number of concurrent window reads), and copies each
  * inserted block into its own direct buffer. Size {@code -XX:MaxDirectMemorySize} for the cache plus these buffers.
  *
+ * <p>Prefetch reads run on the workers of a {@link PrefetchScheduler}, which bounds them by the node read budget. Every
+ * demand storage read is bracketed by {@link PrefetchScheduler#demandReadStarted()} and
+ * {@link PrefetchScheduler#demandReadFinished()}, so that a budget that counts total reads leaves prefetch only the slots
+ * that demand reads do not use; demand reads are counted, never throttled.
+ *
  * <p>For experiments, the cache counts block requests, reads, inserted and skipped blocks, and waits per file type (see
- * {@link FileStats}) and can add a fixed delay to every storage read to simulate remote storage such as EFS.
+ * {@link FileStats}), records storage-read latencies per origin and size class and demand waits in histograms, and can add
+ * a fixed delay to every storage read to simulate remote storage such as EFS.
  */
 final class BlockCache {
 
@@ -78,6 +87,15 @@ final class BlockCache {
     static final int READ_SIZE_CLASSES = Integer.numberOfTrailingZeros(MAX_READ_SIZE) + 1;
     /** Upper bound of the bytes held by idle read buffers of multi-block reads. */
     static final long SCRATCH_POOL_BYTES = 32L << 20;
+    /**
+     * Size classes of the read latency histograms, keyed by the upper bound of the {@link FileStats#readsBySize} class:
+     * {@code 32768} holds reads of more than 16 KiB up to 32 KiB, {@code 131072} reads of more than 64 KiB up to 128 KiB, and
+     * {@code other} every other size.
+     */
+    static final List<String> LATENCY_CLASSES = List.of("32768", "131072", "other");
+    /** Defaults of a scheduler built for the {@link Executor} constructors: today's fixed prefetch pool and queue. */
+    static final int DEFAULT_MAX_IN_FLIGHT = 8;
+    static final int DEFAULT_QUEUE_SIZE = 1024;
 
     private final int blockSize;
     private final int blockSizePower;
@@ -85,7 +103,7 @@ final class BlockCache {
     private final int randomReadSize;
     private final int sequentialReadSize;
     private final Cache<BlockKey, ByteBuffer> cache;
-    private final Executor prefetchExecutor;
+    private final PrefetchScheduler scheduler;
     private final ConcurrentMap<String, FileStats> stats = new ConcurrentHashMap<>();
     /** Blocks being read from storage, by the thread that claimed them. Entries exist only while that read runs. */
     private final ConcurrentMap<BlockKey, CompletableFuture<ByteBuffer>> loadingBlocks = new ConcurrentHashMap<>();
@@ -98,15 +116,36 @@ final class BlockCache {
     private final ArrayBlockingQueue<ByteBuffer> readBuffers;
     private final int maxReadSize;
     private final NativeReadHints readHints;
-    /** Prefetch tasks submitted and not finished (queued or running). */
-    private final AtomicInteger pendingPrefetchTasks = new AtomicInteger();
-    /** Prefetch tasks dropped because the prefetch queue was full. */
-    private final LongAdder rejectedPrefetchTasks = new LongAdder();
     /** Prefetch requests that spanned more than one window and had a missing block. */
     private final LongAdder multiWindowPrefetches = new LongAdder();
     /** Prefetch storage reads running now, and the most that ran at once since start or the last {@link #resetStats()}. */
     private final AtomicInteger prefetchReadsInFlight = new AtomicInteger();
     private final AtomicInteger maxPrefetchReadsInFlight = new AtomicInteger();
+    /** The most prefetch plus demand storage reads at once, sampled when either kind of read starts. */
+    private final AtomicInteger maxTotalReadsInFlight = new AtomicInteger();
+    /** Prefetch reads that started on a thread without a prefetch worker slot (a scheduler defect; must stay 0). */
+    private final LongAdder prefetchReadsOutsideSlot = new LongAdder();
+    /** Prefetch reads that started while the same thread had one in flight (a defect; must stay 0). */
+    private final LongAdder nestedPrefetchReads = new LongAdder();
+    private final AtomicBoolean slotDefectLogged = new AtomicBoolean();
+    /** Prefetch reads in flight on the current thread. */
+    private final ThreadLocal<int[]> prefetchReadsOnThread = ThreadLocal.withInitial(() -> new int[1]);
+    /** Bytes and total wall time of prefetch storage reads, and of demand storage reads. */
+    private final LongAdder prefetchBytesRead = new LongAdder();
+    private final LongAdder prefetchReadNanos = new LongAdder();
+    private final LongAdder demandBytesRead = new LongAdder();
+    private final LongAdder demandReadNanos = new LongAdder();
+    /** Total time with at least one prefetch read in flight, and the start of the current such interval. */
+    private final LongAdder prefetchBusyNanos = new LongAdder();
+    private final AtomicLong prefetchBusySince = new AtomicLong();
+    /** Windows of multi-window prefetch items not read because the item's search was cancelled. */
+    private final LongAdder windowsSkippedCancelled = new LongAdder();
+    /** Storage-read latency per origin (prefetch, demand) and size class ({@link #LATENCY_CLASSES}). */
+    private final LatencyHistogram[] prefetchReadLatency = newHistograms();
+    private final LatencyHistogram[] demandReadLatency = newHistograms();
+    /** Time a demand reader waited for a load that another thread was running. */
+    private final LatencyHistogram demandWait = new LatencyHistogram();
+    private volatile Runnable betweenResetStepsHook;
     /** Whether each window of a prefetch is its own task, see {@link #setPrefetchTaskPerWindow(boolean)}. */
     private volatile boolean prefetchTaskPerWindow;
     private volatile long simulatedLoadLatencyNanos;
@@ -156,6 +195,35 @@ final class BlockCache {
         NativeReadHints readHints,
         Executor prefetchExecutor
     ) {
+        this(maxBytes, blockSize, randomReadSize, sequentialReadSize, readHints, defaultScheduler(prefetchExecutor));
+    }
+
+    /**
+     * A scheduler with today's defaults over {@code executor}: budget {@value #DEFAULT_MAX_IN_FLIGHT} prefetch reads, scope
+     * {@code prefetch}, queue {@value #DEFAULT_QUEUE_SIZE}, {@code fifo}.
+     */
+    static PrefetchScheduler defaultScheduler(Executor executor) {
+        return new PrefetchScheduler(
+            executor::execute,
+            DEFAULT_MAX_IN_FLIGHT,
+            PrefetchScheduler.BudgetScope.PREFETCH,
+            DEFAULT_QUEUE_SIZE,
+            PrefetchScheduler.QueuePolicy.FIFO,
+            PrefetchScheduler.PrefetchOwner::ofCurrentThread
+        );
+    }
+
+    /**
+     * @param scheduler runs the prefetch items and counts the demand reads against the node read budget
+     */
+    BlockCache(
+        long maxBytes,
+        int blockSize,
+        int randomReadSize,
+        int sequentialReadSize,
+        NativeReadHints readHints,
+        PrefetchScheduler scheduler
+    ) {
         validateBlockSize(blockSize);
         validateReadSize("random read size", randomReadSize, blockSize);
         validateReadSize("sequential read size", sequentialReadSize, blockSize);
@@ -173,7 +241,28 @@ final class BlockCache {
             // run cache maintenance on the calling thread so the cache owns no background threads
             .executor(Runnable::run)
             .build();
-        this.prefetchExecutor = prefetchExecutor;
+        this.scheduler = scheduler;
+    }
+
+    private static LatencyHistogram[] newHistograms() {
+        final LatencyHistogram[] histograms = new LatencyHistogram[LATENCY_CLASSES.size()];
+        for (int i = 0; i < histograms.length; i++) {
+            histograms[i] = new LatencyHistogram();
+        }
+        return histograms;
+    }
+
+    /** Index into {@link #LATENCY_CLASSES} of a read of {@code size} bytes. */
+    static int latencyClass(int size) {
+        return switch (sizeClass(size)) {
+            case 15 -> 0;
+            case 17 -> 1;
+            default -> 2;
+        };
+    }
+
+    PrefetchScheduler scheduler() {
+        return scheduler;
     }
 
     static void validateBlockSize(long blockSize) {
@@ -261,12 +350,12 @@ final class BlockCache {
      * that no prefetch will insert blocks any more, until the next prefetch request.
      */
     int pendingPrefetchTasks() {
-        return pendingPrefetchTasks.get();
+        return scheduler.pending();
     }
 
-    /** Prefetch tasks dropped because the prefetch queue was full, since start or the last {@link #resetStats()}. */
+    /** Prefetch tasks dropped for any reason (see {@link PrefetchScheduler.DropReason}), since start or the last reset. */
     long rejectedPrefetchTasks() {
-        return rejectedPrefetchTasks.sum();
+        return scheduler.droppedTotal();
     }
 
     /** Prefetch requests that spanned more than one window and had a missing block. */
@@ -277,6 +366,59 @@ final class BlockCache {
     /** The most prefetch storage reads that ran at the same time, since start or the last {@link #resetStats()}. */
     int maxPrefetchReadsInFlight() {
         return maxPrefetchReadsInFlight.get();
+    }
+
+    /** Prefetch storage reads running now. */
+    int prefetchReadsInFlight() {
+        return prefetchReadsInFlight.get();
+    }
+
+    /** The most prefetch plus demand storage reads at once (sampled when a read starts), since start or the last reset. */
+    int maxTotalReadsInFlight() {
+        return maxTotalReadsInFlight.get();
+    }
+
+    long prefetchReadsOutsideSlot() {
+        return prefetchReadsOutsideSlot.sum();
+    }
+
+    long nestedPrefetchReads() {
+        return nestedPrefetchReads.sum();
+    }
+
+    long prefetchBytesRead() {
+        return prefetchBytesRead.sum();
+    }
+
+    long prefetchReadTimeMicros() {
+        return TimeUnit.NANOSECONDS.toMicros(prefetchReadNanos.sum());
+    }
+
+    long demandBytesRead() {
+        return demandBytesRead.sum();
+    }
+
+    long demandReadTimeMicros() {
+        return TimeUnit.NANOSECONDS.toMicros(demandReadNanos.sum());
+    }
+
+    /** Total time with at least one prefetch storage read in flight. */
+    long prefetchBusyTimeMicros() {
+        return TimeUnit.NANOSECONDS.toMicros(prefetchBusyNanos.sum());
+    }
+
+    long windowsSkippedCancelled() {
+        return windowsSkippedCancelled.sum();
+    }
+
+    /** Storage-read latency of prefetch ({@code true}) or demand reads, for the size class {@code LATENCY_CLASSES.get(c)}. */
+    LatencyHistogram.Snapshot readLatency(boolean prefetch, int c) {
+        return (prefetch ? prefetchReadLatency : demandReadLatency)[c].snapshot();
+    }
+
+    /** Waits of demand readers for a load that another thread was running. */
+    LatencyHistogram.Snapshot demandWait() {
+        return demandWait.snapshot();
     }
 
     /**
@@ -317,7 +459,9 @@ final class BlockCache {
             if (inFlight != null) {
                 final long waitStart = System.nanoTime();
                 final ByteBuffer loaded = inFlight.join();
-                fileStats.recordWait(System.nanoTime() - waitStart);
+                final long waited = System.nanoTime() - waitStart;
+                fileStats.recordWait(waited);
+                demandWait.recordNanos(waited);
                 if (loaded != null) {
                     return loaded;
                 }
@@ -361,8 +505,8 @@ final class BlockCache {
      * Loads the missing blocks among {@code blockCount} blocks that start at {@code firstBlockOffset}, asynchronously, in
      * aligned windows of {@link #sequentialReadSize()} bytes: each window that holds a missing requested block is one read
      * of the whole window. The windows are read by one prefetch task one after another, or by one task each (see
-     * {@link #setPrefetchTaskPerWindow(boolean)}). Best effort: a task is dropped when the prefetch queue is full, and load
-     * failures are only logged.
+     * {@link #setPrefetchTaskPerWindow(boolean)}). The tasks are items of the {@link PrefetchScheduler}. Best effort: a task
+     * is dropped when the prefetch queue is full or its search is cancelled, and load failures are only logged.
      */
     void prefetch(
         Path file,
@@ -392,13 +536,16 @@ final class BlockCache {
                 final long first = Math.max(firstBlockOffset, w);
                 final long last = Math.min(lastBlockOffset, w + sequentialReadSize - blockSize);
                 if (anyMissing(file, fileId, first, last)) {
-                    submitPrefetch(file, () -> prefetchWindows(file, fileId, storage, fileLength, w, w, first, last, fileStats, requester));
+                    submitPrefetch(
+                        file,
+                        cancelled -> prefetchWindows(file, fileId, storage, fileLength, w, w, first, last, fileStats, requester, cancelled)
+                    );
                 }
             }
         } else {
             submitPrefetch(
                 file,
-                () -> prefetchWindows(
+                cancelled -> prefetchWindows(
                     file,
                     fileId,
                     storage,
@@ -408,7 +555,8 @@ final class BlockCache {
                     firstBlockOffset,
                     lastBlockOffset,
                     fileStats,
-                    requester
+                    requester,
+                    cancelled
                 )
             );
         }
@@ -426,26 +574,55 @@ final class BlockCache {
         return false;
     }
 
-    private void submitPrefetch(Path file, Runnable task) {
-        pendingPrefetchTasks.incrementAndGet();
-        try {
-            prefetchExecutor.execute(() -> {
-                try {
-                    task.run();
-                } finally {
-                    pendingPrefetchTasks.decrementAndGet();
-                }
-            });
-        } catch (OpenSearchRejectedExecutionException e) {
-            pendingPrefetchTasks.decrementAndGet();
-            rejectedPrefetchTasks.increment();
-            logger.trace("prefetch queue is full, dropping a prefetch task of [{}]", file);
-        }
+    private void submitPrefetch(Path file, Consumer<BooleanSupplier> task) {
+        // a dropped item costs nothing for correctness: a later miss reads the window on demand
+        scheduler.submit(new PrefetchScheduler.Item() {
+            @Override
+            public void run(BooleanSupplier cancelled) {
+                task.accept(cancelled);
+            }
+
+            @Override
+            public String description() {
+                return file.toString();
+            }
+        });
+    }
+
+    /**
+     * Reads the windows of a prefetch of {@code blockCount} blocks from {@code firstBlockOffset} on the calling thread, as a
+     * prefetch item would. For tests of the read-count checks only (a call outside a worker counts as a read outside a slot).
+     */
+    void prefetchNowForTests(
+        Path file,
+        long fileId,
+        StorageFile storage,
+        long fileLength,
+        long firstBlockOffset,
+        long blockCount,
+        FileStats fileStats
+    ) {
+        final long lastBlockOffset = firstBlockOffset + ((blockCount - 1) << blockSizePower);
+        final long firstWindow = firstBlockOffset & -(long) sequentialReadSize;
+        prefetchWindows(
+            file,
+            fileId,
+            storage,
+            fileLength,
+            firstWindow,
+            lastBlockOffset,
+            firstBlockOffset,
+            lastBlockOffset,
+            fileStats,
+            null,
+            PrefetchScheduler.PrefetchOwner.NEVER
+        );
     }
 
     /**
      * Reads the sequential windows that start at {@code fromWindow} up to the one that holds {@code toBlock}, each only if a
-     * requested block in it (between {@code requestedFirst} and {@code requestedLast}) is missing. Stops at the first failure.
+     * requested block in it (between {@code requestedFirst} and {@code requestedLast}) is missing. Stops at the first failure,
+     * and before a window once {@code cancelled} is true (the worker checked it before the first window).
      */
     private void prefetchWindows(
         Path file,
@@ -457,9 +634,14 @@ final class BlockCache {
         long requestedFirst,
         long requestedLast,
         FileStats fileStats,
-        String[] requester
+        String[] requester,
+        BooleanSupplier cancelled
     ) {
         for (long window = fromWindow; window <= toBlock; window += sequentialReadSize) {
+            if (window != fromWindow && cancelled.getAsBoolean()) {
+                windowsSkippedCancelled.add((toBlock - window) / sequentialReadSize + 1);
+                return;
+            }
             try {
                 loadWindow(
                     file,
@@ -516,7 +698,9 @@ final class BlockCache {
             if (wanted != null) {
                 final long waitStart = System.nanoTime();
                 other.join();
-                fileStats.recordWait(System.nanoTime() - waitStart);
+                final long waited = System.nanoTime() - waitStart;
+                fileStats.recordWait(waited);
+                demandWait.recordNanos(waited);
             }
             return null;
         }
@@ -589,13 +773,15 @@ final class BlockCache {
         FileStats fileStats,
         String[] requester
     ) throws IOException {
-        final long start = System.nanoTime();
         final int size = Math.toIntExact(windowEnd - windowStart);
         final ByteBuffer[] blocks = new ByteBuffer[claims.length];
-        if (prefetch) {
-            final int inFlight = prefetchReadsInFlight.incrementAndGet();
-            maxPrefetchReadsInFlight.accumulateAndGet(inFlight, Math::max);
+        final int[] onThread = prefetch ? prefetchReadStarted() : null;
+        if (prefetch == false) {
+            final int demand = scheduler.demandReadStarted();
+            updateMax(maxTotalReadsInFlight, demand + prefetchReadsInFlight.get());
         }
+        // the span of the read counters: from the in-flight increment to the decrement, as Little's law needs
+        final long start = System.nanoTime();
         try {
             if (claims.length == 1) {
                 blocks[0] = ByteBuffer.allocateDirect(size);
@@ -627,10 +813,19 @@ final class BlockCache {
                 }
             }
         } finally {
+            final long took = System.nanoTime() - start;
+            final int latencyClass = latencyClass(size);
             if (prefetch) {
-                prefetchReadsInFlight.decrementAndGet();
+                prefetchReadNanos.add(took);
+                prefetchReadLatency[latencyClass].recordNanos(took);
+                prefetchReadFinished(onThread);
+            } else {
+                demandReadNanos.add(took);
+                demandReadLatency[latencyClass].recordNanos(took);
+                scheduler.demandReadFinished();
             }
         }
+        (prefetch ? prefetchBytesRead : demandBytesRead).add(size);
         (prefetch ? fileStats.prefetchReads : fileStats.reads).increment();
         fileStats.bytesRead.add(size);
         fileStats.readsBySize[sizeClass(size)].increment();
@@ -671,6 +866,52 @@ final class BlockCache {
         fileStats.windowBlocksCached.add(cachedBlocks);
         fileStats.bytesOverread.add(overread);
         return result;
+    }
+
+    private static void updateMax(AtomicInteger max, int value) {
+        if (value > max.get()) {
+            max.accumulateAndGet(value, Math::max);
+        }
+    }
+
+    /**
+     * Counts a prefetch storage read that starts on this thread: the in-flight counters, the busy interval, and the two
+     * checks that every prefetch read runs on a worker that holds a slot and is the only one in flight on its thread.
+     *
+     * @return the per-thread count of prefetch reads in flight, for {@link #prefetchReadFinished}
+     */
+    int[] prefetchReadStarted() {
+        final int inFlight = prefetchReadsInFlight.incrementAndGet();
+        if (inFlight == 1) {
+            prefetchBusySince.set(System.nanoTime());
+        }
+        updateMax(maxPrefetchReadsInFlight, inFlight);
+        updateMax(maxTotalReadsInFlight, inFlight + scheduler.demandReadsInFlight());
+        if (scheduler.currentThreadHoldsSlot() == false) {
+            prefetchReadsOutsideSlot.increment();
+            logSlotDefect("a prefetch read started on a thread without a prefetch worker slot");
+        }
+        final int[] onThread = prefetchReadsOnThread.get();
+        if (onThread[0]++ > 0) {
+            nestedPrefetchReads.increment();
+            logSlotDefect("a prefetch read started while the same thread had one in flight");
+        }
+        return onThread;
+    }
+
+    void prefetchReadFinished(int[] onThread) {
+        onThread[0]--;
+        if (prefetchReadsInFlight.decrementAndGet() == 0) {
+            // a new first read can start between the decrement and this get: then the added interval is near zero, never negative
+            final long since = prefetchBusySince.get();
+            prefetchBusyNanos.add(Math.max(0, System.nanoTime() - since));
+        }
+    }
+
+    private void logSlotDefect(String what) {
+        if (slotDefectLogged.compareAndSet(false, true)) {
+            logger.warn("{} (logged once per node; see prefetch_reads_outside_slot and nested_prefetch_reads)", what);
+        }
     }
 
     /** Size class of a read of {@code size >= 1} bytes: the exponent of the smallest power of two that is at least {@code size}. */
@@ -740,11 +981,38 @@ final class BlockCache {
 
     /** Sets all counters to zero. Inputs keep their {@link FileStats} references, so entries are reset, not removed. */
     void resetStats() {
+        // the scheduler first: it sets max_active_workers before this sets max_reads_in_flight, so that a worker start after
+        // the reset raises max_active_workers (under the scheduler lock, before its first read) and the pair stays ordered
+        scheduler.resetStats();
+        final Runnable hook = betweenResetStepsHook;
+        if (hook != null) {
+            hook.run();
+        }
         stats.values().forEach(FileStats::reset);
-        rejectedPrefetchTasks.reset();
         multiWindowPrefetches.reset();
         maxPrefetchReadsInFlight.set(prefetchReadsInFlight.get());
+        maxTotalReadsInFlight.set(prefetchReadsInFlight.get() + scheduler.demandReadsInFlight());
+        prefetchReadsOutsideSlot.reset();
+        nestedPrefetchReads.reset();
+        prefetchBytesRead.reset();
+        prefetchReadNanos.reset();
+        demandBytesRead.reset();
+        demandReadNanos.reset();
+        prefetchBusyNanos.reset();
+        windowsSkippedCancelled.reset();
+        for (LatencyHistogram h : prefetchReadLatency) {
+            h.reset();
+        }
+        for (LatencyHistogram h : demandReadLatency) {
+            h.reset();
+        }
+        demandWait.reset();
         readHints.resetCounters();
+    }
+
+    /** Test hook (null in production): runs in {@link #resetStats()} between the scheduler reset and the cache reset. */
+    void setBetweenResetStepsHookForTests(Runnable hook) {
+        this.betweenResetStepsHook = hook;
     }
 
     /**
