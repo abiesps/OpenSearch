@@ -20,5 +20,51 @@
     "params": {}
   },
   "reference_op": "gen:range_@timestamp_1d",
-  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules). The mapping has geoip.country_name / geoip.city_name keywords, but no document of the OSB http_logs corpus fills them (cardinality 0 on all 247,249,096 docs), so they cannot drive term or aggregation ops. The keyword role is held by request.raw (keyword, about 60,600 values) and clientip (ip, about 1.15 million values): an ip field keeps sorted-set doc values like a keyword (terms, cardinality, composite, sort), while its term query runs on points."
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules). The mapping has geoip.country_name / geoip.city_name keywords, but no document of the OSB http_logs corpus fills them (cardinality 0 on all 247,249,096 docs), so they cannot drive term or aggregation ops. The keyword role is held by request.raw (keyword, about 60,600 values) and clientip (ip, about 1.15 million values): an ip field keeps sorted-set doc values like a keyword (terms, cardinality, composite, sort), while its term query runs on points.",
+  "indices": [
+    {
+      "name": "logs-181998",
+      "document_count": 2708746,
+      "workload_default_shards": 5
+    },
+    {
+      "name": "logs-191998",
+      "document_count": 9697882,
+      "workload_default_shards": 5
+    },
+    {
+      "name": "logs-201998",
+      "document_count": 13053463,
+      "workload_default_shards": 5
+    },
+    {
+      "name": "logs-211998",
+      "document_count": 17647279,
+      "workload_default_shards": 5
+    },
+    {
+      "name": "logs-221998",
+      "document_count": 10716760,
+      "workload_default_shards": 5
+    },
+    {
+      "name": "logs-231998",
+      "document_count": 11961342,
+      "workload_default_shards": 5
+    },
+    {
+      "name": "logs-241998",
+      "document_count": 181463624,
+      "workload_default_shards": 5
+    },
+    {
+      "name": "reindexed-logs",
+      "document_count": 0,
+      "workload_default_shards": 5
+    }
+  ],
+  "corpus_base_urls": {
+    "http_logs": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/http_logs"
+  },
+  "corpus_base_urls_note": "the pinned workload (29dd7e1f) removed base-url in faf49bbd; the old CloudFront URL still serves the same files (sizes and line counts equal workload.json; sha256 in br-httplogs/ingest.json)"
 }
