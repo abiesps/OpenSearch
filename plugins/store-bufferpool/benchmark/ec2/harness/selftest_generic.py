@@ -666,6 +666,12 @@ def part_f(tmp, fork, fork_commit):
     check(len(rows) == 5 and all(-0.25 < x["change"] < -0.15 for x in rows), f"(f) analyze.py on luceneutil runs: "
           f"{[(x['op'], round(x['change'], 3)) for x in rows]}")
     check(res["equality"]["across"] and all(e["equal"] for e in res["equality"]["across"]), "(f) luceneutil results equal")
+    # a pooled outcome target (LABEL1+LABEL2): the runs of both labels form one target
+    run([PY, os.path.join(here, "analyze.py"), cb, "--base", "L0", "--boot", "200", "--ni-boot", "200", "--warm-metric", "took_ms",
+         "--ni-ref", "L0", "--ni-target", "L2-A+L0", "--out", os.path.join(sess, "analysis-pooled")])
+    pooled = json.load(open(os.path.join(sess, "analysis-pooled", "analysis.json")))["noninferiority"]["targets"]["L2-A+L0"]
+    check(pooled and all(st["warm_p50"]["runs"] == [4, 8] for st in pooled.values() if "warm_p50" in st),
+          "(f) analyze.py pools LABEL1+LABEL2 targets (4 reference runs, 8 target runs)")
     # a run whose read-back is missing is a gap, not a measurement
     bad = os.path.join(tmp, "lu-session-bad")
     shutil.copytree(sess, bad, ignore=shutil.ignore_patterns("coldbench", "analysis"))

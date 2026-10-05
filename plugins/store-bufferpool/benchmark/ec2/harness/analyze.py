@@ -474,7 +474,7 @@ def noninferiority(data, targets, ref_labels, aa_labels, delta_min, a):
         for name, mode, q, required in NI_STATS:
             cells = []
             for op in data.ops(mode):
-                rr, tr = run_samples(data, mode, ref_labels, op), run_samples(data, mode, [tgt], op)
+                rr, tr = run_samples(data, mode, ref_labels, op), run_samples(data, mode, tgt.split("+"), op)
                 if len(rr) < 2 or len(tr) < 2:
                     continue
                 point, lo, hi, dist = hboot_ratio(rr, tr, q, a.ni_boot, a.seed)
@@ -539,7 +539,7 @@ def ni_report(md, ni, ref_labels, data, io):
             md.append(f"\nOps that do not meet the outcome yet ({tgt}): gap in ms and the IO that remains (cold, medians per request)")
             for op, st in bad:
                 gaps = ", ".join(f"{n} {st[n]['gap_ms']:+.1f} ms ({st[n]['verdict']})" for n, _, _, r in NI_STATS if r and n in st)
-                x = io.get((tgt, op)) or {}
+                x = io.get((tgt.split("+")[0], op)) or {}
                 ext = sorted((x.get("demand_by_ext") or {}).items(), key=lambda kv: -kv[1])[:4]
                 ioinfo = (f"demand loads {x.get('demand_loads')}, prefetch loads {x.get('prefetch_loads')}, top demand file types "
                           f"{', '.join(f'{e} {v:g}' for e, v in ext) or '-'}; NFS READ ops {x.get('nfs_read_ops')}, avg RTT "
@@ -573,7 +573,8 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.05)
     ap.add_argument("--steady-threshold", type=float, default=0.05)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--ni-target", help="comma list of target labels for the outcome verdict (default: arms outcome.targets)")
+    ap.add_argument("--ni-target", help="comma list of target labels for the outcome verdict (default: arms outcome.targets); "
+                    "LABEL1+LABEL2 pools the runs of several labels into one target, e.g. S1-EFS@a+S1-EFS@b")
     ap.add_argument("--ni-ref", help="reference label(s), comma list pooled, e.g. S0-EBS@a,S0-EBS@b (default: arms outcome)")
     ap.add_argument("--ni-aa", help="A/A pair of the reference for the margin (default: arms outcome.aa)")
     ap.add_argument("--ni-delta", type=float, default=0.05, help="minimum margin delta")
@@ -700,6 +701,9 @@ def main():
         md.append(f"| {op} | " + " | ".join(cells) + " |")
     outcome = (data.sessions[0].get("arms_file") or {}).get("outcome", {}) if data.sessions else {}
     targets = a.ni_target.split(",") if a.ni_target else [t for t in outcome.get("targets", []) if t in labels]
+    unknown = [l for t in targets for l in t.split("+") if l not in labels]
+    if unknown:
+        sys.exit(f"--ni-target: unknown labels {unknown}; labels: {labels}")
     ref = a.ni_ref.split(",") if a.ni_ref else ([outcome["reference"]] if outcome.get("reference") else [])
     ref = [r for r in ref if r in labels] or [l for l in labels if l.split("@")[0] in ref]
     aa_ni = (a.ni_aa or outcome.get("aa") or "").split(",") if (a.ni_aa or outcome.get("aa")) else []
