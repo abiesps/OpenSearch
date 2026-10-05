@@ -54,6 +54,13 @@ def _io(pre, post):
     return coldbench.io_delta({"agent": pre, "bp": None}, {"agent": post, "bp": None})
 
 
+def coldbench_efs_ok(io, target):
+    """coldbench's rule: None if not an EFS sample or no target; else start == end == target on one efs-proxy process."""
+    import coldbench
+
+    return coldbench.efs_connections_ok(io, target)
+
+
 def convert(session_dir, out_dir, reference=None):
     session = json.load(open(os.path.join(session_dir, "session.json")))
     manifest = list(read_jsonl(os.path.join(session_dir, "manifest.jsonl")))
@@ -107,6 +114,14 @@ def convert(session_dir, out_dir, reference=None):
         cold = _cold_records(m.get("cold_log"))
         if session["mode"] == "cold-strict" and len(cold) != len(res["tasks"]):
             raise SystemExit(f"{m['log']}: {len(res['tasks'])} tasks but {len(cold)} cold records")
+        # IO of the whole JVM run (agent snapshots before and after it): EFS backend connections at its start and end;
+        # warm and luceneutil-cold samples carry it (strict-cold samples have their own per-task snapshots)
+        jvm_io = None
+        js = m.get("jvm_snapshots")
+        if js:
+            jvm_io = _io(js.get("pre"), js.get("post"))
+            jvm_io["window"] = "jvm_run"
+        efs_target = m.get("efs_connections_target")
         last = {}
         for i, t in enumerate(res["tasks"]):
             rec = {"schema": SCHEMA, "type": "sample", "mode": mode, **run, "op": t.key, "iter": counts[(run_id, t.key)],
@@ -124,6 +139,10 @@ def convert(session_dir, out_dir, reference=None):
                 rec["cold_ok"] = bool(c["cold_ok"])
                 rec["checks"] = {"page_cache_empty": bool(c["cold_ok"]), "resident_bytes": c["resident_bytes"]}
                 rec["io"] = _io(c.get("pre"), c.get("post"))
+                eok = coldbench_efs_ok(rec["io"], efs_target)
+                if eok is not None:
+                    rec["checks"]["efs_connections_ok"] = eok
+                    rec["cold_ok"] = rec["cold_ok"] and eok
                 rec["clear"] = {"drop": {k: (c.get("drop") or {}).get(k) for k in ("pageout_ms", "sync_ms", "drop_ms")}}
             elif session["mode"] == "cold-luceneutil":
                 drop = m.get("jvm_drop") or {}
@@ -132,6 +151,14 @@ def convert(session_dir, out_dir, reference=None):
                                  "gap": "caches dropped once per JVM (luceneutil cold=True) and tasks run concurrently, "
                                  "so a task may find pages another task read; first instance of each task only; the "
                                  "decision metric is cold-strict"}
+            if session["mode"] != "cold-strict" and jvm_io is not None:
+                rec["io"] = jvm_io
+                eok = coldbench_efs_ok(jvm_io, efs_target)
+                if eok is not None:
+                    rec["efs_connections_ok"] = eok
+                    if mode == "cold":
+                        rec["checks"]["efs_connections_ok"] = eok
+                        rec["cold_ok"] = rec["cold_ok"] and eok
             w.write(rec)
             last[t.key] = t
         for key, t in last.items():

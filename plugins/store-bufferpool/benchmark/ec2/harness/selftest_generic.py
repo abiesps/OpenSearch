@@ -797,6 +797,26 @@ def part_f(tmp, fork, fork_commit):
     runs = [json.loads(l) for l in open(os.path.join(bad, "coldbench", "samples.jsonl")) if '"type": "run"' in l]
     gap = [r for r in runs if r["label"] == "L2-A" and r["run_id"].endswith("#r0")]
     check(gap and gap[0]["available"] is False, "(f) missing switch read-back makes the JVM run a gap")
+    # EFS backend connections: a warm JVM run on EFS carries its start / end count; only 5 -> 5 on one proxy is valid
+    efs = os.path.join(tmp, "lu-session-efs")
+    shutil.copytree(sess, efs, ignore=shutil.ignore_patterns("coldbench", "analysis*"))
+    snap = lambda n, pid, rb: {"t_mono": 1.0 + rb, "pid": None, "proc_io": None, "disk": None,  # noqa: E731
+                               "nfs": {"mountpoint": "/mnt/efs", "normal_read_bytes": rb, "direct_read_bytes": 0,
+                                       "server_read_bytes": rb, "read_pages": 0, "ops": {}},
+                               "efs_connections": {"count": n, "proxy_pid": pid}}
+    with open(os.path.join(efs, "manifest.jsonl"), "w") as f:
+        for m in manifest:
+            m = dict(m, log=m["log"].replace(sess, efs), stdout=m["stdout"].replace(sess, efs), efs_connections_target=5,
+                     jvm_snapshots={"pre": snap(1 if (m["label"] == "L2-A" and m["iter"] == 1) else 5, 77, 0),
+                                    "post": snap(5, 77, 1000)})
+            f.write(json.dumps(m) + "\n")
+    analyze_luceneutil.convert(efs, os.path.join(efs, "coldbench"))
+    smp = [json.loads(l) for l in open(os.path.join(efs, "coldbench", "samples.jsonl")) if '"type": "sample"' in l]
+    bad_run = [x for x in smp if x["label"] == "L2-A" and x["run_id"].endswith("#r1")]
+    good = [x for x in smp if not (x["label"] == "L2-A" and x["run_id"].endswith("#r1"))]
+    check(bad_run and all(x["efs_connections_ok"] is False for x in bad_run) and all(x["efs_connections_ok"] for x in good)
+          and all(x["io"]["efs_connections"]["start"] in (1, 5) for x in smp),
+          "(f) EFS warm samples carry the JVM run's connection count; 1 -> 5 is not valid")
 
 
 def main():

@@ -1,21 +1,22 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: coldpath <coldpath@localhost>
-Date: Mon, 5 Oct 2026 04:10:32 -0700
+Date: Mon, 5 Oct 2026 05:16:44 -0700
 Subject: [PATCH 2/3] Drop and verify caches before every task (cold mode)
 
 ---
- src/main/perf/ColdpathCold.java   | 161 ++++++++++++++++++++++++++++++
+ src/main/perf/ColdpathCold.java   | 165 ++++++++++++++++++++++++++++++
+ src/main/perf/IndexState.java     |  26 ++++-
  src/main/perf/SearchPerfTest.java |   3 +
  src/main/perf/TaskThreads.java    |  14 +++
- 3 files changed, 178 insertions(+)
+ 4 files changed, 207 insertions(+), 1 deletion(-)
  create mode 100644 src/main/perf/ColdpathCold.java
 
 diff --git a/src/main/perf/ColdpathCold.java b/src/main/perf/ColdpathCold.java
 new file mode 100644
-index 00000000..03913a1f
+index 00000000..9707e7a7
 --- /dev/null
 +++ b/src/main/perf/ColdpathCold.java
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,165 @@
 +package perf;
 +
 +/**
@@ -53,7 +54,7 @@ index 00000000..03913a1f
 +/**
 + * Strict per-task cold mode of the coldpath harness. Before every task, outside the task's timed region, the coldpath
 + * agent on this host pages out this JVM's mappings of the index files (MMapDirectory pages stay cached while mapped),
-+ * syncs and drops the page cache ({@code POST /cache/drop?pageout=1}); then the page-cache residency of the index files
++ * syncs and drops the page cache (after IndexState.coldpathResetCaches drops the per-JVM facet / taxonomy / PK structures) ({@code POST /cache/drop?pageout=1}); then the page-cache residency of the index files
 + * is checked with mincore ({@code GET /cache/residency}) and the device / NFS counters are snapshotted
 + * ({@code GET /snapshot}). After the task the counters are snapshotted again. One JSON line per task goes to
 + * {@code -Dcoldpath.cold.log} (not stdout: luceneutil rejects a large stdout). Enabled by {@code -Dcoldpath.cold.agent};
@@ -73,6 +74,7 @@ index 00000000..03913a1f
 +  private static String preDrop;
 +  private static String preResidency;
 +  private static String preSnapshot;
++  private static String preReset;
 +  private static long preResident;
 +  private static long count;
 +
@@ -141,8 +143,11 @@ index 00000000..03913a1f
 +  }
 +
 +  /** Drops the caches and verifies them, before the task starts (not timed). */
-+  public static synchronized void beforeTask(Task task) throws IOException {
++  public static synchronized void beforeTask(Task task, IndexState state) throws IOException {
 +    init();
++    // per-JVM structures built from index data (facet ordinal maps, taxonomy caches, PK lookup enums) are dropped
++    // before the page-cache drop, so the task rebuilds them from storage
++    preReset = state.coldpathResetCaches();
 +    String arm = "arm=" + q(System.getProperty("coldpath.cold.arm", ""));
 +    String uuids = "uuids=" + q(System.getProperty("coldpath.cold.uuids", ""));
 +    preDrop = call("POST", "/cache/drop?pageout=1&until_empty=" + Integer.getInteger("coldpath.cold.dropRounds", 5) + "&" + uuids + "&" + arm);
@@ -159,7 +164,7 @@ index 00000000..03913a1f
 +    long tolerance = Long.getLong("coldpath.cold.residencyTolerance", 0L);
 +    boolean ok = preResident >= 0 && preResident <= tolerance;
 +    log.println("{\"n\":" + (count++) + ",\"category\":" + json(task.getCategory()) + ",\"task\":" + json(task.toString())
-+        + ",\"run_ms\":" + (task.runTimeNanos / 1e6) + ",\"resident_bytes\":" + preResident + ",\"cold_ok\":" + ok + ",\"cold_protocol\":\"jit-warm\""
++        + ",\"run_ms\":" + (task.runTimeNanos / 1e6) + ",\"resident_bytes\":" + preResident + ",\"cold_ok\":" + ok + ",\"cold_protocol\":\"jit-warm\",\"caches_reset\":" + preReset
 +        + ",\"drop\":" + preDrop + ",\"residency\":" + preResidency + ",\"pre\":" + preSnapshot + ",\"post\":" + post + "}");
 +  }
 +
@@ -177,6 +182,50 @@ index 00000000..03913a1f
 +    return b.append('"').toString();
 +  }
 +}
+diff --git a/src/main/perf/IndexState.java b/src/main/perf/IndexState.java
+index d5243bdf..076294ce 100644
+--- a/src/main/perf/IndexState.java
++++ b/src/main/perf/IndexState.java
+@@ -58,7 +58,8 @@ class IndexState {
+   public final String textFieldName;
+   //public int[] docIDToID;
+   public final boolean hasDeletions;
+-  public final TaxonomyReader taxoReader;
++  // coldpath harness: not final, the strict cold mode reopens it before every task (coldpathResetCaches)
++  public volatile TaxonomyReader taxoReader;
+   public final FacetsConfig facetsConfig;
+   public final boolean groupBlocksExist;
+   // maps facet dimension to method (sortedset, taxonomy)
+@@ -125,6 +126,29 @@ class IndexState {
+ 
+   private final Map<String,SortedSetDocValuesReaderState> ssdvFacetStates = new HashMap<>();
+ 
++  /**
++   * coldpath harness, strict cold mode: drops every per-JVM structure that a task builds from index data and that
++   * later tasks reuse, so each cold task rebuilds it from storage like a cold query on a fresh node: the SSDV facet
++   * reader states (their OrdinalMap over all segments, the analog of OpenSearch's global ordinals; rebuilt lazily by
++   * getSortedSetReaderState), the taxonomy reader (reopened on its directory: fresh ordinal / label caches and parallel
++   * arrays) and the per-thread PK lookup states (cached TermsEnums). Returns what was dropped, for the cold log.
++   */
++  public synchronized String coldpathResetCaches() throws IOException {
++    int ssdv = ssdvFacetStates.size();
++    ssdvFacetStates.clear();
++    int pk = pkLookupStates.size() + pointsPKLookupStates.size() + pkLookupWithTermStateStates.size();
++    pkLookupStates.clear();
++    pointsPKLookupStates.clear();
++    pkLookupWithTermStateStates.clear();
++    boolean taxo = false;
++    if (taxoReader instanceof org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader old) {
++      taxoReader = new org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader(old.getInternalIndexReader().directory());
++      old.close();
++      taxo = true;
++    }
++    return "{\"ssdv_states\":" + ssdv + ",\"pk_states\":" + pk + ",\"taxonomy_reopened\":" + taxo + "}";
++  }
++
+   public synchronized SortedSetDocValuesReaderState getSortedSetReaderState(String facetGroupField) throws IOException {
+     SortedSetDocValuesReaderState result = ssdvFacetStates.get(facetGroupField);
+     if (result == null) {
 diff --git a/src/main/perf/SearchPerfTest.java b/src/main/perf/SearchPerfTest.java
 index 8917d61c..47aa0d8f 100755
 --- a/src/main/perf/SearchPerfTest.java
@@ -192,7 +241,7 @@ index 8917d61c..47aa0d8f 100755
      final boolean printHeap = args.getFlag("-printHeap");
      final boolean doPKLookup = args.getFlag("-pk");
 diff --git a/src/main/perf/TaskThreads.java b/src/main/perf/TaskThreads.java
-index 16509654..f579aa03 100644
+index 16509654..e89bd978 100644
 --- a/src/main/perf/TaskThreads.java
 +++ b/src/main/perf/TaskThreads.java
 @@ -135,6 +135,11 @@ public class TaskThreads {
@@ -215,7 +264,7 @@ index 16509654..f579aa03 100644
 +          // timed region (RunTask times only task.go)
 +          final boolean cold = ColdpathCold.enabled();
 +          if (cold) {
-+            ColdpathCold.beforeTask(task);
++            ColdpathCold.beforeTask(task, indexState);
 +          }
            executor.submit(new RunTask(tasks, task, indexState, taskParser)).get();
 +          if (cold) {
