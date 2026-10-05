@@ -790,6 +790,14 @@ but never read = 0.
   `track_total_hits: false`); `DenseConjunctionBulkScorer.collectRange` ignores competitive-iterator updates within one
   `score()` call.
 
+### Outcome goal (user, 2026-10-04; the overall goal of the cold-path work)
+- For every query, cold latency of OpenSearch with its index on EFS (bufferpool + accepted core and planner changes)
+  must equal cold latency of stock OpenSearch with its index on EBS gp3, with no hot-path regression. Per operation:
+  bootstrap 95% CI upper bound of target / reference <= 1 + max(5%, A/A MDE), for cold p50 and p90 and warm p50,
+  Benjamini-Hochberg across operations. Measured on EC2 (workflow `ec2-coldpath-parallel`, Pippin folder
+  g891hdQSFj5S). The laptop "4x" target below stays as the laptop-phase goal for building the changes.
+- No deadline-based or cost-based cuts (user): full statistics for every arm, big5 1,000 GB first-class.
+
 ### Target (user, 2026-10-03)
 - Cold sort on `@timestamp` (asc and desc) at least **4x faster** than stock, with no warm regression. A, B and E alone
   do not reach it on the Discover shape (estimates: desc 7d 820-960 -> 300-500 ms, 1-day 1,320-1,780 -> 600-900 ms), so
