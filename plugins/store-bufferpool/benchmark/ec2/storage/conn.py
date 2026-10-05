@@ -22,7 +22,8 @@ Analyses the blocks run by run_conn_blocks.sh, following preregistration-connect
 - fixed-default rule: the minimum knee_c over the scaled-up connections of block conn, with the number of
   connections below each q and the Clopper-Pearson 95 % upper bound of that share;
 - Spearman rank correlation of the reference level with r_c(32) and knee_c (bootstrap 95 % interval);
-- partition: the id efs-proxy logs when it scales up (short sha1 of the id bytes).
+- partition: the id efs-proxy logs when it scales up (short sha1 of its first 16 bytes, which take one value per
+  EFS partition; the other 48 bytes differ per connection).
 """
 import glob, hashlib, json, math, os, random, re, statistics as stt, sys
 from collections import Counter as collections_counter, defaultdict
@@ -63,7 +64,10 @@ for path in sorted(glob.glob(os.path.join(logs_dir, "*.efs-proxy.log*"))):
             kind = "search"
         elif msg.startswith("Established new TCP connection to"):
             ids = re.search(r"id: \[([\d, ]+)\]", msg)
-            kind, detail = "established", hashlib.sha1(ids.group(1).encode()).hexdigest()[:8] if ids else None
+            # the id is 64 bytes; its first 16 bytes take 5 values on this file system (one per EFS partition
+            # behind the mount target), the other 48 differ per connection. The partition is the first 16 bytes.
+            kind = "established"
+            detail = hashlib.sha1(",".join(ids.group(1).split(",")[:16]).replace(" ", "").encode()).hexdigest()[:8] if ids else None
         elif msg.startswith("Proxy incarnation restarted"):
             kind = "restart"
         elif msg.startswith("Attempt to scale up failed"):
@@ -423,7 +427,7 @@ res = {"rule": {"knee_factor": KNEE, "grid": GRID, "levels": {"fast_min": FAST_M
                 "cycles": len(main["cycles"]), "valid_cycles": sum(1 for c in main["cycles"] if c["valid"]),
                 "states": {s: sum(1 for c in scaled if c.get("state") == s) for s in ("fast", "degraded", "slow", "mixed")},
                 "backend_counts": {str(b): sum(1 for c in used if c.get("backend") == b) for b in sorted({c.get("backend") for c in used}, key=str)},
-                "restarts_at_scale_up": sum(1 for c in used if c["scale_up"]["restarts"]),
+                "connections_whose_scale_up_switched_partition": sum(1 for c in used if any(r["cause"] == "scale_up" for r in c["restarts"])),
                 "knee_distribution": dist, "below": below, "fixed_default_min_knee": fixed_default,
                 "heavy_job_check": heavy, "cycle_a_only": cycle_a_only, "curves": curves, "predictor": pred,
                 "partitions": {k: v for k, v in parts.items()}, "incarnation_sensitivity": inc_sens,
@@ -449,8 +453,8 @@ with open(out_md, "w") as f:
     m = res["conn"]
     f.write(f"Block conn: {m['connections']} connections, {m['valid_cycles']} of {m['cycles']} cycles valid, "
             f"{m['used']} connections used, {m['scaled_up']} scaled up, {m['single_backend']} on one backend connection; "
-            f"states {m['states']}; backend counts {m['backend_counts']}; scale-ups that restarted the incarnation "
-            f"{m['restarts_at_scale_up']}; primary knee {kkey}.\n\n")
+            f"states {m['states']}; backend counts {m['backend_counts']}; connections whose scale-up switched the partition (incarnation restart) "
+            f"{m['connections_whose_scale_up_switched_partition']}; primary knee {kkey}.\n\n")
     f.write("<table><tr><th>connection</th><th>time UTC</th><th>valid cycles</th><th>backend connections</th>"
             "<th>partition</th><th>restart at scale-up</th><th>reference READs/s (median, range)</th><th>state</th>"
             + "".join(f"<th>queue depth {q}</th>" for q in GRID[1:]) +
