@@ -198,7 +198,9 @@ def part_g(osbw, tmp, check, generic):
           "(g) index_equality: an ignored agg key is left out, every other difference still counts")
     orc = _ie.oracle_op({"name": "o", "body": {"aggs": {"t": {"terms": {"field": "tag"}}}}})
     check(orc["params"]["search_type"] == "dfs_query_then_fetch" and orc["body"]["profile"] is True and
-          orc["body"]["aggs"]["t"]["terms"]["shard_size"] == _ie.ORACLE_SHARD_SIZE,
+          orc["body"]["aggs"]["t"]["terms"]["shard_size"] == _ie.ORACLE_SHARD_SIZE and
+          _ie.oracle_op({"name": "c", "body": {"aggs": {"c": {"composite": {"sources": [{"s": {"terms": {"field": "t"}}}]}}}}})
+          ["body"]["aggs"]["c"]["composite"]["sources"][0]["s"]["terms"] == {"field": "t"},
           "(g) index_equality: oracle form = dfs_query_then_fetch, profile, large terms shard_size")
     ex = json.load(open(os.path.join(here, "arms.generic.example.json")))
     check(ex["other_indices"] == "close" and "S2-CORE+PLANNER-EBS" in ex["arms"] and "S2-A-EBS" in ex["arms"],

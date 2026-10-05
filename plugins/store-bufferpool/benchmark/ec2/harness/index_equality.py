@@ -120,6 +120,9 @@ def _exact_terms(v):
         return v
     out = {}
     for k, x in v.items():
+        if k == "composite":
+            out[k] = x  # composite "terms" sources are exact (paged) and take no shard_size
+            continue
         if k in ("terms", "significant_terms") and isinstance(x, dict) and "field" in x:
             x = {**x, "shard_size": max(int(x.get("shard_size", 0)), ORACLE_SHARD_SIZE)}
         out[k] = _exact_terms(x)
