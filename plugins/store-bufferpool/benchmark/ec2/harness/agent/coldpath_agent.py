@@ -80,6 +80,7 @@ MADV_PAGEOUT = 21
 SYS_PIDFD_OPEN = 434  # same number on x86_64 and aarch64 (generic syscall table)
 SYS_PROCESS_MADVISE = 440
 IOV_BATCH = 512  # <= UIO_MAXIOV (1024)
+IOV_BYTES = 1 << 30  # bytes per process_madvise call, below its MAX_RW_COUNT cap (about 2 GiB)
 PROT_READ, MAP_SHARED = 1, 1
 WINDOW = 1 << 30  # mincore window: 1 GiB of a file at a time, so the vector stays at 256 KiB
 
@@ -284,22 +285,40 @@ class Agent:
         if pidfd < 0:
             result["errors"].append(f"pidfd_open: errno {ctypes.get_errno()}")
             return result
+        # process_madvise caps the bytes of one call (the iovec total is truncated to MAX_RW_COUNT, about 2 GiB, and the
+        # call returns the short count without an error), so split the ranges into chunks of at most IOV_BYTES, send
+        # batches of at most IOV_BATCH chunks and IOV_BYTES in total, and continue after a short count
+        chunks = [(lo + off, min(IOV_BYTES, n - off)) for lo, n in maps for off in range(0, n, IOV_BYTES)]
         try:
-            for i in range(0, len(maps), IOV_BATCH):
-                batch = maps[i:i + IOV_BATCH]
+            i = 0
+            while i < len(chunks):
+                batch, total = [], 0
+                while i < len(chunks) and len(batch) < IOV_BATCH and total + chunks[i][1] <= IOV_BYTES:
+                    batch.append(chunks[i])
+                    total += chunks[i][1]
+                    i += 1
                 vec = (Iovec * len(batch))(*[Iovec(lo, n) for lo, n in batch])
                 rc = _libc.syscall(SYS_PROCESS_MADVISE, ctypes.c_int(pidfd), vec, ctypes.c_size_t(len(batch)),
                                    ctypes.c_int(MADV_PAGEOUT), ctypes.c_uint(0))
-                if rc >= 0:
+                if rc == total:
                     result["advised_bytes"] += rc
                     continue
-                # a mapping went away (segment closed by a merge); retry one range at a time
+                if rc > 0:
+                    result["advised_bytes"] += rc
+                    result["short_calls"] = result.get("short_calls", 0) + 1
+                # a short count or an error (a mapping went away: segment closed by a merge): the rest of the batch
+                # one range at a time
+                done = max(rc, 0)
                 for lo, n in batch:
+                    if done >= n:
+                        done -= n
+                        continue
+                    lo, n, done = lo + done, n - done, 0
                     one = (Iovec * 1)(Iovec(lo, n))
-                    rc = _libc.syscall(SYS_PROCESS_MADVISE, ctypes.c_int(pidfd), one, ctypes.c_size_t(1),
-                                       ctypes.c_int(MADV_PAGEOUT), ctypes.c_uint(0))
-                    if rc >= 0:
-                        result["advised_bytes"] += rc
+                    rc1 = _libc.syscall(SYS_PROCESS_MADVISE, ctypes.c_int(pidfd), one, ctypes.c_size_t(1),
+                                        ctypes.c_int(MADV_PAGEOUT), ctypes.c_uint(0))
+                    if rc1 >= 0:
+                        result["advised_bytes"] += rc1
                     else:
                         err = ctypes.get_errno()
                         if len(result["errors"]) < 10:
