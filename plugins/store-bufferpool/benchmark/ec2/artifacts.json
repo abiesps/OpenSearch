@@ -1,0 +1,381 @@
+{
+  "written_at_pdt": "2026-10-04T17:42:00-07:00",
+  "region": "us-west-2",
+  "bucket": "coldpath-poc-823904838333-usw2",
+  "prefix": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/",
+  "builder": {
+    "instance_id": "i-0ca8a8289d986161e",
+    "type": "c7i.8xlarge",
+    "ami": "ami-0d53cc9bd365ad65b (al2023-ami-2023.12.20260930.0-kernel-6.18-x86_64)",
+    "build_jdk": "Amazon Corretto 21.0.12.1 (build 21.0.12.1+9-LTS), java-21-amazon-corretto-devel from the AL2023 repository",
+    "build_script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build.sh (copy: .agents/tasks/ec2-big5-2026-10-04/builder/build.sh)",
+    "logs": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/ (s0.log.gz, lucene.log.gz, poc.log.gz, plugin-install.log.gz) and build.log"
+  },
+  "s0": {
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-s0-3.10.0-SNAPSHOT-b44de786cef-no-jdk-linux-x64.tar.gz",
+    "sha256": "5a025296590acbf64a0ac93447ad6c5fde4dfd424cfcd1c864da0947a42a74be",
+    "version": "3.10.0-SNAPSHOT",
+    "kind": "merge-base build (no 3.10.0 release exists): git merge-base origin/poc-ioopt upstream/main, recomputed on the builder after fetching opensearch-project/OpenSearch main",
+    "commit": "b44de786cefeb3bfa9fd3f2a61b3a3775e4549dc",
+    "commit_subject": "Allow deprecated route warnings in nodes.hot_threads YAML test (#23171)",
+    "commit_date": "2026-09-29T14:40:56-04:00",
+    "lucene": "stock Apache Lucene 10.5.1 release from Maven Central (jar Implementation-Version '10.5.1 64ce863a2bea79c69c19c4d56268c26710ff0ff9 - 2026-08-07'), 15 lucene jars, none SNAPSHOT",
+    "plugins": "none (opensearch-min, no-jdk-linux-tar: default modules only)",
+    "gradle_task": ":distribution:archives:no-jdk-linux-tar:assemble",
+    "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
+    "run_with": "OPENSEARCH_JAVA_HOME = the host's Corretto 21 (no bundled JDK)"
+  },
+  "poc": {
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-os24d19cc03e9-lucene59f87aa1af-bufferpool-no-jdk-linux-x64.tar.gz",
+    "sha256": "7e33cb2ecce427762684878b218d52cc49318a4655abd059dcfa2670ab973131",
+    "contents": "no-jdk-linux-tar distribution of poc-ioopt with store-bufferpool already installed (bin/opensearch-plugin install --batch); extracts to opensearch-3.10.0-SNAPSHOT/",
+    "version": "3.10.0-SNAPSHOT",
+    "os_branch": "poc-ioopt",
+    "os_commit": "24d19cc03e91528493167c57fd44d4f4a4878437",
+    "os_commit_subject": "Clamp date sort pruning to the query range",
+    "lucene_branch": "bkd-split",
+    "lucene_commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
+    "lucene_commit_subject": "Keep query clause run ends while comparator experiments cap runs",
+    "lucene_verification": "all 15 lucene-*-10.5.1-SNAPSHOT.jar in the distribution are byte-identical to the builder's ~/.m2 (published by ./gradlew mavenToLocal at the fork commit) and their Implementation-Version names 59f87aa1af8fe8514d73088d05b4847e4b401549; report lucene-verify.txt in the prefix",
+    "gradle_tasks": ":distribution:archives:no-jdk-linux-tar:assemble :plugins:store-bufferpool:bundlePlugin -Drepos.mavenLocal=true",
+    "plugin_zip": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/store-bufferpool-3.10.0-SNAPSHOT-os24d19cc03e9.zip",
+      "sha256": "10a4e39bd10ac885c9a094ec0e0a1b6b7f2b606937004a34951b023dce8dddf3"
+    },
+    "distribution_without_plugin": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-os24d19cc03e9-lucene59f87aa1af-noplugin-no-jdk-linux-x64.tar.gz",
+      "sha256": "95c4bc2e3648c90864c526e43cdf8346563a53d7ec7224e7d66f658b08594cf9"
+    },
+    "store_type": "index.store.type: bufferpoolfs; node settings bufferpool.cache.size and bufferpool.cache.block_size (default block 131072 bytes)",
+    "run_with": "OPENSEARCH_JAVA_HOME = the host's Corretto 21 (no bundled JDK)"
+  },
+  "checksums_file": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/SHA256SUMS",
+  "build_manifest": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build-manifest.json",
+  "smoke_tests_on_builder": {
+    "s0": "single-node start OK, build_hash b44de786cefeb3bfa9fd3f2a61b3a3775e4549dc, _cat/plugins empty",
+    "poc": "single-node start OK, build_hash 24d19cc03e91528493167c57fd44d4f4a4878437, _cat/plugins = store-bufferpool 3.10.0-SNAPSHOT, GET /_bufferpool/sort_opt and /_bufferpool/stats answer with every switch off",
+    "store_type_update_on_closed_index": "ok: create index with index.store.type hybridfs, index 1 doc, _close, PUT _settings index.store.type=bufferpoolfs -> acknowledged, _open, setting reads bufferpoolfs, _count=1 (smoke-store-type-update.txt). The EXEC-PLAN rule 'S0 and S1 share one index' can use close/update/reopen; the double-snapshot fallback is not needed."
+  },
+  "bufferpool_switches": {
+    "scope_note": "All switches are JVM-wide static experiment switches on the node that receives the request (not cluster settings); they take effect for scorers/collectors/postings opened after the call. They reset to the S1 values on every JVM restart. S1 = the values below (every switch off), which is what a fresh POC JVM reports.",
+    "s1_reset_calls": [
+      "POST /_bufferpool/agg_batch?mode=off",
+      "POST /_bufferpool/sort_opt?bkd_prefetch=false&whole_index=false&index_child_prefetch=false&approx_single=false&approx_bool=false&skipper_range=false&sort_prefetch=false&clamp=false&sample_docs=0&skipper_mode=off&run_cap=false",
+      "POST /_bufferpool/disjunction_prefetch?blocks=0",
+      "POST /_bufferpool/topk_prefetch?norms_blocks=0&doc_blocks=0",
+      "POST /_bufferpool/dual_nav/_mode?mode=doc"
+    ],
+    "s1_verify": "GET /_bufferpool/sort_opt and GET /_bufferpool/stats must report the s1_value of every switch before each S1 run",
+    "switches": [
+      {
+        "change": "A",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "bkd_prefetch=true",
+        "related_params": "bkd_chunks (1..MAX, default 8)",
+        "s1_value": "bkd_prefetch=false",
+        "what": "BKD intersect leaf prefetch"
+      },
+      {
+        "change": "A-child",
+        "class": "core (sub-variant of A)",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "index_child_prefetch=true",
+        "s1_value": "false",
+        "what": "BKD index child prefetch"
+      },
+      {
+        "change": "A-whole",
+        "class": "informational",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "whole_index=true",
+        "related_params": "whole_index_bytes (default 65536)",
+        "s1_value": "false",
+        "what": "prefetch the whole BKD index when small"
+      },
+      {
+        "change": "B",
+        "class": "core (index format, not a runtime switch)",
+        "endpoint": "none: index mapping meta points_format on date fields (PointsFormatSelectingCodec in store-bufferpool)",
+        "s1_value": "stock points format index",
+        "what": "split BKD points format; needs its own index ingested with POC"
+      },
+      {
+        "change": "C",
+        "class": "planner",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "skipper_range=true",
+        "s1_value": "false",
+        "what": "range filter on doc-values skipper instead of points on clustered segments"
+      },
+      {
+        "change": "D-a",
+        "class": "shortcut (informational, not in CORE)",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "approx_single=true",
+        "s1_value": "false"
+      },
+      {
+        "change": "D-b",
+        "class": "shortcut (informational, not in CORE)",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "approx_bool=true",
+        "s1_value": "false"
+      },
+      {
+        "change": "E",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "sort_prefetch=true",
+        "related_params": "sort_docs (default 65536)",
+        "s1_value": "false",
+        "what": "sort comparator doc-values prefetch, look-ahead 1"
+      },
+      {
+        "change": "E8",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "sort_ahead=8 (laptop name)",
+        "s1_value": "n/a",
+        "available_in_this_binary": false,
+        "what": "sort comparator doc-values prefetch, look-ahead 8. NOT in this binary (sort_opt NAMES at 24d19cc03e9 has no sort_ahead): report as 'not available' until the 19:00 POC2 rebuild"
+      },
+      {
+        "change": "K1",
+        "class": "shortcut (informational, not in CORE)",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "clamp=true",
+        "s1_value": "false",
+        "what": "clamp the competitive range to the query range"
+      },
+      {
+        "change": "K2",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "sample_docs=65536",
+        "s1_value": "sample_docs=0",
+        "what": "comparator update sampling (0 or MIN..MAX)"
+      },
+      {
+        "change": "K3",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "run_cap=true",
+        "s1_value": "false",
+        "what": "competitive clause run cap in the dense conjunction"
+      },
+      {
+        "change": "K4f / K4s",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/sort_opt",
+        "param": "skipper_mode=fallback | skipper_mode=first",
+        "s1_value": "skipper_mode=off",
+        "what": "comparator prunes with the doc-values skipper"
+      },
+      {
+        "change": "C2 / C3e (agg batch collection, doc-values prefetch)",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/agg_batch",
+        "param": "mode=pfwc (headline); also runend|vec|vecdec|pf|pfs|pfl|pfsl|pfw|pfwg; docs=N for pfw* (default 131072)",
+        "s1_value": "mode=off"
+      },
+      {
+        "change": "OR-query postings prefetch",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/disjunction_prefetch",
+        "param": "blocks=N[&aligned=true]",
+        "s1_value": "blocks=0"
+      },
+      {
+        "change": "top-k norms/postings prefetch",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/topk_prefetch",
+        "param": "norms_blocks=N[&doc_blocks=D][&filter=true|false]",
+        "s1_value": "norms_blocks=0&doc_blocks=0"
+      },
+      {
+        "change": "postings nav prefetch / DualNav",
+        "class": "core",
+        "endpoint": "POST /_bufferpool/dual_nav/_mode",
+        "param": "mode=nav",
+        "s1_value": "mode=doc",
+        "what": "applies to Lucene104DualNav postings (index format must use it)"
+      },
+      {
+        "change": "cache control (not an arm)",
+        "endpoint": "POST /_bufferpool/cache/_clear, POST /_bufferpool/stats/_reset, GET /_bufferpool/stats, POST /_bufferpool/trace/_start, GET /_bufferpool/trace, POST /_bufferpool/trace/_stop"
+      }
+    ]
+  },
+  "poc_iosize": {
+    "written_at_pdt": "2026-10-04T18:58:00-07:00",
+    "what": "Interim POC binary = artifacts 'poc' (poc-ioopt 24d19cc03e9 + Lucene bkd-split 59f87aa1af) plus the bufferpool storage-layer change 'IO windows' (ec2-bench 3aa118fac02). Use it for every S1/S2 arm from phase A on; 'poc' stays for the S1-EFS A/A BEFORE the change.",
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-os3aa118fac02-lucene59f87aa1af-bufferpool-iosize-no-jdk-linux-x64.tar.gz",
+    "sha256": "326ba2745490aaafb4ddad6a0d194d419657a4ceaceb45d74bcf2ac32ac08b2e",
+    "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
+    "os_branch": "ec2-bench",
+    "os_commit": "3aa118fac02a9d1fb5d6b78b7f161d5b4fa0ed38",
+    "os_commit_subject": "Read storage in IO windows larger than a block",
+    "base_os_commit": "24d19cc03e91528493167c57fd44d4f4a4878437",
+    "base_note": "the only non-benchmark change between 24d19cc03e9 and 3aa118fac02 is plugins/store-bufferpool/src (checked by the build script); the core distribution build_hash still reports 24d19cc03e9 because the core is unchanged, the plugin jar differs",
+    "lucene_commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
+    "lucene_verification": "15 lucene jars of the distribution byte-identical to ~/.m2, which names 59f87aa1af (lucene-verify-iosize.txt); Lucene not rebuilt",
+    "plugin_zip": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/store-bufferpool-3.10.0-SNAPSHOT-os3aa118fac02-iosize.zip",
+      "sha256": "033160a64e45bc72ee824647f9556c4d9c93cd1e659b0e1fb2bcd8e4ffb15839"
+    },
+    "installed_plugin_jar_sha256": "b85608105f8fde6ef76fc76ba2e60d873ee64390d7f58cff86fd1e930428b4b7",
+    "build_script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build-poc-iosize.sh (copy: .agents/tasks/ec2-big5-2026-10-04/builder/build-poc-iosize.sh)",
+    "files": [
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/SHA256SUMS-iosize",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/commits-iosize.env",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/lucene-verify-iosize.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize-invalid.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize-build.log.gz"
+    ],
+    "node_settings_ec2": {
+      "bufferpool.cache.block_size": "8kb",
+      "bufferpool.io.random_read_size": "32kb",
+      "bufferpool.io.sequential_read_size": "128kb",
+      "bufferpool.cache.size": "set per host from the index size, fixed per session (unchanged rule)"
+    },
+    "settings_rules": "read sizes: power of two, >= block size, <= 8mb; default = block size (one block per miss). Invalid values stop the node at startup. All three are static node settings (restart to change).",
+    "random_vs_sequential": "decided per input like mmapfs/hybridfs (MMapDirectory.ADVISE_BY_CONTEXT): MERGE/FLUSH -> sequential; DataAccessHint.RANDOM -> random; DataAccessHint.SEQUENTIAL -> sequential; else Lucene default read advice (NORMAL unless -Dorg.apache.lucene.store.defaultReadAdvice) -> sequential. In this Lucene, only stored fields (.fdt), term vectors and vector data open with RANDOM; doc values, BKD, postings and terms read 128 KiB per miss. Compound-file sub-files keep their own context (slice with IOContext).",
+    "prefetch": "prefetch ranges are aligned to and coalesced into 128 KiB windows; a window is read only if a requested block in it is missing; each prefetch call still reads its windows one after another on one prefetch thread (same in-flight depth as before)",
+    "planner_node_bytes": "all prefetch planners get node size = bufferpool.io.sequential_read_size at node start and on every experiment POST (DocValuesPrefetch, TopKPrefetch, BKDExperiments (min 4 KiB), SortIoExperiments; DisjunctionPrefetch when aligned). The 'blocks' parameters of /_bufferpool/disjunction_prefetch and /_bufferpool/topk_prefetch now count nodes of this size.",
+    "new_stats": "GET /_bufferpool/stats: random_read_size, sequential_read_size, prefetch_node_bytes, in_flight_reads; per file type: reads, prefetch_reads, bytes_read, reads_by_size{class upper bound bytes: count}, readahead_loads, blocks_inserted (loads + prefetch_loads + readahead_loads), bytes_loaded (inserted bytes). Trace events have 'readahead'; readahead_unread is reported apart from prefetched_unread.",
+    "harness_note": "the cold harness's first-read-is-a-miss check (loads + prefetch_loads) still works; IO-size verification should read bytes_read and reads_by_size, and the NFS client counters (nfsiostat) for the bytes requested from EFS per read",
+    "smoke_on_builder": "8kb/32kb/128kb node, 100,000 random docs, 1 non-compound segment, cold: sum agg -> Lucene90_0.dvd 7 reads all 128 KiB; stored-fields fetch -> fdt 1 read of 32 KiB; range -> kdd 2 reads of 128 KiB; bytes_read == bytes_loaded for every file type; random_read_size=24kb -> node refused to start with the validation message",
+    "unit_tests": "plugins/store-bufferpool: 89 tests x -Dtests.iters=20 = 1780 runs, 0 failures; :plugins:store-bufferpool:precommit OK (builder, Corretto 21.0.12.1)",
+    "superseded_by": "poc_iosize2 (review CHANGES_REQUESTED: a window with cached or in-flight blocks was read as several serial preads; with read_ahead_kb=0 each buffered read reached storage as 4 KiB IOs). Do not use poc_iosize for any arm."
+  },
+  "poc_iosize2": {
+    "written_at_pdt": "2026-10-04T19:56:00-07:00",
+    "what": "Interim POC binary = artifacts 'poc' (poc-ioopt 24d19cc03e9 + Lucene bkd-split 59f87aa1af) plus the bufferpool storage layer after the bp-iosize review fixes (ec2-bench eb26156111a on 3aa118fac02): one storage read per whole IO window, read hints (posix_fadvise WILLNEED per window, so a window is one device IO with read_ahead_kb=0), window/overread/wait/prefetch-queue counters, and the prefetch task-per-window switch (off by default). Use it for every S1/S2 arm and for the storage-layer attribution arms SL-0/SL-H/SL-W/SL-WN (experiments/EXP-SL1-bp-iosize/hypothesis.md Amendment 1).",
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-oseb26156111a-lucene59f87aa1af-bufferpool-iosize2-no-jdk-linux-x64.tar.gz",
+    "sha256": "7525e2cb3bd1cee06d76e36cd400fc6f2f13e708949349ae0749bca3fce2365b",
+    "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
+    "os_branch": "ec2-bench",
+    "os_commit": "eb26156111a1d48ba42406c845d9c959e965eed2",
+    "os_commit_subject": "Make each bufferpool IO window one storage read",
+    "base_os_commit": "24d19cc03e91528493167c57fd44d4f4a4878437",
+    "base_note": "the only non-benchmark changes between 24d19cc03e9 and eb26156111a are in plugins/store-bufferpool/src (3aa118fac02 and eb26156111a; checked by the build script); the core distribution build_hash still reports 24d19cc03e9, the plugin jar differs",
+    "lucene_commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
+    "lucene_verification": "15 lucene jars of the distribution byte-identical to ~/.m2, which names 59f87aa1af (lucene-verify-iosize2.txt); Lucene not rebuilt",
+    "plugin_zip": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/store-bufferpool-3.10.0-SNAPSHOT-oseb26156111a-iosize2.zip",
+      "sha256": "ce13aa5b42cecf53ce2e43c112c6494a56a69894721768a0a2ae6f7d69d1f4e8"
+    },
+    "installed_plugin_jar_sha256": "417b86f6bbbdc662fe301514e89eb083803ec5648921d3da40796ada700fdc37",
+    "build_script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build-poc-iosize2.sh (copy: .agents/tasks/ec2-big5-2026-10-04/builder/build-poc-iosize2.sh)",
+    "files": [
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/SHA256SUMS-iosize2",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/commits-iosize2.env",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/lucene-verify-iosize2.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize2.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize2-invalid.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize2-build.log.gz"
+    ],
+    "node_settings_ec2": {
+      "bufferpool.cache.block_size": "8kb",
+      "bufferpool.io.random_read_size": "32kb",
+      "bufferpool.io.sequential_read_size": "128kb",
+      "bufferpool.io.read_hint": "auto (default; = willneed on Linux). Verify GET /_bufferpool/stats read_hint == willneed. Attribution arms set none explicitly.",
+      "bufferpool.prefetch.task_per_window": "false (default; dynamic). true only in EXP-SL2 arms.",
+      "bufferpool.cache.size": "set per host from the index size, fixed per session (unchanged rule)"
+    },
+    "settings_rules": "read sizes: power of two, >= block size, <= 8mb; default = block size. read_hint: auto|willneed|none; willneed refuses to start where posix_fadvise is unavailable. Static except task_per_window (dynamic, PUT _cluster/settings). Invalid values stop the node at startup.",
+    "window_reads": "every demand miss and prefetch reads its whole aligned window with ONE pread (EOF-clipped): 32 KiB for DataAccessHint.RANDOM inputs (decided like mmapfs ADVISE_BY_CONTEXT), 128 KiB otherwise. Blocks of the window that are cached or being read by another thread are not replaced or waited for; their bytes are dropped (bytes_overread).",
+    "read_hints": "each window pread is preceded by posix_fadvise(WILLNEED) of exactly the window on a second read-only fd of the file (JNA, reference counted). With read_ahead_kb=0 that makes the window one device IO (without it Linux reads 4 KiB pages one by one). Each open file of a bufferpool index holds two fds.",
+    "prefetch": "prefetch ranges aligned to and coalesced into 128 KiB windows; a window is read only if a requested block in it is missing; one task per request (default) or one task per window (task_per_window=true).",
+    "planner_node_bytes": "unchanged from poc_iosize: every planner node size = bufferpool.io.sequential_read_size (bp-iosize-node-sizes.md).",
+    "new_stats": "GET /_bufferpool/stats adds node-wide read_hint, read_hints, read_hint_errors, prefetch_task_per_window, pending_prefetch_tasks, rejected_prefetch_tasks, multi_window_prefetches, max_prefetch_reads_in_flight; per file type bytes_overread, window_blocks, window_blocks_cached, window_blocks_in_flight, waits, wait_time_micros. Identities per file type: bytes_read == bytes_loaded + bytes_overread; window_blocks == blocks_inserted + window_blocks_cached + window_blocks_in_flight. Quiet cache = in_flight_reads == 0 and pending_prefetch_tasks == 0.",
+    "harness_note": "the cold harness's first-read-is-a-miss check (loads + prefetch_loads) still works. The one-device-read-per-window check holds for SL-H, SL-W and every S1/S2 arm (read_hint willneed); it must expect 2 device IOs per 8 KiB read on SL-0 and 32 / 8 per 128 / 32 KiB read on SL-WN (read_hint none), which are those arms' mechanism.",
+    "smoke_on_builder": "8kb/32kb/128kb node, 200,000 random docs, 1 non-compound segment (34.2 MB), path.data on an XFS loop device with read_ahead_kb=0, page cache dropped, cold sum agg + stored-fields fetch + range count: 20 bufferpool storage reads (dvd 12 x 128 KiB + 1 EOF window, fdt 1 x 32 KiB, kdd 4 x 128 KiB, fdx 1, kdi 1) -> 20 device IOs (1.00 per read), read_hints 20, errors 0; same node with read_hint=none -> 533 device IOs (26.65 per read); device bytes 2,183,168 vs bytes_read 2,178,482 in both. Identities hold for every file type, overread 0. random_read_size=24kb and read_hint=always each stop the node with the validation message.",
+    "unit_tests": "plugins/store-bufferpool: 105 tests x -Dtests.iters=20 = 2,100 runs, 0 failures, 20 skipped (no-posix_fadvise test skipped on Linux); :plugins:store-bufferpool:precommit OK (builder, Corretto 21.0.12.1, kernel 6.18.51)",
+    "efs_probe": "experiments/EXP-SL1-bp-iosize/readahead-willneed-probe.txt (EFS, read_ahead_kb=0: 128 KiB window = 32 NFS READs without the hint, 1 with it)"
+  },
+  "poc_iosize3": {
+    "written_at_pdt": "2026-10-04T23:30:00-07:00",
+    "what": "poc_iosize2 plus the codec-selection fix (orchestrator DECISION ~23:00, nyctaxis finding): bufferpoolfs indices select the points format (meta points_format) and the postings format (meta postings_format) per field for EVERY index codec, so best_compression keeps BEST_COMPRESSION stored fields and still writes split BKD and the selected postings. Storage layer identical to poc_iosize2. Use it to build every B index and B-control of a non-default codec (nyc_taxis_split, big5_split, their controls); the final POC artifact must include ec2-bench 74b9ac2dbb0.",
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-os74b9ac2dbb0-lucene59f87aa1af-bufferpool-iosize3-no-jdk-linux-x64.tar.gz",
+    "sha256": "0f70006909585e81acaa062bbacfa817d61bda4b54fb78da841f7c120c334ae6",
+    "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
+    "os_branch": "ec2-bench",
+    "os_commit": "74b9ac2dbb031f4daf23900ab8356e733681a00b",
+    "os_commit_subject": "Select formats per field for every index codec",
+    "base_os_commit": "24d19cc03e91528493167c57fd44d4f4a4878437",
+    "base_note": "non-benchmark changes since 24d19cc03e9 are only plugins/store-bufferpool/src (checked by the build script); the core distribution build_hash still reports 24d19cc03e9",
+    "lucene_commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
+    "lucene_verification": "lucene jars of the distribution byte-identical to ~/.m2 naming 59f87aa1af (lucene-verify-iosize3.txt); Lucene not rebuilt",
+    "plugin_zip": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/store-bufferpool-3.10.0-SNAPSHOT-os74b9ac2dbb0-iosize3.zip",
+      "sha256": "dd62c4d3f10ca1a79599056fc5c21b44c8856a86c8d9c5be228ee506ae780a20"
+    },
+    "installed_plugin_jar_sha256": "35465b0bf4a759310aed8e9ad5620b1dad22ead4a9dd4a6ae60589d47f36a658",
+    "build_script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build-poc-iosize3.sh (copy: .agents/tasks/ec2-big5-2026-10-04/builder/build-poc-iosize3.sh)",
+    "files": [
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/SHA256SUMS-iosize3",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/commits-iosize3.env",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/lucene-verify-iosize3.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize3.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize3-codec.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize3-invalid.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize3-build.log.gz"
+    ],
+    "node_settings_ec2": "same as poc_iosize2",
+    "codec_selection": "BufferPoolCodecService.codec(name) for every name CodecService knows: PostingsFormatSelectingCodec (FilterCodec over the requested codec, keeps its name) when the codec's postings format is per-field; PointsFormatSelectingCodec (codec name Lucene104SplitPoints) when the codec is a Lucene104Codec. Other codecs are used as they are with one WARN per index and codec if the mapping asks for a format they cannot write. Composite (star-tree) indices unchanged.",
+    "unit_tests": "builder, Corretto 21.0.12.1: :plugins:store-bufferpool:precommit OK; :plugins:store-bufferpool:test -Dtests.iters=20: 2,140 runs (107 tests), 0 failures, 40 skipped (2 platform assumptions, as before). New BufferPoolCodecServiceTests: every registered codec name (18 writable incl. default, lz4, best_compression, zlib, lucene_default, Lucene104, Composite104Codec, Asserting, SimpleText; 17 read-only backward codecs) x (points meta, postings meta, neither): segment codec, per-field format attributes, stored-fields mode, results read back through SPI.",
+    "smoke_on_builder": "poc_iosize2 smoke unchanged (hint 1.00 device IO per storage read, nohint 26.65); codec smoke: bufferpoolfs indices with index.codec best_compression and default, date field with points_format Lucene90Split, keyword with postings_format Lucene104Nav: segments_N codec Lucene104SplitPoints, 4 _Lucene90Split_0.kd[midv] files, 6 Lucene104Nav files, stored fields mode BEST_COMPRESSION resp. BEST_SPEED (smoke-iosize3-codec.txt)."
+  },
+  "poc_iosize_conc": {
+    "written_at_pdt": "2026-10-05T05:15:00-07:00",
+    "what": "poc_iosize3 storage layer and the approved codec commits of ec2-bench (up to 3760a9eb88d and the storage branch 63a89302765) plus node-wide prefetch concurrency (bp-concurrency-design.md revision 9 with addendum 14): settings bufferpool.prefetch.max_in_flight (1-256, default min(8, processors)), budget_scope (prefetch default | total), queue_size (0-65536, default 1024), queue_policy (fifo default | fair); PrefetchScheduler (bounded queue, drop never defer, budget gate over prefetch or prefetch+demand reads in flight, demand reads counted never throttled), PrefetchTaskListener (cancellation and query fairness key), /_bufferpool/stats prefetch_scheduler object and latency histograms (?histogram_buckets=true). With no new settings the node behaves as poc_iosize3 except: a cancelled search's queued prefetches are dropped, and the bufferpool_prefetch thread-pool queue is 8 worker runnables (items queue in the scheduler; read prefetch_scheduler.items_started / pending instead of thread-pool completed / queue).",
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-osd6daba062dc-lucene59f87aa1af-bufferpool-iosize_conc-no-jdk-linux-x64.tar.gz",
+    "sha256": "4a558f5b372df63abf4133bd58eb10bf18cf6030a9a170c6bb8f0ff8efafed9b",
+    "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
+    "os_branch": "ec2-bench",
+    "os_commit": "d6daba062dc7a52becf3a44708c42176d7c654c0",
+    "os_commit_subject": "Bound prefetch reads by a node read budget",
+    "base_os_commit": "24d19cc03e91528493167c57fd44d4f4a4878437",
+    "base_note": "non-benchmark changes since 24d19cc03e9 are only plugins/store-bufferpool/src and plugins/store-bufferpool/build.gradle (internal-cluster-test plugin, test only); checked by the build script; the core distribution build_hash still reports 24d19cc03e9",
+    "lucene_commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
+    "lucene_verification": "15 lucene jars of the distribution byte-identical to ~/.m2 naming 59f87aa1af (lucene-verify-iosize_conc.txt); Lucene not rebuilt",
+    "plugin_zip": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/store-bufferpool-3.10.0-SNAPSHOT-osd6daba062dc-iosize_conc.zip",
+      "sha256": "b4d8acea39deba63c855ae8ff2a378f46260ccda2f96094c0440c43fcc860b70"
+    },
+    "installed_plugin_jar_sha256": "bd6196ded6ea6c94c0562e57da46ae9f759948762e2b023d9c6154634da5973b",
+    "build_script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build-poc-iosize-conc.sh (copy: .agents/tasks/ec2-big5-2026-10-04/builder/build-poc-iosize-conc.sh); built in its own worktree ~/build/os-conc on the builder",
+    "files": [
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/SHA256SUMS-iosize_conc",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/commits-iosize_conc.env",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/lucene-verify-iosize_conc.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/tests-iosize_conc.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize_conc.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize_conc-codec.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize_conc-invalid.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-build.log.gz",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-test.log.gz",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-precommit.log.gz",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-run.log.gz"
+    ],
+    "node_settings_ec2": {
+      "io": "same as poc_iosize2 (block 8kb, random 32kb, sequential 128kb, read_hint auto)",
+      "default_arm": "no bufferpool.prefetch.* setting: budget 8, scope prefetch, queue 1024, fifo (today's pool)",
+      "ebs_storage_model_arm": {
+        "bufferpool.prefetch.max_in_flight": 8,
+        "bufferpool.prefetch.budget_scope": "total"
+      },
+      "efs_storage_model_arm": {
+        "bufferpool.prefetch.max_in_flight": 24,
+        "bufferpool.prefetch.budget_scope": "total",
+        "note": "storage model pass 2 (ec2-bench 63a89302765): fixed EFS budget 24 (fast and degraded connection states); 32 and 16 are bracket arms; never above 56"
+      },
+      "verify": "GET /_bufferpool/stats prefetch_scheduler.max_in_flight / budget_scope / queue_size / queue_policy equal the arm's values, and _cat/thread_pool/bufferpool_prefetch size == queue_size == max_in_flight"
+    },
+    "unit_tests": "builder, Corretto 21.0.12.1, worktree at d6daba062dc: :plugins:store-bufferpool:test -Dtests.iters=20: 3,340 runs, 0 failures, 0 errors, 20 skipped (platform assumptions); :plugins:store-bufferpool:internalClusterTest: 3 runs, 0 failures; :plugins:store-bufferpool:precommit OK (tests-iosize_conc.txt). Laptop (macOS, Corretto 21.0.12): same suite 3,340 runs, 0 failures, 60 skipped; precommit OK.",
+    "smoke_on_builder": "XFS loop device, read_ahead_kb 0, cold sessions: default node (budget 8, prefetch, fifo), read hints off, and budget 24 scope total fair: 20 storage reads -> 20 device reads with hints (1.00 per read), 534 without (26.70); thread pool size = queue = 8 resp. 24, 0 rejected; prefetch_reads_outside_slot 0, nested_prefetch_reads 0, max_reads_in_flight <= max_active_workers <= budget, max_total_reads_at_item_start <= 24 with scope total, demand_reads_started 19 = summed demand reads 19, latency histogram counts = storage reads, prefetch + demand bytes = bytes read, scheduler idle after each session. Codec smoke unchanged (split points and Nav postings under best_compression and default). Invalid settings stop the node with the key in the message: max_in_flight 257, budget_scope demand, queue_policy lifo, thread_pool.bufferpool_prefetch.size 16, plus the earlier read-size and read-hint cases. The smoke has one prefetch item per session; load behaviour is the phase-B measurement."
+  }
+}
