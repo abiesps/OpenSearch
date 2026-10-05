@@ -399,8 +399,8 @@ def main():
     nfs_checked = [r for r in nfs_checked if r.get("mode") == "cold" and r.get("arm") == "S2-X-EFS"]
     assert nfs_checked and all(r["checks"].get("reads_reached_nfs_server") for r in nfs_checked), "EFS reads not verified by NFS counters"
     assert all(r["checks"].get("io_size_ok") for r in nfs_checked), "NFS read size check missing"
-    # kernel readahead per arm session: stock arms as mounted, bufferpool arms 128 KiB (common-rules), read sizes traced
-    assert m.readahead.get("POC-EFS") == "128" and m.readahead.get("S0-EBS") == "default", m.readahead
+    # kernel readahead per arm session: stock arms as mounted, bufferpool arms 0 (common-rules), read sizes traced
+    assert m.readahead.get("POC-EFS") == "0" and m.readahead.get("S0-EBS") == "default", m.readahead
     runs = [json.loads(l) for l in open(os.path.join(s2, "samples.jsonl"))]
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run" and r.get("available")), "readahead not verified"
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run_end"), "readahead not re-checked at run end"
@@ -410,7 +410,7 @@ def main():
     p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
                         "--read-ahead-kb", "128", "--out", os.path.join(tmp, "session-ra")], capture_output=True, text=True)
     assert p.returncode != 0 and "no longer used" in p.stderr, "--read-ahead-kb must be refused"
-    assert m.readahead.get("POC-EFS") == "128", "POC arms run with read_ahead_kb 128 (largest bufferpool window)"
+    assert m.readahead.get("POC-EFS") == "0", "POC arms run with read_ahead_kb 0"
     bp_cold = [r for r in runs if r.get("mode") == "cold" and r.get("arm") == "S2-X-EFS"]
     assert bp_cold and all(r["checks"].get("device_reads_are_windows") for r in bp_cold), "device reads vs bufferpool reads"
     assert all(r["io"]["device_vs_bufferpool"]["device_reads"] == r["io"]["device_vs_bufferpool"]["bufferpool_reads"]

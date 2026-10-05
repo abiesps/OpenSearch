@@ -50,7 +50,7 @@ python3 selftest_generic.py --osb-workloads OSBW [--lucene-fork LUCENE_FORK --fo
 - IO configuration: no O_DIRECT (buffered reads), random reads 32 KiB, sequential reads 128 KiB, 8 KiB cache block:
   these are node and arm settings of the main arms file and the POC artifact; `arms_generic.py` copies the arms,
   base switches and cluster settings unchanged, and the sessions use the same per-arm kernel readahead (stock arms as
-  mounted, bufferpool arms 128 KiB, set and verified before and after every run), device read-size trace and
+  mounted, bufferpool arms 0, set and verified before and after every run), device read-size trace and
   device-reads-equal-bufferpool-windows check (README.md, cold protocol item 5).
 - Cold protocol before every iteration: idle prefetch pool, `POST /_bufferpool/cache/_clear`, `POST /_cache/clear`,
   agent pageout + sync + `drop_caches`, verification (cached_blocks 0, mincore residency of every member's files,

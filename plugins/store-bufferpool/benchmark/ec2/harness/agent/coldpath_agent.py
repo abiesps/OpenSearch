@@ -36,8 +36,8 @@ Endpoints (JSON in and out):
   GET  /readahead?mode=default|KIB   kernel readahead of every layer of the data path (NFS bdi; EBS block device and
                                      any dm/LUKS layer below it, read_ahead_kb and blockdev --getra), the recorded
                                      as-mounted default of each layer, and ok = every layer at the mode's target
-  POST /readahead/mode?mode=default|KIB  sets every layer (default = as mounted: stock arms; 128 = POC arms, the
-                                     largest bufferpool window), reads back, returns the same as GET /readahead; the
+  POST /readahead/mode?mode=default|KIB  sets every layer (default = as mounted: stock arms; 0 = POC arms, the
+                                     bufferpool owns the IO size), reads back, returns the same as GET /readahead; the
                                      last mode per arm storage is applied again after a reboot (coldpath_readahead.py)
   POST /trace/block/_start, _stop    tracefs block:block_rq_issue (private instance): histogram of the size of every
                                      read request issued to the data path's disks (EBS device read sizes)

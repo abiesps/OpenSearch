@@ -511,16 +511,16 @@ class Iteration:
 
 
 # ---------------------------------------------------------------- kernel readahead and device read sizes
-POC_READ_AHEAD_KB = 128  # the largest bufferpool window (DECISION 2026-10-04 ~19:45 in common-rules.md)
+POC_READ_AHEAD_KB = 0  # bufferpool arms: no kernel readahead (common-rules.md, kernel readahead, REVISED ~20:00)
 
 
 def readahead_mode(arm, poc_kb=POC_READ_AHEAD_KB):
-    """Stock arms keep the as-mounted kernel readahead (mmap); bufferpool arms run with read_ahead_kb = the largest
-    bufferpool window (128 KiB): with the bufferpool's POSIX_FADV_RANDOM it only caps a request, so one pread of a
-    window is one device read (0 would split it into 4 KiB reads). An arm may set "readahead": "default" | KiB."""
+    """Stock arms keep the as-mounted kernel readahead (mmap; EFS 15360 KiB from efs-utils / the AL2023 udev rule);
+    bufferpool arms run with read_ahead_kb 0: the bufferpool announces each miss window with POSIX_FADV_WILLNEED and
+    preads it, one device read per window. An arm may set "readahead": "default" | KiB."""
     if "read_ahead_kb" in arm:
         raise ValueError("arm key read_ahead_kb is replaced by \"readahead\": \"default\" | <KiB> (common-rules: "
-                         "stock arms as mounted, POC arms 128)")
+                         "stock arms as mounted, POC arms 0)")
     mode = arm.get("readahead", "default" if not arm.get("bufferpool") else poc_kb)
     if mode != "default" and not str(mode).isdigit():
         raise ValueError(f"readahead {mode!r}: default or a value in KiB")
@@ -689,7 +689,7 @@ class Session:
             elif avg is not None:
                 checks["io_size_ok"] = avg <= mx + 512  # mountstats average includes the RPC reply header
         if it.arm.get("bufferpool"):
-            # every device read is one bufferpool window (DECISION 2026-10-04 ~19:45): else the run is invalid
+            # every device read is one bufferpool window (common-rules.md, REVISED ~20:00): else the run is invalid
             dv = device_vs_bufferpool(io)
             io["device_vs_bufferpool"] = dv
             if dv["ok"] is not None:

@@ -33,11 +33,12 @@ its own client and records network time only (`wall_ms`) and the server's `took`
    and EFS); after the query, if anything was read, the reads reached storage: EBS diskstats reads > 0 and JVM
    `read_bytes` > 0; EFS NFS READ ops > 0. With empty caches the first read of the iteration is a miss by
    construction. A sample that fails is marked `cold_ok=false` and excluded (`--strict` aborts).
-5. IO sizes and kernel readahead (common-rules.md, kernel readahead section and DECISION 2026-10-04 ~19:45): before
+5. IO sizes and kernel readahead (common-rules.md, kernel readahead section, REVISED ~20:00): before
    and after every arm run the agent sets and verifies `read_ahead_kb` on every layer of the arm's data path (NFS
    bdi on EFS; block device and any dm/LUKS layer on EBS, plus `blockdev --setra`): stock arms keep the as-mounted
-   default (mmap readahead), bufferpool arms run with 128 KiB (`--poc-read-ahead-kb`; with the bufferpool's
-   POSIX_FADV_RANDOM one window is one device read). A run whose value differs is refused. Every cold iteration
+   default (mmap readahead; EFS 15360 KiB, re-applied by the AL2023 udev rule on every mount), bufferpool arms run with
+   0 (`--poc-read-ahead-kb`; the bufferpool announces each window with POSIX_FADV_WILLNEED, one window = one device
+   read). A run whose value differs is refused. Every cold iteration
    traces the device read sizes (NFS READ RPCs on EFS, block read requests on EBS; `--no-read-size-trace` falls back
    to mountstats / diskstats); for bufferpool arms the device reads, bytes and size classes must equal the
    bufferpool's reads + prefetch_reads, bytes_read and reads_by_size (`device_reads_are_windows`), else the iteration

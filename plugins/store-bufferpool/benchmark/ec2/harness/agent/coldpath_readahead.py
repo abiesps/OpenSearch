@@ -6,12 +6,12 @@
 # compatible open source license.
 """
 Kernel readahead per arm session, and the device read-size trace of EBS, for the cold-path agent (stdlib, root).
-Rule (common-rules.md, "Kernel readahead DISABLED; the bufferpool owns IO size" and "DECISION 2026-10-04 ~19:45"):
-stock arms (S0, mmap/hybridfs) run with the DEFAULT readahead as mounted (EBS device default; EFS bdi as efs-utils
-sets it, 15360 KiB); POC arms (S1, S2) run with read_ahead_kb = 128 (the largest bufferpool window: with the
-bufferpool's POSIX_FADV_RANDOM it only caps a request, so one pread of a window is one device read, while 0 would
-split every pread into 4 KiB reads). Readahead is per device, so it is set for every arm session and verified
-before and after it. A mode is "default" or a value in KiB ("zero" = 0).
+Rule (common-rules.md, "Kernel readahead DISABLED; the bufferpool owns IO size", REVISED ~20:00): stock arms (S0,
+mmap/hybridfs) run with the DEFAULT readahead as mounted (EBS device default; EFS bdi 15360 KiB, set by efs-utils and
+re-applied on every mount by AL2023's udev rule 53-ec2-read-ahead-kb.rules); POC arms (S1, S2) run with 0 (the
+bufferpool announces each window with POSIX_FADV_WILLNEED, so one window is one device read). Readahead is per
+device, so it is set for every arm session (after any mount) and verified before and after it. A mode is "default"
+or a value in KiB ("zero" = 0).
 
 Layers of a data path (every one is set and verified):
   EFS / NFS   the mount's bdi (/sys/class/bdi/<0:NN>/read_ahead_kb)

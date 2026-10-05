@@ -7,7 +7,7 @@
 # compatible open source license.
 """
 Unit checks of the readahead / device-read rules (stdlib, no root, no AWS):
-  - coldbench.readahead_mode: stock arms "default", bufferpool arms 128 (or --poc-read-ahead-kb), explicit "readahead",
+  - coldbench.readahead_mode: stock arms "default", bufferpool arms 0 (or --poc-read-ahead-kb), explicit "readahead",
     the removed read_ahead_kb arm key refused
   - agent coldpath_readahead: mode targets, Readahead state with a fake sysfs (defaults recorded once per boot before
     any change, set / read back / ok, the last mode applied again after a reboot), the block_rq_issue trace parser
@@ -39,7 +39,7 @@ def check(cond, what):
 def main():
     # modes per arm
     check(coldbench.readahead_mode({"bufferpool": False}) == "default", "stock arm: as mounted")
-    check(coldbench.readahead_mode({"bufferpool": True}) == "128", "bufferpool arm: 128 KiB")
+    check(coldbench.readahead_mode({"bufferpool": True}) == "0", "bufferpool arm: 0 (no kernel readahead)")
     check(coldbench.readahead_mode({"bufferpool": True}, 256) == "256", "bufferpool arm: --poc-read-ahead-kb")
     check(coldbench.readahead_mode({"bufferpool": True, "readahead": "default"}) == "default", "explicit arm mode")
     for bad in ({"read_ahead_kb": 128}, {"readahead": "fast"}):
@@ -63,12 +63,12 @@ def main():
         ra.layers = lambda s: [{"key": "bdi:0:53", "kind": "nfs-bdi", "sysfs": sysfs, "dev": None}]
         r = ra.read(st, "default")
         check(r["ok"] and r["layers"][0]["default_kb"] == 15360, "as-mounted default recorded")
-        r = ra.set_mode("POC-EFS", st, "128")
-        check(r["ok"] and open(sysfs).read().strip() == "128", "POC mode set and read back")
-        check(not ra.read(st, "default")["ok"], "default check fails while 128 is set")
+        r = ra.set_mode("POC-EFS", st, "0")
+        check(r["ok"] and open(sysfs).read().strip() == "0", "POC mode set and read back")
+        check(not ra.read(st, "default")["ok"], "default check fails while 0 is set")
         r = ra.set_mode("POC-EFS", st, "default")
         check(r["ok"] and open(sysfs).read().strip() == "15360", "default restored from the recorded value")
-        ra.set_mode("POC-EFS", st, "128")
+        ra.set_mode("POC-EFS", st, "0")
         # reboot: the kernel / efs-utils set the default again; the agent restarts and applies the last mode again
         open(sysfs, "w").write("15360\n")
         boot[0] = "b2"
@@ -77,7 +77,7 @@ def main():
         ra2.layers = ra.layers
         logs = []
         ra2.restore_after_boot(logs.append)
-        check(open(sysfs).read().strip() == "128" and ra2.state["defaults"]["bdi:0:53"]["read_ahead_kb"] == 15360,
+        check(open(sysfs).read().strip() == "0" and ra2.state["defaults"]["bdi:0:53"]["read_ahead_kb"] == 15360,
               f"after a reboot: default re-recorded, last mode applied again ({logs})")
         try:
             ra2.set_mode("POC-EFS", st, "fast")
