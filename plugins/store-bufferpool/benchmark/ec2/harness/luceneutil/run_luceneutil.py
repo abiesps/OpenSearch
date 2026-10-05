@@ -130,7 +130,7 @@ jvm_count = comp_cfg["jvm_count"] if S["mode"] == "warm" else comp_cfg.get("cold
 comp = competition.Competition(cold=False, verifyScores=comp_cfg.get("verify_scores", True),
                                verifyCounts=comp_cfg.get("verify_counts", True), randomSeed=comp_cfg["random_seed"],
                                taskCountPerCat=comp_cfg.get("task_count_per_cat", 1),
-                               taskRepeatCount=comp_cfg["cold_task_repeat_count" if strict else "task_repeat_count"],
+                               taskRepeatCount=comp_cfg["task_repeat_count" if S["mode"] == "warm" else "cold_task_repeat_count"],
                                jvmCount=jvm_count)
 tasks_file = os.path.join(constants.BENCH_BASE_DIR, "tasks", S["tasks"])
 if not os.path.exists(tasks_file):

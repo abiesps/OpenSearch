@@ -109,18 +109,26 @@ def convert(session_dir, out_dir, reference=None):
             rec = {"schema": SCHEMA, "type": "sample", "mode": mode, **run, "op": t.key, "iter": counts[(run_id, t.key)],
                    "took_ms": t.msec, "wall_ms": t.msec, "requests": 1, "digest": t.digest(), "thread": t.thread}
             counts[(run_id, t.key)] += 1
+            if session["mode"] == "cold-luceneutil" and rec["iter"] > 0:
+                last[t.key] = t
+                continue  # only the first instance of a task after the drop is cold; later ones find its pages cached
             if session["mode"] == "cold-strict":
                 c = cold[i]
-                if c["category"] != t.category:
-                    raise SystemExit(f"{m['cold_log']}: record {i} is {c['category']}, log task {t.category}")
+                # the cold record carries task.toString(), which is the TASK line of the result log (the categories
+                # differ in spelling for PK and respell tasks: getCategory() PKLookup / Respell, log PK / respell)
+                if c.get("task") != t.line:
+                    raise SystemExit(f"{m['cold_log']}: record {i} is task {c.get('task')!r}, log task {t.line!r}")
                 rec["cold_ok"] = bool(c["cold_ok"])
                 rec["checks"] = {"page_cache_empty": bool(c["cold_ok"]), "resident_bytes": c["resident_bytes"]}
                 rec["io"] = _io(c.get("pre"), c.get("post"))
                 rec["clear"] = {"drop": {k: (c.get("drop") or {}).get(k) for k in ("pageout_ms", "sync_ms", "drop_ms")}}
             elif session["mode"] == "cold-luceneutil":
-                rec["cold_ok"] = True
-                rec["checks"] = {"luceneutil_cold": True, "gap": "caches dropped once per JVM (luceneutil cold=True), "
-                                 "not before every task; the decision metric is cold-strict"}
+                drop = m.get("jvm_drop") or {}
+                rec["cold_ok"] = bool(drop.get("cold_ok"))
+                rec["checks"] = {"luceneutil_cold": True, "resident_bytes_at_jvm_start": drop.get("resident_bytes"),
+                                 "gap": "caches dropped once per JVM (luceneutil cold=True) and tasks run concurrently, "
+                                 "so a task may find pages another task read; first instance of each task only; the "
+                                 "decision metric is cold-strict"}
             w.write(rec)
             last[t.key] = t
         for key, t in last.items():
