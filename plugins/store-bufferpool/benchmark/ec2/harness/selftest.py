@@ -83,6 +83,13 @@ class Mock:
         self.fd_marked_at = None
         self.node_settings = {"indices.cache.cleanup_interval": "1s"}
         self.events = []  # ("search", body key) / ("cache_clear",) in call order
+        # EFS backend connections of efs-proxy: a fresh mount has 1; /efs/precondition scales it to the target; a
+        # reconnect (efs_drop_at = the EFS snapshot number at which it happens) brings it back to 1
+        self.efs_conns = 1
+        self.proxy_pid = 4000
+        self.preconditions = 0
+        self.efs_snapshots = 0
+        self.efs_drop_at = None
 
     def search(self, index, body):
         key = json.dumps(body, sort_keys=True)
@@ -320,9 +327,22 @@ def make_agent_handler(m):
                     nfs = {"normal_read_bytes": 8192 * m.nfs_reads, "ops": {"READ": {
                         "ops": m.nfs_reads, "trans": m.nfs_reads, "timeouts": 0, "bytes_sent": 0, "bytes_recv": 8192 * m.nfs_reads,
                         "queue_ms": 0, "rtt_ms": 2 * m.nfs_reads, "execute_ms": 2 * m.nfs_reads}}} if efs else None
+                    if efs:
+                        m.efs_snapshots += 1
+                        if m.efs_drop_at is not None and m.efs_snapshots >= m.efs_drop_at:
+                            m.efs_conns, m.efs_drop_at = 1, None
                     return self.send(200, {"t_mono": __import__("time").monotonic(), "pid": m.pid,
                                            "proc_io": {"read_bytes": m.read_bytes, "rchar": m.read_bytes},
-                                           "disk": disk, "nfs": nfs})
+                                           "disk": disk, "nfs": nfs,
+                                           "efs_connections": {"count": m.efs_conns, "proxy_pid": m.proxy_pid} if efs else None})
+                if u.path == "/efs/connections":
+                    return self.send(200, {"efs_connections": {"count": m.efs_conns, "proxy_pid": m.proxy_pid} if efs else None})
+                if u.path == "/efs/precondition":
+                    before, target = m.efs_conns, int(q["target"])
+                    m.preconditions += 1
+                    m.efs_conns = max(before, target) if target > 1 else before
+                    return self.send(200, {"ok": m.efs_conns >= target, "count": m.efs_conns, "count_before": before,
+                                           "read_MBps": 600.0, "elapsed_s": 4.0, "skipped": False})
                 if u.path == "/cache/drop":
                     if not m.broken_clear:
                         m.page_cache.clear()
@@ -521,6 +541,53 @@ def main():
     assert bp_cold and all(r["checks"].get("device_reads_are_windows") for r in bp_cold), "device reads vs bufferpool reads"
     assert all(r["io"]["device_vs_bufferpool"]["device_reads"] == r["io"]["device_vs_bufferpool"]["bufferpool_reads"]
                for r in bp_cold)
+    # EFS backend connection count (common-rules "Amazon EFS connection count is a measured variable"): the fresh mount
+    # (1 connection) was pre-conditioned to 5 before the first EFS run; every EFS sample records 5 at start and end
+    assert m.preconditions >= 1, "the mount at 1 connection was not pre-conditioned"
+    s1_recs = [json.loads(l) for l in open(os.path.join(s1, "samples.jsonl"))]
+    for recs_ in (runs, s1_recs):
+        efs_s = [r for r in recs_ if r["type"] == "sample" and r["mode"] in ("cold", "warm") and r["arm"].endswith("EFS")]
+        assert efs_s and all(r["io"]["efs_connections"]["start"] == r["io"]["efs_connections"]["end"] == 5 for r in efs_s)
+        assert all(r["checks"]["efs_connections_ok"] for r in efs_s if r["mode"] == "cold")
+        assert all(r["efs_connections_ok"] for r in efs_s if r["mode"] == "warm")
+        assert not any("efs_connections" in r.get("io", {}) for r in recs_ if r["type"] == "sample" and r.get("arm") == "S0-EBS")
+        assert all(r["efs_connections_target"] == 5 and r["efs_precondition_start"]["ok"] for r in recs_
+                   if r["type"] == "run" and r.get("available") and r["arm"].endswith("EFS"))
+    # a reconnect in the middle of a session (count back to 1): the sample that sees it is invalid, the next sample
+    # is pre-conditioned again and valid
+    n_pre = m.preconditions
+    m.efs_drop_at = m.efs_snapshots + 9
+    s8 = os.path.join(tmp, "session-efs-drop")
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1", "--modes", "cold,warm",
+         "--no-results", "--out", s8])
+    r8 = [json.loads(l) for l in open(os.path.join(s8, "samples.jsonl"))]
+    s8s = [r for r in r8 if r["type"] == "sample"]
+    bad8 = [r for r in s8s if (r["checks"]["efs_connections_ok"] if r["mode"] == "cold" else r["efs_connections_ok"]) is False]
+    assert len(bad8) == 1 and m.preconditions == n_pre + 1, (len(bad8), m.preconditions, n_pre)
+    assert bad8[0]["mode"] != "cold" or bad8[0]["cold_ok"] is False
+    assert any("efs_precondition" in r.get("clear", {}) or "efs_precondition" in r for r in s8s), "re-pre-conditioning not recorded"
+    # record-only sessions (--efs-connections 0) keep whatever count the mount has; analyze.py refuses to compare EFS
+    # samples at different counts unless one is selected
+    m.efs_conns = 1
+    s9 = os.path.join(tmp, "session-efs-record")
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1", "--modes", "cold,warm",
+         "--efs-connections", "0", "--no-results", "--out", s9])
+    r9 = [json.loads(l) for l in open(os.path.join(s9, "samples.jsonl"))]
+    assert all(r["io"]["efs_connections"]["start"] == 1 and "efs_connections_ok" not in r and
+               "efs_connections_ok" not in r.get("checks", {}) for r in r9 if r["type"] == "sample")
+    p = subprocess.run([PY, os.path.join(here, "analyze.py"), s2, s9, "--base", "S1-EFS", "--boot", "200", "--ni-boot", "100",
+                        "--out", os.path.join(tmp, "analysis-efs-mixed")], capture_output=True, text=True)
+    assert p.returncode != 0 and "different backend connection counts" in p.stderr, p.stderr[-800:]
+    run([PY, os.path.join(here, "analyze.py"), s2, s9, "--base", "S1-EFS", "--efs-connections", "5", "--boot", "200",
+         "--ni-boot", "100", "--out", os.path.join(tmp, "analysis-efs-5")])
+    a5 = json.load(open(os.path.join(tmp, "analysis-efs-5", "analysis.json")))
+    assert a5["efs_connections"]["kept_states"] == ["5"], a5["efs_connections"]
+    # the 1-connection sensitivity needs a fresh pinned mount: a mount above the target is refused, never lowered
+    m.efs_conns = 5
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
+                        "--modes", "cold", "--efs-connections", "1", "--out", os.path.join(tmp, "session-efs-1")],
+                       capture_output=True, text=True)
+    assert p.returncode != 0 and "cannot be lowered without a remount" in p.stderr, p.stderr[-800:]
     # device reads that are not bufferpool windows make the run invalid
     m.split_reads = True
     s5 = os.path.join(tmp, "session-split")

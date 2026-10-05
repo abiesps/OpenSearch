@@ -155,8 +155,19 @@ def cold_protocols(data, skip):
 
 
 
+def efs_state(sample):
+    """EFS backend connection count of a sample: None (not EFS), "unknown" (EFS, not recorded), "N" or "N->M"."""
+    io = sample.get("io") or {}
+    if io.get("nfs") is None:
+        return None
+    e = io.get("efs_connections")
+    if e is None or e.get("start") is None:
+        return "unknown"
+    return str(e["start"]) if e["start"] == e["end"] else f"{e['start']}->{e['end']}"
+
+
 class Data:
-    def __init__(self, dirs, cold_metric, warm_metric, cold_skip_iters=0):
+    def __init__(self, dirs, cold_metric, warm_metric, cold_skip_iters=0, keep_unknown_efs=False, efs_select=None):
         self.samples = collections.defaultdict(list)  # (mode, label, run_id, op) -> [sample]
         self.runs = {}
         self.results = collections.defaultdict(dict)  # (label, op) -> {run_id: canonical}
@@ -166,6 +177,8 @@ class Data:
         self.verify = collections.defaultdict(collections.Counter)
         self.batches = []
         self.skipped = collections.Counter()
+        self.efs_counts = collections.Counter()  # (mode, label, efs state) -> samples
+        self.efs_used = set()  # EFS states of the samples kept
         for d in dirs:
             for r in read_jsonl(os.path.join(d, "samples.jsonl")):
                 t = r["type"]
@@ -186,6 +199,16 @@ class Data:
                     if r.get("error"):
                         self.excluded[(r["mode"], r["label"], "error")] += 1
                         continue
+                    # EFS samples: valid only at the session's backend connection count (common-rules.md "Amazon
+                    # EFS connection count is a measured variable"); cold samples carry it in checks / cold_ok
+                    efs = efs_state(r)
+                    self.efs_counts[(r["mode"], r["label"], efs)] += 1
+                    if ((efs == "unknown" and not keep_unknown_efs) or r.get("efs_connections_ok") is False
+                            or (efs not in (None, "unknown") and efs_select is not None and efs != str(efs_select))):
+                        self.excluded[(r["mode"], r["label"], "efs_connections")] += 1
+                        continue
+                    if efs is not None:
+                        self.efs_used.add(efs)
                     if r["mode"] == "cold":
                         self.verify[r["label"]]["ok"] += 1
                         if r.get("checks", {}).get("io_size_ok") is False:
@@ -608,8 +631,18 @@ def main():
     ap.add_argument("--cold-skip-iters", type=int, default=0,
                     help="leave out cold iterations < N of every op (sessions of the old jit-cold protocol: 1 leaves out "
                          "iteration 0, which also paid the JIT compilation of its query shape)")
+    ap.add_argument("--efs-connections", type=int,
+                    help="keep only EFS samples at this efs-proxy backend connection count (start = end); needed when "
+                         "the kept EFS samples have more than one count")
+    ap.add_argument("--keep-unknown-efs-connections", action="store_true",
+                    help="keep EFS samples recorded without the connection count (older sessions); the report labels "
+                         "them 'connection state unknown', and they cannot carry an EFS verdict")
     a = ap.parse_args()
-    data = Data(a.sessions, a.cold_metric, a.warm_metric, a.cold_skip_iters)
+    data = Data(a.sessions, a.cold_metric, a.warm_metric, a.cold_skip_iters, a.keep_unknown_efs_connections,
+                a.efs_connections)
+    if len(data.efs_used - {"unknown"}) > 1:
+        sys.exit(f"EFS samples at different backend connection counts {sorted(data.efs_used)} cannot be compared in one "
+                 "analysis; select one with --efs-connections N")
     labels = data.labels()
     protocol = cold_protocols(data, a.cold_skip_iters)
     others = a.compare.split(",") if a.compare else [l for l in labels if l != a.base]
@@ -628,6 +661,13 @@ def main():
               f"on run medians; BH q < {a.alpha} across the ops of each comparison, and |change| above the A/A floor. "
               f"Cold protocol: {protocol}" + (f" ({sum(data.skipped.values())} cold samples of iterations < "
                                               f"{a.cold_skip_iters} left out)" if a.cold_skip_iters else "") + ".")
+    if data.efs_counts:
+        md.append("EFS backend connection count per kept or dropped sample (mode, label, count): "
+                  + ", ".join(f"{m} {l} {e}: {n}" for (m, l, e), n in sorted(data.efs_counts.items(), key=str) if e is not None)
+                  + (". Samples at 'unknown' are kept with connection state unknown and carry no EFS verdict."
+                     if "unknown" in data.efs_used else "."))
+    res["efs_connections"] = {"kept_states": sorted(data.efs_used),
+                              "per_label": {f"{m}|{l}|{e}": n for (m, l, e), n in data.efs_counts.items() if e is not None}}
     unavailable = [r for r in data.runs.values() if not r.get("available", True)]
     if unavailable:
         md.append("\n## Not available (gaps, not zero effects)")

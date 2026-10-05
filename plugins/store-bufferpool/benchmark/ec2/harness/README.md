@@ -17,8 +17,27 @@ target (S2-CORE-EFS, S2-CORE+PLANNER-EFS) not worse than reference (S0-EBS). Met
 | `segformat_check.py`, `agent/coldpath_segformat.py` | load generator; data node (agent `GET /index/formats`, or `--dir` directly) | post-ingest segment format check: reads every shard's last commit from the segment files and proves each field's points and postings format from its per-field attribute and the format's files |
 | `analyze.py` | anywhere | statistics and the outcome verdict (below) |
 | `selftest.py` | anywhere | end to end against a mock node and mock agent; `--osb-bin` also runs the OSB executor |
+| `agent/coldpath_efsconn.py` | data node (agent `GET /efs/connections`, `POST /efs/precondition`, and in every `/snapshot`) | EFS backend connection count: efs-proxy's established TCP connections to the mount target port 2049; pre-conditioning to a target count (below) |
+| `selftest_efsconn.py` | anywhere (the O_DIRECT read on Linux only) | the connection count against a fake /proc, and the pre-conditioning rules |
 | `selftest_segformat.py` | anywhere | the segment format check on real Lucene shards (`testdata/segformat`: a split BKD and Nav postings copy written by the plugin's codec service, and a stock control), the agent endpoint, `indexprep.py formats` logic and the coldbench verify step |
 
+## EFS backend connection count (common-rules "Amazon EFS connection count is a measured variable")
+efs-proxy (efs-utils 3.3.2) starts a mount on one TCP connection to the mount target and adds 4 more only after one
+3 s window at >= 300 MiB/s; it keeps 5 until the proxy incarnation restarts (a reconnect). The count is not
+configurable (compile-time `DEFAULT_SCALE_UP_CONFIG`, optionally overridden by the server). High-concurrency read
+latency depends on it (storage/storage-model.md section 4.2.2), so:
+- every EFS sample records `io.efs_connections` = {start, end, proxy_pid} from the agent's `/snapshot`;
+- `coldbench.py --efs-connections 5` (default) holds the count: before each EFS run and before every cold and measured
+  warm sample whose mount is below 5, the agent reads a scratch file on the mount with O_DIRECT 1 MiB reads (no
+  page-cache page, no index file; `<mountpoint>/coldpath-efs-precondition.bin`, 4 GiB, created once) until efs-proxy
+  has scaled up (up to 360 s, longer than its 300 s back-off after a failed search). A sample is valid only if start ==
+  end == 5 on the same proxy process (cold: `checks.efs_connections_ok`, part of `cold_ok`; warm:
+  `efs_connections_ok`). A run whose mount cannot reach 5 is refused;
+- `--efs-connections 1` is the sensitivity of a mount that never scaled up: it needs a fresh mount pinned to one
+  connection (`storage/efs_conn_ctl.sh pin-on`, then remount); a mount above the target is refused, never lowered;
+- `--efs-connections 0` records the count only; `analyze.py` refuses to compare EFS samples at different counts
+  (select one with `--efs-connections N`) and drops EFS samples without a count unless
+  `--keep-unknown-efs-connections` (labelled "connection state unknown", no EFS verdict).
 ## Why the cold protocol is implemented outside OSB's schedule
 OSB has no hook between iterations of a task, and it times a runner from its first to its last request on its own
 client. The `coldpath-search` runner therefore clears and verifies with a separate stdlib client before it calls

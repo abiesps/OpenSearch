@@ -124,7 +124,7 @@ class WarmSearch:
         n = st.counts.get(key, 0)
         st.counts[key] = n + 1
         measured = n >= params["coldpath-warmup"]
-        pre = await loop.run_in_executor(None, st.it.snapshot) if measured else None
+        pre = await loop.run_in_executor(None, st.it.pre_snapshot) if measured else None
         inner = dict(params)
         inner["operation-type"] = params["coldpath-osb-type"]
         t = time.perf_counter()
@@ -140,7 +140,8 @@ class WarmSearch:
         io = coldbench.io_delta(pre, st.it.snapshot())
         st.w.write({"schema": coldbench.SCHEMA, "t": time.time(), "type": "sample", "mode": "warm", "executor": "osb",
                     **_cfg["run"], "pos": params["coldpath-pos"], "op": op, "iter": i, "took_ms": result.get("took"),
-                    "wall_ms": wall, "requests": result.get("pages", 1), "io": io, "post_idle_ms": idle_ms})
+                    "wall_ms": wall, "requests": result.get("pages", 1), "io": io, "post_idle_ms": idle_ms,
+                    **coldbench.warm_efs_fields(st.it, io)})
 
 
 def register(registry):

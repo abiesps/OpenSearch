@@ -59,6 +59,9 @@ from common import HttpError, JsonClient, JsonlWriter, wait_until  # noqa: E402
 SCHEMA = 1
 FLOAT_DIGITS = 12
 DROP_ROUNDS = 5  # agent /cache/drop?until_empty: at most this many pageout + sync + drop rounds per cold clear
+# EFS pre-conditioning: long enough to outlast efs-proxy's 300 s back-off after a failed scale-up search
+EFS_PRECONDITION_TIMEOUT_S = 360
+EFS_CONNECTIONS_DEFAULT = 5  # efs-proxy's scaled-up count (max_multiplexed_connections), the steady busy-node state
 
 
 # ---------------------------------------------------------------- query execution and canonical results
@@ -280,7 +283,35 @@ def io_delta(pre, post):
         nd["read_in_flight"] = r["execute_ms"] / dt_ms if r.get("ops") and dt_ms > 0 else None
         nd["window_ms"] = dt_ms
         d["nfs"] = nd
+    ea, eb = pa.get("efs_connections"), pb.get("efs_connections")
+    if ea is not None or eb is not None:
+        # efs-proxy's backend TCP connections to the mount target at the start and the end of the sample
+        # (common-rules.md "Amazon EFS connection count is a measured variable")
+        d["efs_connections"] = {"start": (ea or {}).get("count"), "end": (eb or {}).get("count"),
+                                "proxy_pid": [(ea or {}).get("proxy_pid"), (eb or {}).get("proxy_pid")]}
     return d
+
+
+def warm_efs_fields(it, io):
+    """Fields of a warm sample record: efs_connections_ok (EFS arms with a target) and a pre-conditioning, if one ran."""
+    out = {}
+    eok = efs_connections_ok(io, it.efs_target) if it.efs else None
+    if eok is not None:
+        out["efs_connections_ok"] = eok
+    pc = it.take_efs_precondition()
+    if pc is not None:
+        out["efs_precondition"] = pc
+    return out
+
+
+def efs_connections_ok(io, target):
+    """None if not an EFS sample or no target; else start == end == target, on the same efs-proxy process."""
+    if not target or io.get("nfs") is None:
+        return None
+    e = io.get("efs_connections")
+    if e is None:
+        return False  # an EFS sample without the count: connection state unknown
+    return e["start"] == e["end"] == target and e["proxy_pid"][0] == e["proxy_pid"][1]
 
 
 # ---------------------------------------------------------------- arms
@@ -567,13 +598,47 @@ def jit_warmup(session, run, index, ops, seed):
 
 # ---------------------------------------------------------------- one iteration
 class Iteration:
-    def __init__(self, node, arm, uuids, residency_every):
+    def __init__(self, node, arm, uuids, residency_every, efs=False, efs_target=0):
         self.node, self.arm, self.uuids, self.residency_every = node, arm, uuids, residency_every
         self.count = 0
         self.q = "arm=" + urllib.parse.quote(arm["node"])
+        # EFS arms: efs-proxy's backend connection count is held at efs_target (0 = only recorded)
+        self.efs, self.efs_target = bool(efs), int(efs_target or 0)
+        self.last_efs_precondition = None
 
     def snapshot(self):
         return self.node.snapshot(bool(self.arm.get("bufferpool")), self.arm["node"])
+
+    def ensure_efs(self, timeout_s=None):
+        """
+        Brings the EFS mount to efs_target backend connections before a sample: if the count is lower, the agent reads
+        a scratch file on the mount with O_DIRECT (no page cache, no index file) until efs-proxy has scaled up. A count
+        above the target cannot be lowered without a remount, so it is refused. Returns None if nothing was needed.
+        """
+        if not (self.efs and self.efs_target and self.node.agent):
+            return None
+        timeout_s = EFS_PRECONDITION_TIMEOUT_S if timeout_s is None else timeout_s
+        c = self.node.agent.request("GET", f"/efs/connections?{self.q}")["efs_connections"]
+        n = (c or {}).get("count")
+        if n == self.efs_target:
+            return None
+        if n is not None and n > self.efs_target:
+            raise RuntimeError(f"arm {self.arm['node']}: the EFS mount has {n} backend connections, target {self.efs_target}; "
+                               "a count cannot be lowered without a remount (for 1: remount with efs_conn_ctl.sh pin-on)")
+        r = self.node.agent.request("POST", f"/efs/precondition?{self.q}&target={self.efs_target}&timeout_s={timeout_s}",
+                                    timeout=timeout_s + 30)
+        r = {k: r.get(k) for k in ("ok", "count", "count_before", "read_MBps", "elapsed_s", "skipped")}
+        self.last_efs_precondition = r
+        return r
+
+    def pre_snapshot(self):
+        """snapshot() at the start of a measured warm sample, after ensure_efs()."""
+        self.ensure_efs()
+        return self.snapshot()
+
+    def take_efs_precondition(self):
+        r, self.last_efs_precondition = self.last_efs_precondition, None
+        return r
 
     def clear(self):
         n, bp = self.node, bool(self.arm.get("bufferpool"))
@@ -602,6 +667,12 @@ class Iteration:
                 out["cached_after_drop"] = d["meminfo_after"]["Cached"]
         if bp:
             out["bp_cached_blocks"] = n.bp_stats()["cached_blocks"]
+        # after the clears: the pre-conditioning reads a scratch file with O_DIRECT, so it adds no page-cache page and
+        # reads no index file
+        pc = self.ensure_efs()
+        if pc is not None:
+            out["efs_precondition"] = pc
+            self.last_efs_precondition = None
         if not checked and n.agent and self.residency_every and self.count % self.residency_every == 0:
             r = n.agent.request("GET", f"/cache/residency?{self.q}&uuids=" + ",".join(self.uuids))
             out["resident_bytes"] = r["resident_bytes"]
@@ -638,6 +709,9 @@ class Iteration:
         if bp and (demand or 0) > 0 and proc is not None and nfs is None:
             # block devices account storage reads in /proc/<pid>/io read_bytes; NFS reads are not accounted there
             checks["jvm_read_bytes"] = proc > 0
+        eok = efs_connections_ok(io, self.efs_target) if self.efs else None
+        if eok is not None:
+            checks["efs_connections_ok"] = eok
         ok = all(v for k, v in checks.items() if k != "no_io")
         if self.node.agent is None:
             checks["gap"] = "no agent: OS page cache not dropped or verified"
@@ -939,15 +1013,17 @@ class Session:
         return rec
 
     def warm_sample(self, it, run, op, index, i, phase):
-        pre = it.snapshot() if phase == "measure" else None
+        pre = it.pre_snapshot() if phase == "measure" else None
         res = execute(self.node.os, index, op)
         if phase != "measure":
             return None
         idle_ms, _ = self.node.wait_prefetch_idle()
         post = it.snapshot()
+        io = io_delta(pre, post)
         rec = {"type": "sample", "mode": "warm", **run, "op": op["name"], "iter": i, "took_ms": res["took_ms"],
                "wall_ms": res["wall_ms"], "requests": res["requests"], "digest": res["canonical"]["digest"],
-               "io": io_delta(pre, post), "post_idle_ms": idle_ms}
+               "io": io, "post_idle_ms": idle_ms}
+        rec.update(warm_efs_fields(it, io))
         if res.get("flags"):
             rec["flags"] = res["flags"]
         self.record(**rec)
@@ -1053,13 +1129,23 @@ class Session:
         index = self.cfg["indices"][arm["index"]]["name"]
         uuids = indices_ext.uuids(indices[arm["index"]])
         self.read_trace_kind = read_size_trace(a, arm, self.node, self.storage_nfs)
+        it = Iteration(self.node, arm, uuids, a.residency_every, efs=bool(self.storage_nfs), efs_target=a.efs_connections)
+        efs_start = None
+        if it.efs and it.efs_target:
+            # before the JIT warm-up and the measured blocks: the mount at the target count (verified per sample)
+            efs_start = it.ensure_efs() or {"ok": True, "count": it.efs_target, "skipped": True}
+            it.take_efs_precondition()
+            self.log(f"  EFS backend connections: {efs_start['count']} (target {it.efs_target})")
+            if not efs_start["ok"]:
+                raise RuntimeError(f"run {run_id}: EFS mount not at {it.efs_target} backend connections after "
+                                   f"pre-conditioning: {efs_start}; not measuring")
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
                     cold_protocol="jit-warm" if a.jit_warmup else "jit-cold",
                     readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
                     cache_cleanup=cache_cleanup,
+                    efs_connections_target=a.efs_connections if it.efs else None, efs_precondition_start=efs_start,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
                     args=vars(a), op_caps=self.op_caps)
-        it = Iteration(self.node, arm, uuids, a.residency_every)
         modes = a.modes.split(",")
         if a.jit_warmup and any(m in modes for m in ("cold", "ccold")):
             jit_warmup(self, run, index, self.ops, _seed(a.seed, run_id, "jit"))
@@ -1141,6 +1227,11 @@ def add_common(p):
     p.add_argument("--residency-tolerance", type=int, default=0, help="bytes of index files allowed resident after a clear "
                    "(only 0 is accepted: a cold iteration needs every index page evicted)")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
+    p.add_argument("--efs-connections", type=int, default=EFS_CONNECTIONS_DEFAULT,
+                   help="EFS arms: efs-proxy backend TCP connections every sample must have at its start and end; the "
+                        "agent pre-conditions the mount (O_DIRECT reads of a scratch file) when it has fewer. 5 = the "
+                        "scaled-up state of a busy node (default); 1 = sensitivity, needs a fresh mount pinned to one "
+                        "connection (storage/efs_conn_ctl.sh pin-on); 0 = record the count only (no EFS verdict)")
     p.add_argument("--bp-block-size", type=int, default=runguards.IO_DEFAULTS["block_size"],
                    help="bufferpool arms: required cache block size in bytes (from /_bufferpool/stats; else refused)")
     p.add_argument("--bp-random-read-size", type=int, default=runguards.IO_DEFAULTS["random_read_size"],
@@ -1181,7 +1272,8 @@ def cmd_probe(a):
     op = next(o for o in s.ops if o["name"] == a.op)
     # data-cold on a JIT-warm JVM, as in a run: the probed op once, unmeasured, before its cold iteration
     execute(s.node.os, s.cfg["indices"][arm["index"]]["name"], op)
-    it = Iteration(s.node, arm, indices_ext.uuids(indices[arm["index"]]), 1)
+    it = Iteration(s.node, arm, indices_ext.uuids(indices[arm["index"]]), 1, efs=bool(getattr(s, "storage_nfs", None)),
+                   efs_target=a.efs_connections)
     run = {"arm": a.arm, "label": a.arm, "round": -1, "run_id": "probe"}
     r = s.cold_sample(it, run, op, s.cfg["indices"][arm["index"]]["name"], 0, mode="probe")
     print(json.dumps(r, indent=1, default=str))
