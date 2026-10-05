@@ -386,6 +386,199 @@
       "sha256": "4a558f5b372df63abf4133bd58eb10bf18cf6030a9a170c6bb8f0ff8efafed9b",
       "plugin_zip_sha256": "b4d8acea39deba63c855ae8ff2a378f46260ccda2f96094c0440c43fcc860b70",
       "installed_plugin_jar_sha256": "bd6196ded6ea6c94c0562e57da46ae9f759948762e2b023d9c6154634da5973b"
-    }
+    },
+    "superseded_for_baseline_comparisons_by": "poc_iosize_conc2 (same core and store-path classes, plugin built from the same source as baseline_bufferpool)"
+  },
+  "baseline_bufferpool": {
+    "description": "stock OpenSearch b44de786cef (the s0 distribution, stock Lucene 10.5.1) with the bufferpool plugin built for stock OpenSearch from c83c646b873 (-Dbufferpool.target=stock) installed with bin/opensearch-plugin install --batch",
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-baseline-bufferpool-3.10.0-SNAPSHOT-osb44de786cef-pluginc83c646b873-no-jdk-linux-x64.tar.gz",
+    "sha256": "728244131e67ca255d0d154f4b9f840f3495c612144942a5c0aa6c71a4e19175",
+    "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
+    "base_distribution": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-s0-3.10.0-SNAPSHOT-b44de786cef-no-jdk-linux-x64.tar.gz",
+      "sha256": "5a025296590acbf64a0ac93447ad6c5fde4dfd424cfcd1c864da0947a42a74be",
+      "identity": "all 243 files outside plugins/store-bufferpool are byte-identical to the s0 distribution; the 15 Lucene jars name the stock 10.5.1 release 64ce863a2b (distribution-identity-baseline_bufferpool.txt)"
+    },
+    "build_hash": "b44de786cefeb3bfa9fd3f2a61b3a3775e4549dc (GET /), lucene_version 10.5.1",
+    "plugin_zip": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/store-bufferpool-3.10.0-SNAPSHOT-stock-pluginc83c646b873.zip",
+      "sha256": "3ad994b60e26c5ff202e0eb571e01bbe9d725f81d96f72296bcca5b6af5d85bf",
+      "compiled_against": "stock tree b44de786cef: project :server and org.apache.lucene:lucene-core:10.5.1 from Maven Central, no maven local (stock-compile-classpath-baseline_bufferpool.txt)"
+    },
+    "installed_plugin_jar_sha256": "abd4294a3e9ef5cdd332f889d5ef50a6c12ce81b3aea33517532206ccc4f5731",
+    "plugin_directory": {
+      "plugins/store-bufferpool/store-bufferpool-3.10.0-SNAPSHOT.jar": "abd4294a3e9ef5cdd332f889d5ef50a6c12ce81b3aea33517532206ccc4f5731",
+      "plugins/store-bufferpool/caffeine-3.3.0.jar": "5d015adc655191c8f9a152c4cc871170a04d28040ed281d0e74ade87d6ae8aff",
+      "plugins/store-bufferpool/plugin-descriptor.properties": "0b5883b4d2da60ff0c6bbc0dcc5913c0db7706856d7fdb038f8b09b25773987a",
+      "plugins/store-bufferpool/plugin-security.policy": "c9beb4ba8d83d20db477341f7bf02c04a36f9fd097d67a1415c684ca69dcc8a4",
+      "plugins/store-bufferpool/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "plugins/store-bufferpool/NOTICE.txt": "923b29bd935c6e2ffd912dcfc82f08b05592df69ca1c734fcb438a80e92469bb"
+    },
+    "lib_jars_for_the_lucene_benchmark_suite": {
+      "note": "the jars setup_bufferpool.sh (ec2-bench 08893fc2e26) takes from lib/ besides the plugin directory (it has no lib/ subdirectory; its only bundled dependency is caffeine-3.3.0.jar above); HdrHistogram comes from luceneutil's own lib/",
+      "lib/opensearch-common-3.10.0-SNAPSHOT.jar": "ff1530c945157dac640f4e3e9cd7bb49a9845f20af592aa5730691308795ba29",
+      "lib/opensearch-secure-sm-3.10.0-SNAPSHOT.jar": "12267baa76652995a6cb1f32cb180133b25a541c5c05ea69b202f480cb735f07",
+      "lib/log4j-api-2.25.5.jar": "64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863",
+      "lib/log4j-core-2.25.5.jar": "050c4f85deb48b055e9c041ac39043fbb79ce477841a11a1eb2969c86c6a0072",
+      "lib/jna-5.16.0.jar": "3f5233589a799eb66dc2969afa3433fb56859d3d787c58b9bc7dd9e86f0a250c",
+      "lib/opensearch-3.10.0-SNAPSHOT.jar (server; setup_bufferpool.sh extracts only org/opensearch/common/io/Channels*)": "916b02acd5ee5fe16ef76d27621260588c28640102bcf9ccd3515a93596d292a"
+    },
+    "endpoints": "GET /_bufferpool/stats (build_target stock), POST /_bufferpool/stats/_reset, POST /_bufferpool/cache/_clear, GET/POST /_bufferpool/trace*. No experiment endpoint: GET/POST /_bufferpool/sort_opt, agg_batch, dual_nav/_mode, disjunction_prefetch, topk_prefetch answer 400 'no handler found'.",
+    "run_with": "OPENSEARCH_JAVA_HOME = the host's Corretto 21 (no bundled JDK)",
+    "written_at_utc": "2026-10-05T22:55:00Z",
+    "user_decision": "The baseline is stock OpenSearch (b44de786cef, stock Lucene) WITH the bufferpool plugin, on Amazon EFS and on Amazon EBS. The treatment is the proof-of-concept OpenSearch and Lucene fork with the SAME bufferpool plugin on both storages. The bufferpool is not a variable.",
+    "source": {
+      "os_branch": "ec2-bench",
+      "os_commit": "c83c646b87380aa0c88ed64777f5a24e2ea9b1d2",
+      "os_commit_subject": "Build the bufferpool plugin for stock OpenSearch",
+      "parent_commits": {
+        "4498a029e29": "Read the data node's bufferpool in the scheduler IT (test only: the IT read a random node's plugin, which fails when the test cluster has dedicated cluster-manager nodes, e.g. seed 4FCC1B0A3A0097C0, on both builds)",
+        "08893fc2e26": "origin/ec2-bench head before these two commits"
+      },
+      "how_one_source_builds_both": "plugins/store-bufferpool/build.gradle: -Dbufferpool.target=poc (default) adds src/poc/java (+ src/pocTest, src/pocInternalClusterTest); -Dbufferpool.target=stock adds src/stock/java (+ src/stockTest). src/main is shared. src/poc holds ExperimentHooks (prefetch planner node size, per-field format codec service, mapping check of format names, the experiment endpoints sort_opt / agg_batch / dual_nav / disjunction_prefetch / topk_prefetch and their stats fields) and the classes only it uses (SortOptParams, BufferPoolCodecService, PointsFormatSelectingCodec, PostingsFormatSelectingCodec, UnusedFormatMetaWarningCodec, FormatMetaMappingValidator, FormatMetaWarnings), all moved unchanged (git rename 100%). src/stock has ExperimentHooks with none of them: no codec service (indices use the OpenSearch codec service), no action filter, no experiment route, no experiment stats field, the planner node-size call is a no-op.",
+      "store_path_source_change": "none in behaviour. BufferPoolIndexInput#isLoaded(long, long) lost its @Override (a source-only annotation; RandomAccessInput#isLoaded(long, long) exists only in the Lucene fork); the annotation line became a one-line comment, so the class file is byte-identical (proved below). On the fork the method still overrides (pocTest ExperimentHooksTests#testRangedIsLoadedOverridesTheForkMethod calls it through RandomAccessInput).",
+      "user_visible_change": "GET /_bufferpool/stats gains build_target (poc or stock). Nothing else changes on the proof-of-concept build.",
+      "plugin_source_identity": "the plugin directory used in the stock tree is file-identical to c83c646b873 (48 files, 0 differing, tree sha256 over files 2fc682f0251265528792a735c497c6b93c44e80beb8044956ec258b4ad7455e4); the stock tree is b44de786cef with only plugins/store-bufferpool untracked (source-baseline_bufferpool.txt)",
+      "core_source_identity": "c83c646b873 changes nothing outside plugins/store-bufferpool compared with 24d19cc03e9, d6daba062dc and 807d8509e56 (0 files)"
+    },
+    "store_path_identity": {
+      "result": "IDENTICAL. All 27 store-path classes (BlockCache, BlockKey, BufferPoolDirectory, BufferPoolIndexInput, StorageFile, NativeReadHints, PrefetchScheduler, PrefetchTaskListener, LatencyHistogram and their nested classes, including the read windows, read hints, readahead and window handling, the prefetch scheduler and the read budget) are byte-identical (sha256 of each class entry) between the baseline plugin jar and the new proof-of-concept plugin jar, AND between the new proof-of-concept jar and the approved poc_iosize_conc jar 43647d9e.",
+      "baseline_compared_with_new_poc": {
+        "classes": "47 class entries: 33 identical, 1 different, 13 only in the proof-of-concept jar, 0 only in the baseline jar",
+        "different": {
+          "ExperimentHooks.class": "the two source sets: stock returns empty values, the fork calls the fork-only APIs (expected)"
+        },
+        "only_in_poc": "BufferPoolCodecService, FormatMetaMappingValidator, FormatMetaWarnings and FormatMetaWarnings$1, PointsFormatSelectingCodec and $1, PostingsFormatSelectingCodec and $1, SortOptParams, UnusedFormatMetaWarningCodec and its 3 nested classes (src/poc: they use fork-only Lucene or OpenSearch APIs, or are only used by those)",
+        "identical_beyond_the_store": "BufferPoolStorePlugin and its nested classes, RestBufferPoolStatsAction, RestBufferPoolTraceAction, Lucene104BaselinePostingsFormat and every other shared class: the shared code calls ExperimentHooks through the same method descriptors, and build_target is a method (not a constant) so it is not inlined",
+        "non_class_entries": "only META-INF/MANIFEST.MF differs (build metadata)"
+      },
+      "new_poc_compared_with_poc_iosize_conc": {
+        "classes": "47 class entries: 42 identical, 4 different, 1 only in the new jar (ExperimentHooks)",
+        "different": {
+          "BufferPoolStorePlugin.class": "the codec service, action filters and planner node-size call now go through ExperimentHooks (the refactor)",
+          "RestBufferPoolStatsAction.class": "the experiment routes, switch handling and stats fields moved to ExperimentHooks; build_target added",
+          "BufferPoolStorePlugin$1.class": "bytecode, constants and descriptors identical (javap -c -p -constants -v with line-number entries removed); only the line-number table differs because the source lines moved",
+          "BufferPoolStorePlugin$BufferPoolDirectoryFactory.class": "same as above: line-number table only"
+        }
+      },
+      "evidence_files": [
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/class-compare-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/class-diff-javap-baseline_bufferpool.txt"
+      ]
+    },
+    "tests_on_builder": {
+      "jdk": "Amazon Corretto 21.0.12.1",
+      "stock_target": "b44de786cef tree with the plugin of c83c646b873, -Dbufferpool.target=stock, stock Lucene 10.5.1: :plugins:store-bufferpool:test -Dtests.iters=20 2,880 runs (10 classes, including Lucene's BaseDirectoryTestCase suite on BufferPoolDirectory), 0 failures, 0 errors, 20 skipped (platform assumptions); internalClusterTest 1 run (BufferPoolPrefetchSchedulerIT), 0 failures; precommit OK",
+      "poc_target": "c83c646b873 tree, -Dbufferpool.target=poc, Lucene fork from ~/.m2: test -Dtests.iters=20 3,460 runs (16 classes), 0 failures, 0 errors, 20 skipped; internalClusterTest 3 runs (BufferPoolCodecIT, BufferPoolPrefetchSchedulerIT), 0 failures; precommit OK",
+      "file": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/tests-baseline_bufferpool.txt"
+    },
+    "smoke_on_builder": {
+      "setup": "XFS on a 4 GiB loop device on the builder, read_ahead_kb 0 set by the cold-path agent (agent v3 from c83c646b873, run as root with its own config: arms BASE and POC on the same data path) before every node start and verified after it; node -Xms2g -Xmx2g, bufferpool.cache.block_size 8kb, bufferpool.io.random_read_size 32kb, bufferpool.io.sequential_read_size 128kb, bufferpool.cache.size 256mb, indices.cache.cleanup_interval 1s; index st: 1 shard, 0 replicas, index.store.type bufferpoolfs, non-compound, 200,000 documents (long n random, stored text t, keyword k with 13 values, date d), force-merged to 1 segment (36.9 MB, 38,735,776 bytes), created by the baseline node with the stock codec and then read by both builds",
+      "queries_per_cold_iteration": [
+        "sum aggregation over the long field",
+        "first hit of a range query with its stored text field",
+        "count of a narrow range on the long field",
+        "terms aggregation on the keyword field",
+        "top 10 by descending date within a date range, filtered to one keyword"
+      ],
+      "cold_iteration_protocol": "POST /_bufferpool/cache/_clear (cached_blocks 0 checked), POST /_cache/clear, agent POST /cache/drop?until_empty=5&uuids=<index> (1 round, 0 resident bytes of 38,735,776 in 21 files), agent GET /cache/residency (0 bytes), POST /_bufferpool/stats/_reset, agent POST /trace/block/_start, the 5 queries, wait until the prefetch scheduler is idle, agent POST /trace/block/_stop?uuids=<index> (device reads attributed to index files by FIEMAP extents), GET /_bufferpool/stats",
+      "baseline_results": "GET / build_hash b44de786cef, lucene 10.5.1; _cat/plugins = store-bufferpool 3.10.0-SNAPSHOT; stats build_target stock, block 8192, random 32768, sequential 131072, prefetch node 131072, read_hint willneed; no experiment field in the stats; all 6 experiment endpoints answer 400 'no handler found'. Each of 2 cold iterations: 29 bufferpool storage reads, 3,069,931 bytes, reads by size class 128 KiB x 21 and smaller end-of-file or 32 KiB windows, no read above 128 KiB; 29 read hints for 29 reads, 0 hint errors; 29 device reads, 3,080,192 bytes (1.00 device read per storage read); block trace: 29 data reads, 3,069,931 data bytes, largest 131,072, 0 reads crossing a 128 KiB window, 0 extent splits, 0 metadata reads; per file bytes_read = bytes_loaded + bytes_overread and window blocks = inserted + cached + in flight; prefetch scheduler idle, 0 reads outside a slot, demand reads counted by the gate; agent GET /snapshot, /node/memory, /host answered",
+      "poc_on_the_same_files": "build_target poc, same IO values, GET /_bufferpool/sort_opt every switch off. Each of 2 cold iterations: identical query results to the baseline (hit counts, top hits and their order, sort values, aggregation values); 29 storage reads, 3,069,931 bytes, 29 device reads, 3,080,192 bytes, the same block-trace histogram. One per-file difference: the 128 KiB window of the postings file (Lucene104_0.doc, 105,222 bytes, 13 blocks) is a demand read on the baseline and a prefetch read on the proof-of-concept build (same window, same bytes, same blocks): the fork's Lucene issues a prefetch there even with every switch off. The other per-file differences are statistics keys of temporary ingest files with all counters 0 (the baseline node did the ingest).",
+      "jemalloc_start": "baseline node with LD_PRELOAD=/usr/lib64/libjemalloc.so.2 (jemalloc-5.2.1-7.amzn2023 on the builder): libjemalloc mapped in the node process (5 mappings); one cold iteration with the same reads, bytes, device reads and query results. This is a start check only; the jemalloc validation and MALLOC_CONF belong to the jemalloc step.",
+      "budget_24_total_fair": "baseline node with bufferpool.prefetch.max_in_flight 24, budget_scope total, queue_policy fair: prefetch_scheduler 24 / total / 1024 / fair, bufferpool_prefetch thread pool size 24, queue 24",
+      "invalid_settings_stop_the_baseline_node": [
+        "random_read_size] must be a power of two between the block size [8192] and [8388608], got [24576]",
+        "must be auto, willneed or none, got [always]",
+        "for setting [bufferpool.prefetch.max_in_flight] must be <= 256",
+        "[thread_pool.bufferpool_prefetch.size] is not supported; set [bufferpool.prefetch.max_in_flight]"
+      ],
+      "checks": "382 checks passed, 0 failed (smoke-baseline_bufferpool.txt)",
+      "files": [
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-runs-baseline_bufferpool.json",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-baseline_bufferpool-invalid.txt"
+      ]
+    },
+    "bufferpool_settings_for_every_configuration": {
+      "rule": "identical on the baseline and the proof-of-concept build on the same storage (common-rules.md, user decision 2026-10-05); static node settings, a change needs a restart",
+      "bufferpool.cache.block_size": "8kb",
+      "bufferpool.io.random_read_size": "32kb",
+      "bufferpool.io.sequential_read_size": "128kb",
+      "bufferpool.io.read_hint": "auto (default) = willneed on Linux; verify GET /_bufferpool/stats read_hint == willneed",
+      "kernel_readahead": "read_ahead_kb 0 on the data device (Amazon EBS) or the NFS bdi (Amazon EFS, efs-utils optimize_readahead = false), set before the node starts and verified before every session",
+      "bufferpool.cache.size": "set per host from the index size and fixed per session (unchanged rule), the same value for both builds on one host",
+      "bufferpool.prefetch.task_per_window": "false (default)",
+      "bufferpool.prefetch.max_in_flight": "Amazon EBS 8, Amazon EFS 24 (storage model, common-rules 'Prefetch concurrency'); the default without the setting is min(8, processors) = 8",
+      "bufferpool.prefetch.budget_scope": "total for the storage-model values, but only after the phase-B harness prerequisite of artifacts.json poc_iosize_conc.scope_total_prerequisites has landed; until then the default prefetch",
+      "bufferpool.prefetch.queue_size": "1024 (default)",
+      "bufferpool.prefetch.queue_policy": "fifo (default)",
+      "never_set": "thread_pool.bufferpool_prefetch.size and .queue_size (the node refuses to start)",
+      "other_node_settings": "indices.cache.cleanup_interval: 1s (harness rule)",
+      "verify": "GET /_bufferpool/stats: build_target (stock on the baseline, poc on the proof-of-concept build), block_size, random_read_size, sequential_read_size, read_hint, prefetch_scheduler.max_in_flight / budget_scope / queue_size / queue_policy; _cat/thread_pool/bufferpool_prefetch size == queue_size == max_in_flight"
+    },
+    "harness_changes_needed_before_a_baseline_session": [
+      "coldbench apply_switches posts base_switches for every arm with bufferpool: true and then reads GET /_bufferpool/sort_opt. On baseline_bufferpool those endpoints do not exist (400 'no handler found'), so an arm on this artifact must not get base_switches and must skip the sort_opt read (for example when GET /_bufferpool/stats build_target == stock); without that change the run stops with ArmUnavailable. The experiment-counter deltas (agg_prefetch_requests and similar) are already read only when present.",
+      "the store-type normalization and the stock-arm rules that assume a stock arm has no bufferpool plugin (hybridfs reset of 'stock indices') need a review: under the user decision every configuration uses bufferpoolfs."
+    ],
+    "build": {
+      "builder": "i-0ca8a8289d986161e (c7i.8xlarge), worktrees ~/build/os-bl-poc (c83c646b873) and ~/build/os-bl-stock (b44de786cef plus the plugin of c83c646b873); other worktrees untouched",
+      "script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/build-baseline-bufferpool.sh (copy: .agents/tasks/baseline-bufferpool-2026-10-05/build-baseline-bufferpool.sh); source bundle s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/baseline_bufferpool-src-c83c646b873.bundle",
+      "runs": "2026-10-05 22:09 to 22:18 UTC tests and builds (log ~/build/baseline_bufferpool-run2.log); 22:30 to 22:38 UTC zips, distributions, class comparison, smokes and upload with RUN_TESTS=0 at the same commit (~/build/baseline_bufferpool-run.log). Earlier attempts: run at 90c7b3fe3eb (before rebase) found RestBufferPoolStatsAction different between the jars because the build target was a compile-time constant that javac inlined, fixed by making it a method; two smoke harness bugs (connection refused before the HTTP bind, root-owned agent cache files, a duplicate -E key in the invalid-settings check) fixed in the script",
+      "files": [
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/SHA256SUMS-baseline_bufferpool",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/commits-baseline_bufferpool.env",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/source-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/distribution-identity-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/stock-compile-classpath-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/layout-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/class-compare-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/class-diff-javap-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/tests-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-baseline_bufferpool.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-runs-baseline_bufferpool.json",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-baseline_bufferpool-invalid.txt",
+        "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/logs/ (baseline_bufferpool-stock-test, -stock-precommit, -stock-build, -poc-test, -poc-precommit, -poc-build, -agent .log.gz)"
+      ],
+      "local_copies": ".agents/tasks/baseline-bufferpool-2026-10-05/out/"
+    },
+    "record": ".agents/tasks/baseline-bufferpool-2026-10-05/artifact.json"
+  },
+  "poc_iosize_conc2": {
+    "description": "the proof-of-concept artifact that carries the SAME plugin source as baseline_bufferpool: the poc_iosize_conc distribution (poc-ioopt core, Lucene fork 59f87aa1af) with store-bufferpool removed and the plugin built for the fork from c83c646b873 (-Dbufferpool.target=poc) installed. The core was not rebuilt: its sources are identical at c83c646b873 (0 files outside the plugin differ from 807d8509e56), and all 243 files outside plugins/store-bufferpool are byte-identical to poc_iosize_conc. Supersedes poc_iosize_conc for every configuration that is compared with baseline_bufferpool.",
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-poc-3.10.0-SNAPSHOT-osc83c646b873-lucene59f87aa1af-bufferpool-iosize_conc2-no-jdk-linux-x64.tar.gz",
+    "sha256": "43289e8cf90ca8dda9bd1636db949585987ef4ea706795bc0ce8f7b7064b3e52",
+    "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
+    "base_distribution": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-poc-3.10.0-SNAPSHOT-os807d8509e56-lucene59f87aa1af-bufferpool-iosize_conc-no-jdk-linux-x64.tar.gz",
+      "sha256": "9fa8445a9a2b83714179896ad775fd8d837ed5f6c5cfcfa306aa8d895272df65"
+    },
+    "build_hash": "GET / reports d6daba062dc7a52becf3a44708c42176d7c654c0 (inherited from the poc_iosize_conc core jars; that core has the same sources as 24d19cc03e9 and c83c646b873), lucene_version 10.5.1 (the fork snapshot; the 15 Lucene jars equal ~/.m2 naming 59f87aa1af)",
+    "lucene_commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
+    "plugin_zip": {
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/store-bufferpool-3.10.0-SNAPSHOT-poc-pluginc83c646b873.zip",
+      "sha256": "6e478fdec21012204565d27192d4e10c465ad9263acaed34af1be49b480ec07f"
+    },
+    "installed_plugin_jar_sha256": "8086a04c0e500024ccf0dca08fe8a220da66bf32767fe19171f57dc07fb5c04e",
+    "plugin_directory": {
+      "plugins/store-bufferpool/store-bufferpool-3.10.0-SNAPSHOT.jar": "8086a04c0e500024ccf0dca08fe8a220da66bf32767fe19171f57dc07fb5c04e",
+      "plugins/store-bufferpool/caffeine-3.3.0.jar": "5d015adc655191c8f9a152c4cc871170a04d28040ed281d0e74ade87d6ae8aff",
+      "plugins/store-bufferpool/plugin-descriptor.properties": "0b5883b4d2da60ff0c6bbc0dcc5913c0db7706856d7fdb038f8b09b25773987a",
+      "plugins/store-bufferpool/plugin-security.policy": "c9beb4ba8d83d20db477341f7bf02c04a36f9fd097d67a1415c684ca69dcc8a4",
+      "plugins/store-bufferpool/LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "plugins/store-bufferpool/NOTICE.txt": "923b29bd935c6e2ffd912dcfc82f08b05592df69ca1c734fcb438a80e92469bb"
+    },
+    "lib_jars_for_the_lucene_benchmark_suite": {
+      "lib/opensearch-common-3.10.0-SNAPSHOT.jar": "a3693cd63f07eeb13af22cbe8e133fd4352f67d120fd724904906c34b90afeaf",
+      "lib/opensearch-secure-sm-3.10.0-SNAPSHOT.jar": "ef33610629d86b46c479740a7d3d3a2289cb4ac0ab363ddf00ff4b332c5f9ba9",
+      "lib/log4j-api-2.25.5.jar": "64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863",
+      "lib/log4j-core-2.25.5.jar": "050c4f85deb48b055e9c041ac39043fbb79ce477841a11a1eb2969c86c6a0072",
+      "lib/jna-5.16.0.jar": "3f5233589a799eb66dc2969afa3433fb56859d3d787c58b9bc7dd9e86f0a250c",
+      "lib/opensearch-3.10.0-SNAPSHOT.jar": "95fe353b60ed486b2e623dddc34e566108a2a3a365361f1bc6ec0c2a4716bff1"
+    },
+    "endpoints": "as poc_iosize_conc, plus build_target poc in GET /_bufferpool/stats; every experiment switch reports its start value on a fresh JVM (GET /_bufferpool/sort_opt all off)",
+    "node_settings": "as poc_iosize_conc (artifacts.json poc_iosize_conc.node_settings_ec2 and scope_total_prerequisites)",
+    "source": "ec2-bench c83c646b873 (see baseline_bufferpool.source)",
+    "store_path_identity": "see baseline_bufferpool.store_path_identity",
+    "record": ".agents/tasks/baseline-bufferpool-2026-10-05/artifact.json"
   }
 }
