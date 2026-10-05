@@ -252,11 +252,11 @@ public class BlockCacheSchedulerTests extends OpenSearchTestCase {
         assertBusy(() -> assertEquals(1, cache.prefetchReadsInFlight()));
         final long start = System.nanoTime();
         demand(cache, 1, 4 * BLOCK);
-        final long waitedMicros = TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - start);
+        final long waitedNanos = System.nanoTime() - start;
         final LatencyHistogram.Snapshot wait = cache.demandWait();
         assertEquals(1, wait.count());
         assertEquals(1, stats(cache).waits.sum());
-        assertTrue("wait " + wait.median() + " of " + waitedMicros, wait.median() > 0 && wait.median() <= waitedMicros * 1.01 + 1);
+        assertTrue("wait " + wait.median() + " of " + waitedNanos, wait.median() > 0 && wait.median() <= waitedNanos * 1.01 + 1);
         assertEquals(0, stats(cache).reads.sum());
         // a hit records nothing
         demand(cache, 2, 4 * BLOCK);
@@ -317,7 +317,7 @@ public class BlockCacheSchedulerTests extends OpenSearchTestCase {
         assertEquals(0, cache.readLatency(true, 0).count());
         assertEquals(0, cache.readLatency(true, 2).count());
         final long median = cache.readLatency(true, 1).median();
-        assertTrue("median " + median, median >= 49_500 && median < 75_000);
+        assertTrue("median " + median, median >= 49_500_000L && median < 75_000_000L);
         final long readTime = cache.prefetchReadTimeMicros();
         final long busy = cache.prefetchBusyTimeMicros();
         assertTrue("busy " + busy + " read time " + readTime, busy >= 50_000 && busy <= readTime);
@@ -382,10 +382,10 @@ public class BlockCacheSchedulerTests extends OpenSearchTestCase {
         }
         final LatencyHistogram.Snapshot first = h.snapshot();
         assertEquals(100, first.count());
-        assertEquals(20_000, first.median(), 200);
+        assertEquals(20_000_000L, first.median(), 200_000);
         final LatencyHistogram other = new LatencyHistogram();
         other.recordMicros(22_000);
-        assertTrue(Math.abs(other.snapshot().median() - first.median()) > 0.09 * 20_000);
+        assertTrue(Math.abs(other.snapshot().median() - first.median()) > 0.09 * 20_000_000L);
         // the bucket difference of two readings is the histogram of the values recorded in between
         final List<Long> second = new ArrayList<>();
         for (int i = 0; i < 51; i++) {
@@ -415,8 +415,25 @@ public class BlockCacheSchedulerTests extends OpenSearchTestCase {
         assertEquals(alone.snapshot().median(), median);
         // out of range values are clamped, an empty histogram reports zeros
         h.recordMicros(-5);
-        h.recordMicros(LatencyHistogram.MAX_MICROS * 10);
-        assertTrue(h.snapshot().max() >= LatencyHistogram.MAX_MICROS);
+        h.recordNanos(LatencyHistogram.MAX_NANOS * 10);
+        assertTrue(h.snapshot().max() >= LatencyHistogram.MAX_NANOS);
+        // code review iteration 1, finding 5: values are kept in nanoseconds, so a 10 % shift resolves below 100
+        // microseconds too (10 to 11 microseconds), and a sub-microsecond wait is not truncated to 0
+        final LatencyHistogram ten = new LatencyHistogram();
+        final LatencyHistogram eleven = new LatencyHistogram();
+        for (int i = 0; i < 100; i++) {
+            ten.recordNanos(10_000 + random().nextInt(20));
+            eleven.recordNanos(11_000 + random().nextInt(20));
+        }
+        final long tenMedian = ten.snapshot().median();
+        final long elevenMedian = eleven.snapshot().median();
+        assertEquals(10_000, tenMedian, 0.01 * 10_000);
+        assertEquals(11_000, elevenMedian, 0.01 * 11_000);
+        assertTrue(tenMedian + " " + elevenMedian, elevenMedian - tenMedian > 0.09 * 10_000);
+        final LatencyHistogram tiny = new LatencyHistogram();
+        tiny.recordNanos(400);
+        assertEquals(400, tiny.snapshot().median(), 4);
+        assertEquals(0.4, RestBufferPoolStatsAction.micros(tiny.snapshot().median()), 0.004);
         final LatencyHistogram.Snapshot empty = new LatencyHistogram().snapshot();
         assertEquals(0, empty.count());
         assertEquals(0, empty.median());

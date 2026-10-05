@@ -17,30 +17,31 @@ import org.HdrHistogram.Histogram;
 import org.HdrHistogram.HistogramIterationValue;
 
 /**
- * A latency histogram in microseconds that many threads record into: an HdrHistogram {@link ConcurrentHistogram} with
+ * A latency histogram in nanoseconds that many threads record into: an HdrHistogram {@link ConcurrentHistogram} with
  * {@value #SIGNIFICANT_DIGITS} significant digits (a recorded value is reported within 1 %), from 1 to
- * {@value #MAX_MICROS} microseconds; larger values are recorded as {@value #MAX_MICROS}. A 10 % shift (for example 20,000
- * to 22,000 microseconds) is 10 times the resolution. {@link #reset()} swaps in an empty histogram, so recording never
- * waits for a reset, and {@link #snapshot()} reads a copy.
+ * {@value #MAX_NANOS} nanoseconds; larger values are recorded as {@value #MAX_NANOS}. Values are kept in nanoseconds so
+ * that the bucket width, not the unit, sets the resolution at every value: a 10 % shift (for example 10 to 11
+ * microseconds, or 20,000 to 22,000 microseconds) spans at least 12 buckets. {@link #reset()} swaps in an empty
+ * histogram, so recording never waits for a reset, and {@link #snapshot()} reads a copy.
  */
 final class LatencyHistogram {
 
     /** Largest recorded value: 60 s. */
-    static final long MAX_MICROS = 60_000_000L;
+    static final long MAX_NANOS = 60_000_000_000L;
     static final int SIGNIFICANT_DIGITS = 2;
 
     private volatile ConcurrentHistogram histogram = newHistogram();
 
     private static ConcurrentHistogram newHistogram() {
-        return new ConcurrentHistogram(1, MAX_MICROS, SIGNIFICANT_DIGITS);
+        return new ConcurrentHistogram(1, MAX_NANOS, SIGNIFICANT_DIGITS);
     }
 
     void recordNanos(long nanos) {
-        recordMicros(TimeUnit.NANOSECONDS.toMicros(nanos));
+        histogram.recordValue(Math.min(Math.max(nanos, 0), MAX_NANOS));
     }
 
     void recordMicros(long micros) {
-        histogram.recordValue(Math.min(Math.max(micros, 0), MAX_MICROS));
+        recordNanos(TimeUnit.MICROSECONDS.toNanos(micros));
     }
 
     void reset() {
@@ -51,7 +52,7 @@ final class LatencyHistogram {
         return new Snapshot(histogram.copy());
     }
 
-    /** A copy of the recorded values. */
+    /** A copy of the recorded values. Every value it reports is in nanoseconds. */
     static final class Snapshot {
         private final Histogram histogram;
 
@@ -84,7 +85,7 @@ final class LatencyHistogram {
         }
 
         /**
-         * The non-empty buckets in increasing order, each as {upper value in microseconds, count}. The difference of two
+         * The non-empty buckets in increasing order, each as {upper value in nanoseconds, count}. The difference of two
          * snapshots' buckets is the histogram of the values recorded between them.
          */
         List<long[]> buckets() {

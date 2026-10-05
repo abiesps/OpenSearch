@@ -337,6 +337,116 @@ public class PrefetchSchedulerTests extends OpenSearchTestCase {
         assertBusy(() -> assertQuiescent(s));
     }
 
+    private void joinFork(Runnable body) {
+        try {
+            fork(body).join(30_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
+    }
+
+    /**
+     * Code review iteration 1, finding 1: the stats readers take the scheduler lock. The demand read that reopens the gate
+     * finishes on another thread while a stats reader holds the lock, so its kick cannot take the lock; with no worker
+     * left, the stats reader's re-check after its unlock must start the held item.
+     */
+    public void testNoLostWakeUpThroughAStatsLockHold() throws Exception {
+        final List<Consumer<PrefetchScheduler>> readers = List.of(
+            PrefetchScheduler::stats,
+            PrefetchScheduler::droppedTotal,
+            PrefetchScheduler::resetStats
+        );
+        for (Consumer<PrefetchScheduler> reader : readers) {
+            final List<Thread> starters = new CopyOnWriteArrayList<>();
+            final Consumer<Runnable> executor = executor();
+            final PrefetchScheduler s = scheduler(w -> {
+                starters.add(Thread.currentThread());
+                executor.accept(w);
+            }, 1, BudgetScope.TOTAL, 16, QueuePolicy.FIFO);
+            // one demand read fills the budget: the item is held and no worker runs
+            s.demandReadStarted();
+            final TestItem item = new TestItem("held", RELEASED, null);
+            assertTrue(s.submit(item));
+            assertEquals(1, s.queued());
+            assertEquals(0, s.activeWorkers());
+            final AtomicInteger hookRuns = new AtomicInteger();
+            s.setStatsLockedHookForTests(() -> {
+                hookRuns.incrementAndGet();
+                joinFork(s::demandReadFinished);
+                assertEquals(0, s.demandReadsInFlight());
+                assertEquals("the demand reader's kick could not take the lock", 1, s.queued());
+                assertTrue(starters.isEmpty());
+            });
+            reader.accept(s);
+            s.setStatsLockedHookForTests(null);
+            assertEquals(1, hookRuns.get());
+            // no further submit and no further demand read: only the stats reader's re-check can start the item
+            assertBusy(() -> {
+                assertEquals(1, item.runs.get());
+                assertEquals(0, s.pending());
+            });
+            assertEquals(1, starters.size());
+            assertSame("the stats reader's re-check started the item", Thread.currentThread(), starters.get(0));
+            assertBusy(() -> {
+                assertEquals(0, s.activeWorkers());
+                assertEquals(0, s.queued());
+            });
+            assertEquals(1, s.stats().itemsStarted());
+            assertEquals(1, s.stats().itemsFinished());
+        }
+    }
+
+    /**
+     * Code review iteration 1, finding 2: with scope total the gate reopens while items are held. A submit that finds it
+     * open must give the free slot to the next queued item by the policy, not to its own new item.
+     */
+    public void testSubmitDoesNotBypassQueuedItemsWhenTheGateReopens() {
+        for (QueuePolicy policy : QueuePolicy.values()) {
+            final List<Runnable> workers = new CopyOnWriteArrayList<>();
+            final PrefetchScheduler s = scheduler(workers::add, 2, BudgetScope.TOTAL, 64, policy);
+            final ConcurrentLinkedQueue<String> started = new ConcurrentLinkedQueue<>();
+            // two demand reads fill the budget: every item is held
+            s.demandReadStarted();
+            s.demandReadStarted();
+            owner.set(requester("heavy", 1));
+            for (int i = 0; i < 3; i++) {
+                assertTrue(s.submit(new TestItem("H" + i, RELEASED, started)));
+            }
+            owner.set(requester("light", 2));
+            for (int i = 0; i < 2; i++) {
+                assertTrue(s.submit(new TestItem("L" + i, RELEASED, started)));
+            }
+            owner.remove();
+            assertEquals(5, s.queued());
+            assertTrue(workers.isEmpty());
+            // a demand read finishes while a stats reader holds the lock, so its kick cannot run; before the reader's
+            // re-check, the heavy requester submits again and finds the gate open with 5 items queued
+            s.setStatsLockedHookForTests(() -> {
+                joinFork(s::demandReadFinished);
+                owner.set(requester("heavy", 1));
+                assertTrue(s.submit(new TestItem("H3", RELEASED, started)));
+                owner.remove();
+            });
+            s.stats();
+            s.setStatsLockedHookForTests(null);
+            assertEquals(1, workers.size());
+            assertEquals(5, s.queued());
+            assertEquals(6, s.pending());
+            // the items held by demand reads count as budget-held dispatches; the new item queued for its turn does not
+            assertEquals(5, s.stats().budgetHeldDispatches());
+            // the worker runs its items one after another on this thread: one slot is free while one demand read runs
+            workers.remove(0).run();
+            assertTrue(workers.isEmpty());
+            final List<String> expected = policy == QueuePolicy.FIFO
+                ? List.of("H0", "H1", "H2", "L0", "L1", "H3")
+                : List.of("H0", "L0", "H1", "L1", "H2", "H3");
+            assertEquals(policy.value(), expected, new ArrayList<>(started));
+            s.demandReadFinished();
+            assertQuiescent(s);
+        }
+    }
+
     public void testGateCheckCounterNeverExceedsTheBudgetWithScopeTotal() throws Exception {
         final int budget = randomIntBetween(1, 12);
         final PrefetchScheduler s = scheduler(executor(), budget, BudgetScope.TOTAL, 64, QueuePolicy.FIFO);
@@ -616,7 +726,9 @@ public class PrefetchSchedulerTests extends OpenSearchTestCase {
         assertEquals(0, a.runs.get());
         assertEquals(0, b.runs.get());
         assertEquals(2, (long) s.stats().dropped().get(DropReason.CANCELLED));
-        assertEquals(2, s.stats().itemsStarted());
+        // code review iteration 1, finding 3: an item that a worker drops as cancelled is not counted as started
+        assertEquals(0, s.stats().itemsStarted());
+        assertEquals(0, s.stats().itemsFinished());
         assertQuiescent(s);
     }
 

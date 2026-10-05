@@ -68,7 +68,9 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       summed delta of the per-file {@code reads}. Queue: {@code active_workers}, {@code max_active_workers},
  *       {@code queued}, {@code max_queued}, {@code pending} (queued plus running items), {@code requesters} and
  *       {@code max_requesters} (requesters with queued items), {@code registered_tasks} (shard tasks with a search phase
- *       running), {@code items_admitted}, {@code items_started}, {@code items_finished}, {@code dropped} per reason
+ *       running), {@code items_admitted}, {@code items_started} (items that a worker ran: an item that reaches a worker
+ *       after its search was cancelled is counted in {@code dropped.cancelled} instead), {@code items_finished},
+ *       {@code dropped} per reason
  *       ({@code queue_full}, {@code longest_queue}, {@code cancelled}, {@code rejected_by_executor}, {@code shutdown}),
  *       {@code budget_held_dispatches} (items queued although a worker was free, because demand reads filled the budget),
  *       {@code items_started_after_phase_end}, {@code windows_skipped_cancelled}, {@code queue_wait_time_micros}. Time:
@@ -76,12 +78,13 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       flight) of prefetch reads, {@code demand_bytes_read} and {@code demand_read_time_micros} of demand reads; read
  *       time divided by an interval is the mean number of reads in flight over it.
  *       <p>Histograms, each {@code count}, {@code median}, {@code percentile_90}, {@code percentile_99} and {@code max}
- *       in microseconds (2 significant digits, values within 1 %), and with {@code ?histogram_buckets=true} also
+ *       in microseconds with a fraction (recorded in nanoseconds, 2 significant digits, values within 1 % at every
+ *       value), and with {@code ?histogram_buckets=true} also
  *       {@code buckets}, a list of {@code [upper_value_micros, count]} for the non-empty buckets (the difference of two
  *       readings is the histogram of the values in between): {@code read_latency_micros.prefetch} and {@code .demand}
  *       per read size class ({@code 32768}: more than 16 KiB up to 32 KiB; {@code 131072}: more than 64 KiB up to
  *       128 KiB; {@code other}); {@code prefetch_queue_wait_micros.short_requester} and {@code .long_requester} (queue
- *       wait of started items whose requester had at most, or more than, {@code max_in_flight} items queued at
+ *       wait of items handed to a worker whose requester had at most, or more than, {@code max_in_flight} items queued at
  *       admission); {@code demand_wait_micros} (waits of demand readers for a load that another thread ran)</li>
  *   <li>{@code POST /_bufferpool/stats/_reset}: sets the counters to zero and the maxima to the current values</li>
  *   <li>{@code POST /_bufferpool/cache/_clear}: drops all cached blocks, so the next reads are cold</li>
@@ -377,18 +380,23 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
         throws IOException {
         builder.startObject(name);
         builder.field("count", h.count());
-        builder.field("median", h.median());
-        builder.field("percentile_90", h.percentile90());
-        builder.field("percentile_99", h.percentile99());
-        builder.field("max", h.max());
+        builder.field("median", micros(h.median()));
+        builder.field("percentile_90", micros(h.percentile90()));
+        builder.field("percentile_99", micros(h.percentile99()));
+        builder.field("max", micros(h.max()));
         if (buckets) {
             builder.startArray("buckets");
             for (long[] bucket : h.buckets()) {
-                builder.startArray().value(bucket[0]).value(bucket[1]).endArray();
+                builder.startArray().value(micros(bucket[0])).value(bucket[1]).endArray();
             }
             builder.endArray();
         }
         builder.endObject();
+    }
+
+    /** A histogram value in microseconds with its fraction: the histogram records nanoseconds. */
+    static double micros(long nanos) {
+        return nanos / 1000.0;
     }
 
     /**

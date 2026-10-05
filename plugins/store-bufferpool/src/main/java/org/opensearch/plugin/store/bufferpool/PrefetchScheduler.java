@@ -48,7 +48,9 @@ import java.util.function.Supplier;
  * <p>No lost wake-up: a submitter that queues an item while only demand reads close the gate writes the queued count and
  * then reads the demand count again (in the kick loop after its unlock); a finishing demand read decrements the demand
  * count and then reads the queued count. Both are synchronization actions in one total order, so at least one of them
- * sees the other and starts a worker.
+ * sees the other and starts a worker. A demand read never blocks on the lock: if its {@code tryLock} fails, the thread
+ * that holds the lock runs the kick loop after its unlock. So every method that takes the lock, the stats readers
+ * included, runs {@link #runKickLoop()} after it unlocks.
  */
 final class PrefetchScheduler implements Closeable {
 
@@ -206,9 +208,7 @@ final class PrefetchScheduler implements Closeable {
     private int maxRequesters;
     private int maxTotalReadsAtItemStart;
     private long budgetHeldDispatches;
-    private long itemsStartedAfterPhaseEnd;
     private long itemsAdmitted;
-    private long itemsStarted;
     private long itemsFinished;
     private long queueWaitNanos;
     private long droppedAfterAdmission;
@@ -216,11 +216,15 @@ final class PrefetchScheduler implements Closeable {
     // counters outside the lock
     private final AtomicInteger maxDemandReadsInFlight = new AtomicInteger();
     private final LongAdder demandReadsStarted = new LongAdder();
+    /** Items that a worker ran (not cancelled when they reached it), counted on the worker. */
+    private final LongAdder itemsStarted = new LongAdder();
+    private final LongAdder itemsStartedAfterPhaseEnd = new LongAdder();
     private final LatencyHistogram shortRequesterWait = new LatencyHistogram();
     private final LatencyHistogram longRequesterWait = new LatencyHistogram();
 
     private volatile Runnable afterGateReadHook;
     private volatile Runnable beforeWorkerExitHook;
+    private volatile Runnable statsLockedHook;
 
     /**
      * @param workerStarter        starts one worker runnable; may throw {@link RejectedExecutionException}
@@ -300,8 +304,17 @@ final class PrefetchScheduler implements Closeable {
                 activeWorkers++;
                 setPending(pending + 1);
                 itemsAdmitted++;
-                first = new Entry(item, owner, now, sequence++, false);
-                recordStart(first, activeWorkers + demand, now);
+                if (queued == 0) {
+                    first = new Entry(item, owner, now, sequence++, false);
+                } else {
+                    // the gate reopened while items wait (scope total: a demand read finished and its kick has not run
+                    // yet): the free slot goes to the next queued item by the policy, and the new item queues behind it
+                    first = dequeue();
+                    enqueue(newQueuedEntry(item, owner, now));
+                    // more slots may be free: the kick loop after the unlock fills them by the policy
+                    kickPending.set(true);
+                }
+                recordDispatch(first, activeWorkers + demand, now);
             } else if (queued < queueSize) {
                 enqueue(newQueuedEntry(item, owner, now));
                 afterQueued();
@@ -443,14 +456,13 @@ final class PrefetchScheduler implements Closeable {
         }
     }
 
-    /** Under the lock, right after the gate check that admitted the item: the start counters. */
-    private void recordStart(Entry entry, int totalReadsAtStart, long now) {
-        itemsStarted++;
+    /**
+     * Under the lock, right after the gate check that handed the item to a worker: the counters of the gate and the queue
+     * wait. {@link #runItem} counts the item as started only if the worker runs it.
+     */
+    private void recordDispatch(Entry entry, int totalReadsAtStart, long now) {
         maxActiveWorkers = Math.max(maxActiveWorkers, activeWorkers);
         maxTotalReadsAtItemStart = Math.max(maxTotalReadsAtItemStart, totalReadsAtStart);
-        if (entry.owner.phaseEnded().getAsBoolean()) {
-            itemsStartedAfterPhaseEnd++;
-        }
         final long wait = Math.max(0, now - entry.admittedNanos);
         queueWaitNanos += wait;
         (entry.longRequester ? longRequesterWait : shortRequesterWait).recordNanos(wait);
@@ -514,7 +526,7 @@ final class PrefetchScheduler implements Closeable {
                         // the worker counts its own slot as released
                         if (gateOpen(activeWorkers - 1, demand)) {
                             next = dequeue();
-                            recordStart(next, activeWorkers + demand, System.nanoTime());
+                            recordDispatch(next, activeWorkers + demand, System.nanoTime());
                         } else {
                             final Runnable hook = beforeWorkerExitHook;
                             if (hook != null) {
@@ -543,11 +555,15 @@ final class PrefetchScheduler implements Closeable {
         }
     }
 
-    /** Runs the item unless its search was cancelled. Returns false if it was not run. */
-    private static boolean runItem(Entry entry) {
+    /** Runs the item unless its search was cancelled, and then counts it as started. Returns false if it was not run. */
+    private boolean runItem(Entry entry) {
         final BooleanSupplier cancelled = entry.owner.cancelled();
         if (cancelled.getAsBoolean()) {
             return false;
+        }
+        itemsStarted.increment();
+        if (entry.owner.phaseEnded().getAsBoolean()) {
+            itemsStartedAfterPhaseEnd.increment();
         }
         try {
             entry.item.run(cancelled);
@@ -573,7 +589,7 @@ final class PrefetchScheduler implements Closeable {
                 if (gateOpen(activeWorkers, demand)) {
                     activeWorkers++;
                     replacement = dequeue();
-                    recordStart(replacement, activeWorkers + demand, System.nanoTime());
+                    recordDispatch(replacement, activeWorkers + demand, System.nanoTime());
                 } else {
                     kickPending.set(true);
                 }
@@ -603,7 +619,7 @@ final class PrefetchScheduler implements Closeable {
                     }
                     final Entry entry = dequeue();
                     activeWorkers++;
-                    recordStart(entry, activeWorkers + demand, System.nanoTime());
+                    recordDispatch(entry, activeWorkers + demand, System.nanoTime());
                     if (starts == null) {
                         starts = new ArrayList<>();
                     }
@@ -715,6 +731,7 @@ final class PrefetchScheduler implements Closeable {
     long droppedTotal() {
         lock.lock();
         try {
+            runStatsLockedHook();
             long n = 0;
             for (long d : dropped) {
                 n += d;
@@ -722,14 +739,20 @@ final class PrefetchScheduler implements Closeable {
             return n;
         } finally {
             lock.unlock();
+            // a demand read whose kick failed against this lock hold relies on this re-check
+            runKickLoop();
         }
     }
 
     /** The queue, worker, drop and dispatch counters. */
     Stats stats() {
         final Map<DropReason, Long> drops = new EnumMap<>(DropReason.class);
+        // the histograms are thread-safe: copy them outside the lock, so submitters do not wait for the copies
+        final LatencyHistogram.Snapshot shortWait = shortRequesterWait.snapshot();
+        final LatencyHistogram.Snapshot longWait = longRequesterWait.snapshot();
         lock.lock();
         try {
+            runStatsLockedHook();
             for (DropReason reason : DropReason.values()) {
                 drops.put(reason, dropped[reason.ordinal()]);
             }
@@ -742,7 +765,7 @@ final class PrefetchScheduler implements Closeable {
                 maxDemandReadsInFlight.get(),
                 maxTotalReadsAtItemStart,
                 budgetHeldDispatches,
-                itemsStartedAfterPhaseEnd,
+                itemsStartedAfterPhaseEnd.sum(),
                 demandReadsStarted.sum(),
                 activeWorkers,
                 maxActiveWorkers,
@@ -752,16 +775,17 @@ final class PrefetchScheduler implements Closeable {
                 queuedPerRequester.size(),
                 maxRequesters,
                 itemsAdmitted,
-                itemsStarted,
+                itemsStarted.sum(),
                 itemsFinished,
                 drops,
                 droppedAfterAdmission,
                 queueWaitNanos / 1000,
-                shortRequesterWait.snapshot(),
-                longRequesterWait.snapshot()
+                shortWait,
+                longWait
             );
         } finally {
             lock.unlock();
+            runKickLoop();
         }
     }
 
@@ -769,14 +793,13 @@ final class PrefetchScheduler implements Closeable {
     void resetStats() {
         lock.lock();
         try {
+            runStatsLockedHook();
             maxActiveWorkers = activeWorkers;
             maxQueued = queued;
             maxRequesters = queuedPerRequester.size();
             maxTotalReadsAtItemStart = 0;
             budgetHeldDispatches = 0;
-            itemsStartedAfterPhaseEnd = 0;
             itemsAdmitted = 0;
-            itemsStarted = 0;
             itemsFinished = 0;
             queueWaitNanos = 0;
             droppedAfterAdmission = 0;
@@ -784,10 +807,24 @@ final class PrefetchScheduler implements Closeable {
         } finally {
             lock.unlock();
         }
-        maxDemandReadsInFlight.set(demandReadsInFlight.get());
-        demandReadsStarted.reset();
-        shortRequesterWait.reset();
-        longRequesterWait.reset();
+        try {
+            maxDemandReadsInFlight.set(demandReadsInFlight.get());
+            demandReadsStarted.reset();
+            itemsStarted.reset();
+            itemsStartedAfterPhaseEnd.reset();
+            shortRequesterWait.reset();
+            longRequesterWait.reset();
+        } finally {
+            // after every reset, so that an item this re-check starts is counted after the reset
+            runKickLoop();
+        }
+    }
+
+    private void runStatsLockedHook() {
+        final Runnable hook = statsLockedHook;
+        if (hook != null) {
+            hook.run();
+        }
     }
 
     /** Marks the scheduler closed and drops every queued item; later submissions are dropped. Idempotent. */
@@ -818,9 +855,16 @@ final class PrefetchScheduler implements Closeable {
         this.beforeWorkerExitHook = hook;
     }
 
+    /** Test hook (null in production): runs in {@link #stats}, {@link #droppedTotal} and {@link #resetStats}, under the lock. */
+    void setStatsLockedHookForTests(Runnable hook) {
+        this.statsLockedHook = hook;
+    }
+
     /**
      * Snapshot of the scheduler counters. At every quiescent point {@code itemsAdmitted == itemsFinished +
-     * droppedAfterAdmission + pending}.
+     * droppedAfterAdmission + pending}. {@code itemsStarted} counts the items that a worker ran; an item of a cancelled
+     * search that reaches a worker is counted in {@code dropped} (reason {@code CANCELLED}) only. The two queue-wait
+     * histograms cover every item handed to a worker and are copied just before the other counters are read.
      */
     record Stats(int maxInFlight, BudgetScope scope, int queueSize, QueuePolicy policy, int demandReadsInFlight, int maxDemandReadsInFlight,
         int maxTotalReadsAtItemStart, long budgetHeldDispatches, long itemsStartedAfterPhaseEnd, long demandReadsStarted, int activeWorkers,

@@ -9,9 +9,14 @@ def req(method, path, body=None):
     with urllib.request.urlopen(r) as resp:
         return json.loads(resp.read() or b"{}")
 def pool():
+    """(active, queue, items run, dropped). With the prefetch scheduler the thread pool runs workers, not items: read
+    prefetch_scheduler.items_started (items a worker ran) and pending (queued plus running) instead."""
     n = next(iter(req("GET", "/_nodes/stats/thread_pool")["nodes"].values()))
     p = n["thread_pool"]["bufferpool_prefetch"]
-    return p["active"], p["queue"], p["completed"], p["rejected"]
+    s = req("GET", "/_bufferpool/stats").get("prefetch_scheduler")
+    if s is None:
+        return p["active"], p["queue"], p["completed"], p["rejected"]
+    return p["active"], s["pending"], s["items_started"], sum(s["dropped"].values())
 def doc_io():
     s = req("GET", "/_bufferpool/stats")
     f = s["files"]["Lucene104DualNav_0.doc"] if FIELD == "tag_dual" else s["files"]["Lucene104Baseline_0.doc"]

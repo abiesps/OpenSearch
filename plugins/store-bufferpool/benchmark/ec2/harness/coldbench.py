@@ -199,14 +199,34 @@ class Node:
         n = next(iter(self.os.request("GET", "/_nodes/_local/stats/thread_pool")["nodes"].values()))
         return n["thread_pool"].get("bufferpool_prefetch")
 
+    def scheduler_state(self):
+        """The prefetch scheduler's idle fields, or None on a build without the scheduler."""
+        s = self.bp_stats().get("prefetch_scheduler")
+        if s is None:
+            return None
+        return {k: s[k] for k in ("pending", "queued", "active_workers", "demand_reads_in_flight")}
+
     def wait_prefetch_idle(self, timeout_s=120):
+        """Wait until no prefetch runs or waits. With the prefetch scheduler (budget scope total) items can be held in
+        its queue with no worker, so an idle thread pool is not enough: also require prefetch_scheduler.pending == 0
+        and demand_reads_in_flight == 0. Builds without the scheduler keep the thread-pool check only."""
         t0 = time.monotonic()
+        has_scheduler = None
         while True:
             p = self.prefetch_pool()
-            if p is None or (p["active"] == 0 and p["queue"] == 0):
+            s = None
+            if p is None:
                 return (time.monotonic() - t0) * 1e3, p
+            if p["active"] == 0 and p["queue"] == 0:
+                if has_scheduler is not False:
+                    s = self.scheduler_state()
+                    has_scheduler = s is not None
+                if s is None or (s["pending"] == 0 and s["demand_reads_in_flight"] == 0):
+                    return (time.monotonic() - t0) * 1e3, p
             if time.monotonic() - t0 > timeout_s:
-                raise TimeoutError(f"bufferpool_prefetch not idle after {timeout_s}s: {p}")
+                if s is None and has_scheduler is not False:
+                    s = self.scheduler_state()
+                raise TimeoutError(f"bufferpool_prefetch not idle after {timeout_s}s: pool {p}, scheduler {s}")
             time.sleep(0.005)
 
     def bp_stats(self):

@@ -113,6 +113,8 @@ public class RestBufferPoolStatsActionTests extends OpenSearchTestCase {
         final Map<String, Object> demand = (Map<String, Object>) ((Map<String, Object>) latency.get("demand")).get("32768");
         assertEquals(1, demand.get("count"));
         assertEquals(List.of("count", "median", "percentile_90", "percentile_99", "max"), List.copyOf(demand.keySet()));
+        // microseconds with a fraction: the histograms record nanoseconds
+        assertTrue(demand.get("median") instanceof Double);
         final Map<String, Object> waits = (Map<String, Object>) body.get("prefetch_queue_wait_micros");
         assertEquals(1, ((Map<String, Object>) waits.get("short_requester")).get("count"));
         assertEquals(0, ((Map<String, Object>) waits.get("long_requester")).get("count"));

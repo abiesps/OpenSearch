@@ -200,8 +200,10 @@ public class PrefetchTaskListenerTests extends OpenSearchTestCase {
         assertEquals(1, s.queued());
         listener.onQueryPhase(context(task), 1);
         s.demandReadFinished();
-        assertEquals(1, s.stats().itemsStartedAfterPhaseEnd());
+        // counted when the worker runs the item
+        assertEquals(0, s.stats().itemsStartedAfterPhaseEnd());
         runWorkers();
+        assertEquals(1, s.stats().itemsStartedAfterPhaseEnd());
         // an owner without a registered task is never counted
         taskIdOfThread.set(99L);
         s.submit(c -> {});
