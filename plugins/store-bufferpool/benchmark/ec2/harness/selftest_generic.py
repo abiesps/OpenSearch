@@ -740,6 +740,8 @@ def part_f(tmp, fork, fork_commit):
     check("def run_one(label, it, seed, remeasure=False):" in txt and "efs_invalid_samples" in txt and "stopping" not in
           txt.split("def run_one")[1].split("efs_invalid = 0")[1].split("if strict:")[0],
           "(f) driver: EFS samples off the connection target are re-measured at the end, not a stop")
+    check("JVM_RETRIES = 2" in txt and "failed_attempts" in txt and '.failed{attempt}' in txt,
+          "(f) driver: a failed JVM run is kept aside and re-queued")
     rd = run_luceneutil.report_driver(os.path.join(tmp, "lu-mixed"))
     compile(open(rd).read(), rd, "exec")
     check("results = {l: [m" in open(rd).read(), "(f) report driver for a finished session compiles")

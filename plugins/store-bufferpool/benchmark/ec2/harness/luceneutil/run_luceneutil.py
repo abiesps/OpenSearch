@@ -208,6 +208,9 @@ def efs_ok(a, b, target):
     return lvl(a.get("count")) and lvl(b.get("count")) and a.get("proxy_pid") == b.get("proxy_pid")
 
 
+JVM_RETRIES = 2
+
+
 def run_one(label, it, seed, remeasure=False):
     c = comps[label]
     st = c.coldpath["storage_spec"]
@@ -248,11 +251,35 @@ def run_one(label, it, seed, remeasure=False):
                     "drop_rounds": drop.get("rounds")}
         if not ok:
             raise SystemExit(f"{label} iteration {it}: index files still resident after the drop: {jvm_drop}")
-    snap_pre = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
-    t0 = time.time()
-    log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
-    wall = time.time() - t0
-    snap_post = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
+    # a JVM run that fails (start failure or death mid-way) is discarded, its files are kept as .failed<k>, and the
+    # same run (label, iteration, seed) is queued again, at most JVM_RETRIES more times (common-rules "Node-start retry
+    # and run re-queue"); the agent snapshots also carry the NFS client transport line (xprt: connect count) per run
+    failures = []
+    for attempt in range(JVM_RETRIES + 1):
+        snap_pre = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
+        t0 = time.time()
+        try:
+            log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
+        except RuntimeError as e:
+            lf = os.path.join(constants.LOGS_DIR, f"{S['id']}.{c.name}.{it}")
+            kept = []
+            for f in (lf, lf + ".stdout", cold_log):
+                if f and os.path.exists(f):
+                    os.rename(f, f"{f}.failed{attempt}")
+                    kept.append(f"{f}.failed{attempt}")
+            failures.append({"attempt": attempt, "error": str(e)[:500], "wall_s": time.time() - t0, "kept": kept,
+                             "snapshot_pre": snap_pre, "snapshot_post": agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")})
+            print(f"{label} iteration {it}: JVM run failed (attempt {attempt}), re-queued: {e}", flush=True)
+            if efs_target:
+                agent(st, "POST", f"/efs/precondition?arm={st['agent_arm']}&target={efs_target}&timeout_s=360")
+            continue
+        wall = time.time() - t0
+        snap_post = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
+        break
+    else:
+        with open(os.path.join(OUT, "failed-runs.jsonl"), "a") as f:
+            f.write(json.dumps({"label": label, "iter": it, "failures": failures}) + "\n")
+        raise SystemExit(f"{label} iteration {it}: {len(failures)} JVM attempts failed: stopping")
     # an efs-proxy restart drops the mount to 1 connection until 300 MiB/s returns: such samples are not a reason to
     # stop; they are excluded from the reference verdict by the analysis and the label gets a re-measure JVM run at the end
     efs_invalid = 0
@@ -277,7 +304,8 @@ def run_one(label, it, seed, remeasure=False):
                                "tasks": S["tasks"], "index": c.index.getName(), "java_command": c.javaCommand,
                                "switches": c.coldpath["switches"], "wall_s": wall, "efs_connections_target": efs_target,
                                "efs_precondition": efs_pre, "jvm_snapshots": {"pre": snap_pre, "post": snap_post},
-                               "efs_invalid_samples": efs_invalid, "remeasure": remeasure}) + "\n")
+                               "efs_invalid_samples": efs_invalid, "remeasure": remeasure,
+                               "failed_attempts": failures}) + "\n")
     manifest.flush()
     return efs_invalid
 
