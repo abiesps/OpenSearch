@@ -174,12 +174,36 @@ def phrase_bigrams(client, index, field, text):
     return analyze(client, index, field, text)[0]
 
 
+# _analyze refuses more than index.analyze.max_token_count (default 10,000) tokens per call; a pmc body has more.
+# Longer texts are analyzed in pieces of at most this many characters, cut at whitespace (a token has at least one
+# character, so a piece stays under the limit); a bigram across a cut is not counted. Shorter texts: one call, as before.
+ANALYZE_CHARS = 8000
+
+
+def _pieces(text):
+    if len(text) <= ANALYZE_CHARS:
+        return [text]
+    out, start = [], 0
+    while start < len(text):
+        end = min(len(text), start + ANALYZE_CHARS)
+        if end < len(text):
+            cut = text.rfind(" ", start + 1, end)
+            end = cut if cut > start else end
+        out.append(text[start:end])
+        start = end
+    return out
+
+
 def analyze(client, index, field, text):
     """(phrase bigrams, indexed tokens) of one document by the field's own analyzer (_analyze)."""
-    an = client.request("POST", f"/{index}/_analyze", {"field": field, "text": str(text or "")})
-    pos = {tk["position"]: tk["token"] for tk in an.get("tokens", [])}
-    bigrams = {(pos[p], pos[p + 1]) for p in pos if p + 1 in pos and TOKEN.fullmatch(pos[p]) and TOKEN.fullmatch(pos[p + 1])}
-    return bigrams, set(pos.values())
+    bigrams, tokens = set(), set()
+    for piece in _pieces(str(text or "")):
+        an = client.request("POST", f"/{index}/_analyze", {"field": field, "text": piece})
+        pos = {tk["position"]: tk["token"] for tk in an.get("tokens", [])}
+        bigrams |= {(pos[p], pos[p + 1]) for p in pos
+                    if p + 1 in pos and TOKEN.fullmatch(pos[p]) and TOKEN.fullmatch(pos[p + 1])}
+        tokens |= set(pos.values())
+    return bigrams, tokens
 
 
 def indexed_ranked(docfreq, indexed):

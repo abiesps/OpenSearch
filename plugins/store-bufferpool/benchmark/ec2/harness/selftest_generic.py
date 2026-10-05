@@ -338,6 +338,10 @@ def part_d(osbw, tmp):
                            "numeric": {}, "text": {}})
     r1h = [o for o in ga if o["name"] == "gen:range_ts_1h"][0]["body"]["query"]["range"]["ts"]
     check(r1h["gte"] == 5000 - 1800000 and r1h["lt"] == 5000 + 1800000, "(d) time anchor: windows centred on the anchor")
+    long_text = " ".join(f"w{i}" for i in range(9000))
+    pcs = queries._pieces(long_text)
+    check("".join(pcs) == long_text and len(pcs) > 1 and all(len(x) <= queries.ANALYZE_CHARS for x in pcs)
+          and queries._pieces("short text") == ["short text"], "(d) _analyze pieces: lossless, bounded, short text unchanged")
     check(queries.and2_pair(["a", "b", "c"], [{"a", "b"}, {"c"}]) is None, "(d) and2: co-occurring top pair kept")
     check(queries.and2_pair(["bmc", "plos", "one", "x"], [{"bmc"}, {"plos", "one"}, {"plos", "one", "x"}, {"bmc", "x"}])
           == ["plos", "one"], "(d) and2: disjoint top pair -> the most co-occurring pair of the top 10")
