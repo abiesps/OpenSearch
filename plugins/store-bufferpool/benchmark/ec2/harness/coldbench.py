@@ -12,7 +12,9 @@ Unit of measurement = one JVM run of one arm. A session is R rounds; each round 
 interleaved order (round 0 forward, round 1 reversed, ... = A B B A A B for two arms; or seeded random), and every
 arm run is a fresh JVM (the agent restarts the node with that arm's binary). Inside a run:
   1. verify: cluster green, the arm's indices open with the arm's store type, segment count per shard as expected,
-     doc counts, every switch the arm posts reads back as sent (an unknown switch = arm NOT AVAILABLE, a recorded gap)
+     doc counts, the per-field formats of every segment for an index with a "formats" entry (segformat_check.py, read
+     by the agent from the segment files), every switch the arm posts reads back as sent (an unknown switch = arm NOT
+     AVAILABLE, a recorded gap)
   2. cold block: ops in a seeded random order with the reference op first and last; before EVERY iteration of EVERY op:
        wait for an idle bufferpool prefetch pool, POST /_bufferpool/cache/_clear (bufferpool arms),
        POST /_cache/clear (query, fielddata, request), agent /cache/drop (pageout of the JVM's index-file mappings,
@@ -51,6 +53,7 @@ sys.path.insert(0, here)
 import canonical_ext  # noqa: E402 - generic workloads: percolate slots, highlight, inner_hits
 import indices_ext  # noqa: E402 - generic workloads: multi-index targets, not-applicable arms
 import runguards  # noqa: E402 - IO configuration and other-open-indices checks at every arm start
+import segformat_check  # noqa: E402 - segment formats proven from the files (index "formats" entry)
 from common import HttpError, JsonClient, JsonlWriter, wait_until  # noqa: E402
 
 SCHEMA = 1
@@ -414,6 +417,15 @@ def verify_indices(node, cfg, arm, agent_arm=None):
                 "store_bytes": int(size["store.size"])}
         if node.agent and agent_arm:
             info["du"] = node.agent.request("GET", f"/index/du?arm={urllib.parse.quote(agent_arm)}&uuids={st['uuid']}")
+        if idx.get("formats") is not None:
+            # the per-field format attributes and files of every segment, never the codec name (segformat_check.py)
+            if not (node.agent and agent_arm):
+                raise RuntimeError(f"{name}: the \"formats\" check reads the segment files and needs --agent")
+            res = segformat_check.check_index(node.os, node.agent, agent_arm, name, st["uuid"], idx["formats"])
+            info["formats"] = {k: res[k] for k in ("ok", "expected", "shards", "segments", "summary")}
+            if not res["ok"]:
+                raise RuntimeError(f"{name}: segment formats do not match \"formats\" {json.dumps(idx['formats'])}: "
+                                   + "; ".join(res["errors"][:10]) + (" ..." if len(res["errors"]) > 10 else ""))
         if idx.get("min_store_bytes") is not None and info["pri_store_bytes"] < idx["min_store_bytes"]:
             raise RuntimeError(f"{name}: primary store {info['pri_store_bytes']} B < required {idx['min_store_bytes']} B")
         want = idx.get("segments_per_shard")

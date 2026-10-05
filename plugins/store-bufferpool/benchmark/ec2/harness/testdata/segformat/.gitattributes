@@ -1,0 +1,3 @@
+# Lucene segment files (selftest_segformat.py fixture): bytes, never line-ending normalized
+* binary
+.gitattributes text eol=lf

@@ -27,6 +27,10 @@ Endpoints (JSON in and out):
   GET  /cache/residency?uuids=a,b    page-cache residency (mincore) of every file under the index directories of the
                                      given index UUIDs (all indices if absent): resident bytes total and per extension
   GET  /index/du?uuids=a,b           on-disk size of those index directories (apparent, allocated, Lucene files)
+  GET  /index/formats?uuids=a,b      every shard's last commit in those index directories, read from the segment files
+                                     (coldpath_segformat.py): per segment the codec name, compound or not, each field's
+                                     PerFieldPointsFormat.format / PerFieldPostingsFormat.format attributes and the files;
+                                     the caller checks them (segformat_check.py), the agent only reads
   GET  /snapshot                     JVM /proc/<pid>/io, /proc/diskstats of the data device (EBS) or NFS mountstats of
                                      the data mount (EFS), and a monotonic timestamp
   GET  /host                         kernel, CPU, memory, data mount, device queue settings, EBS volume id
@@ -480,6 +484,11 @@ class Agent:
                                         "allocated_bytes": allocated, "lucene_bytes": lucene}
         return out
 
+    def formats(self, uuids, st):
+        """{index UUID: {shard index directory: segments}} of the arm's index directories, see coldpath_segformat."""
+        # imported here: an agent installed without coldpath_segformat.py still serves every other endpoint
+        import coldpath_segformat  # noqa: E402 - installed next to this file
+        return {"indices": {os.path.basename(d): coldpath_segformat.describe(d) for d in self.index_dirs(st["data_path"], uuids)}}
     # ---- IO counters ----
     @staticmethod
     def _device_of(path):
@@ -671,6 +680,8 @@ def make_handler(agent, token):
                     out = agent.residency(uuids, st)
                 elif route == ("GET", "/index/du"):
                     out = agent.du(set(x for x in q.get("uuids", "").split(",") if x), st)
+                elif route == ("GET", "/index/formats"):
+                    out = agent.formats(set(x for x in q.get("uuids", "").split(",") if x), st)
                 elif route == ("GET", "/snapshot"):
                     out = agent.snapshot(st)
                 elif route == ("GET", "/host"):

@@ -13,9 +13,11 @@ target (S2-CORE-EFS, S2-CORE+PLANNER-EFS) not worse than reference (S0-EBS). Met
 | `queries.py` | load generator | op set per corpus: every search op of the corpus' OSB workload (rendered with jinja2) plus generated ops for every required family, values discovered from the data with fixed rules (`corpora/<corpus>.json` names fields by role only) |
 | `coldbench.py` | load generator | the session: interleaved arms (A B B A, or seeded random), restart per run, index/segment/size verification, switches with read-back, cold block (clear and verify before EVERY iteration), warm block, result pass, optional concurrent cold/warm; `--executor replay` (this client) or `--executor osb` (OpenSearch Benchmark) |
 | `osb_cold.py` | load generator | derived OSB workload with the `coldpath-search` runner (clear + verify, then OSB's own Query runner) and `coldpath-warm` |
-| `indexprep.py` | load generator | single-shard >= 30 GB copy (1 primary, 0 replicas), force-merge to N segments with verification, 1-segment clone, describe (store bytes, segments, du) |
+| `indexprep.py` | load generator | single-shard >= 30 GB copy (1 primary, 0 replicas), force-merge to N segments with verification, 1-segment clone, describe (store bytes, segments, du), `formats` (post-ingest segment format check, below) |
+| `segformat_check.py`, `agent/coldpath_segformat.py` | load generator; data node (agent `GET /index/formats`, or `--dir` directly) | post-ingest segment format check: reads every shard's last commit from the segment files and proves each field's points and postings format from its per-field attribute and the format's files |
 | `analyze.py` | anywhere | statistics and the outcome verdict (below) |
 | `selftest.py` | anywhere | end to end against a mock node and mock agent; `--osb-bin` also runs the OSB executor |
+| `selftest_segformat.py` | anywhere | the segment format check on real Lucene shards (`testdata/segformat`: a split BKD and Nav postings copy written by the plugin's codec service, and a stock control), the agent endpoint, `indexprep.py formats` logic and the coldbench verify step |
 
 ## Why the cold protocol is implemented outside OSB's schedule
 OSB has no hook between iterations of a task, and it times a runner from its first to its last request on its own
@@ -76,6 +78,30 @@ before any run otherwise (`runguards.check_format_isolation`, recorded as `forma
 verifies store type, docs, primaries, segments per shard (exact), primary store bytes (and `min_store_bytes`), and the
 agent's `du`, and records them in the run record. Single-shard >= 30 GB runs use the same arms with
 `--indices indices.single-shard.example.json` (and the 1-segment variant file).
+
+## Segment format check (split BKD and Nav postings copies)
+The codec name never proves a format: every Lucene104 segment of a bufferpoolfs index is named
+`Lucene104SplitPoints`, also when no field asks for the split format. After every ingest, force-merge, clone or
+restore of a split-format or Nav-postings index, and of its control copy, and before any result of it is reported,
+run the check:
+
+    indexprep.py formats --url U --agent A --token-file T --agent-arm POC-B-EBS --index nyc_taxis_split --from-mapping
+    indexprep.py formats --url U --agent A --token-file T --agent-arm POC-B-EBS --index nyc_taxis_split \
+        --points pickup_datetime=Lucene90Split --points dropoff_datetime=Lucene90Split
+    indexprep.py formats --url U --agent A --token-file T --agent-arm POC-B-EBS --index nyc_taxis_ctrl --control
+    # without the agent, on the data node itself:
+    python3 agent/coldpath_segformat.py --dir /data/ebs/opensearch-b/nodes/0/indices/UUID --postings tag_nav=Lucene104Nav
+
+For a copy meant to have a format, every segment that holds an expected field must carry the per-field attribute
+(`PerFieldPointsFormat.format=Lucene90Split`, `PerFieldPostingsFormat.format=Lucene104Nav`) and the format's files
+(`<segment>_Lucene90Split_0.kdm`, `.kdi`, `.kdd`; `<segment>_Lucene104Nav_<suffix>.nav`, inside the compound file when
+the segment is compound), and at least one segment must hold the field. A control copy (`--control`) must have
+neither format in any attribute or file name. Any mismatch prints the segments and exits with status 1. `--from-mapping`
+takes the expected fields from the index mapping's `meta.points_format` / `meta.postings_format` entries. In an
+indices file, `"formats": {"points": {...}, "postings": {...}}`, `"formats": "mapping"` or `"formats": "control"` on an
+index makes `coldbench.py` run the same check in the verify step of every run, which then fails before measuring. The
+agent must have `coldpath_segformat.py` installed next to it (`../harness.json`, install); an older agent answers 404 and
+the check stops with that message.
 
 ## Statistics (`analyze.py`)
 - Per-run median per op, then across runs. Change of the median with a bootstrap 95% CI resampling runs; exact

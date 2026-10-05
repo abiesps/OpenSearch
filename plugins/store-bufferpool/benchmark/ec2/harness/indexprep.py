@@ -21,6 +21,14 @@ Index preparation for coldbench, run once per corpus before any measurement (nev
   indexprep.py describe --url U --index X [--agent A --token-file T --agent-arm S0-EBS]
       docs, primaries, replicas, primary/total store bytes (_cat/indices?bytes=b), segments per shard, and the
       on-disk du of the shard directories through the agent
+  indexprep.py formats --url U --agent A --token-file T --agent-arm POC-EBS --index X
+          (--points FIELD=Lucene90Split ... --postings FIELD=Lucene104Nav ... | --from-mapping | --control)
+      post-ingest segment format check (run it after the ingest and after every force-merge or clone, before any
+      result of the index is reported): the agent reads every shard's last commit from the segment files, and every
+      segment that holds an expected field must carry the per-field attribute (PerFieldPointsFormat.format,
+      PerFieldPostingsFormat.format) and the format's files (_Lucene90Split_0.kdm/kdi/kdd, _Lucene104Nav_N.nav);
+      --control: no segment may have either format. Never judged from the codec name. Exit status 1 on any mismatch.
+      Without an agent, run agent/coldpath_segformat.py --dir on the data node itself. See segformat_check.py.
 Every command prints JSON, so the result can be stored next to the session.
 """
 import argparse
@@ -32,6 +40,7 @@ import time
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, here)
 from common import JsonClient  # noqa: E402
+import segformat_check  # noqa: E402
 
 GB = 1 << 30
 
@@ -129,6 +138,26 @@ def cmd_clone(a, c):
     return out
 
 
+def cmd_formats(a, c, agent):
+    if agent is None:
+        raise SystemExit("formats: --agent and --token-file are required (or run agent/coldpath_segformat.py --dir on the node)")
+    if a.control:
+        spec = "control"
+    elif a.from_mapping:
+        spec = "mapping"
+    else:
+        spec = {"points": segformat_check.sf.parse_pairs(a.points), "postings": segformat_check.sf.parse_pairs(a.postings)}
+    rows = c.request("GET", f"/_cat/indices/{a.index}?format=json&h=index,uuid")
+    if not rows:
+        return {"error": f"no index matches {a.index}"}
+    results = [segformat_check.check_index(c, agent, a.agent_arm, r["index"], r["uuid"], spec)
+               for r in sorted(rows, key=lambda r: r["index"])]
+    out = {"ok": all(r["ok"] for r in results), "indices": results}
+    if not out["ok"]:
+        out["error"] = "; ".join(f"{r['index']}: {e}" for r in results for e in r["errors"][:5])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -149,7 +178,13 @@ def main():
     k.add_argument("--segments", type=int, default=1)
     d = sub.add_parser("describe")
     d.add_argument("--index", required=True)
-    for p in (s, f, k, d):
+    fm = sub.add_parser("formats")
+    fm.add_argument("--index", required=True, help="index name, comma list or pattern (_cat/indices)")
+    fm.add_argument("--points", action="append", help="FIELD=FORMAT every segment holding FIELD must use")
+    fm.add_argument("--postings", action="append", help="FIELD=FORMAT every segment holding FIELD must use")
+    fm.add_argument("--from-mapping", action="store_true", help="expected fields from the mapping's meta entries")
+    fm.add_argument("--control", action="store_true", help="a control copy: no segment may have either format")
+    for p in (s, f, k, d, fm):
         p.add_argument("--url", default="http://localhost:9200")
         p.add_argument("--agent")
         p.add_argument("--token-file")
@@ -166,7 +201,7 @@ def main():
         agent = None
         if a.agent:
             agent = JsonClient(a.agent, headers={"X-Coldpath-Token": open(a.token_file).read().strip()})
-        out = describe(c, a.index, agent, a.agent_arm)
+        out = cmd_formats(a, c, agent) if a.cmd == "formats" else describe(c, a.index, agent, a.agent_arm)
     print(json.dumps(out, indent=1))
     if out.get("error"):
         sys.exit(1)
