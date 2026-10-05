@@ -1755,6 +1755,198 @@
     "Db"
    ],
    "note": "informational only (includes shortcuts) [generic: EBS copy of S2-ALL-EFS, common-rules: POC arms on both storages] [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S1-EBS-css": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext) [generic: EBS copy of S1-EFS-css, common-rules: POC arms on both storages]"
+  },
+  "S2-CORE-EBS-css": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK"
+   ],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext) [generic: EBS copy of S2-CORE-EFS-css, common-rules: POC arms on both storages] [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
+  },
+  "S2-CORE+PLANNER-EBS-css": {
+   "node": "POC-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
+     "verify": {
+      "bkd_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sort_prefetch=true",
+     "verify": {
+      "sort_prefetch": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?sample_docs=65536",
+     "verify": {
+      "sample_docs": "65536"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?run_cap=true",
+     "verify": {
+      "run_cap": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_mode=first",
+     "verify": {
+      "skipper_mode": "first"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/agg_batch?mode=pfwc",
+     "verify": {
+      "agg_batch_collection": "true",
+      "agg_prefetch_run_ahead_bypass": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/disjunction_prefetch?blocks=1&aligned=true",
+     "verify": {}
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/topk_prefetch?norms_blocks=1&doc_blocks=1&filter=true",
+     "verify": {
+      "topk_prefetch_filter": "true"
+     }
+    },
+    {
+     "method": "POST",
+     "path": "/_bufferpool/sort_opt?skipper_range=true",
+     "verify": {
+      "skipper_range": "true"
+     }
+    }
+   ],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [
+    "A",
+    "E",
+    "K2",
+    "K3",
+    "K4",
+    "AGG",
+    "ORPF",
+    "TOPK",
+    "C"
+   ],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext) [generic: EBS copy of S2-CORE+PLANNER-EFS-css, common-rules: POC arms on both storages] [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]"
   }
  },
  "other_indices": "close",
@@ -1786,6 +1978,9 @@
    "S2-CORE+PLANNER-EBS: added (EBS copy of S2-CORE+PLANNER-EFS)",
    "S2-ALL-EBS: added (EBS copy of S2-ALL-EFS)",
    "other_indices: close",
+   "S1-EBS-css: added (EBS copy of S1-EFS-css)",
+   "S2-CORE-EBS-css: added (EBS copy of S2-CORE-EFS-css)",
+   "S2-CORE+PLANNER-EBS-css: added (EBS copy of S2-CORE+PLANNER-EFS-css)",
    "S2-B-EFS: not applicable (B only)",
    "S2-B+A-EFS: not applicable (without B = S2-A-EFS)",
    "S2-CORE-EFS: without B on stock_efs",
@@ -1797,7 +1992,9 @@
    "S2-B-EBS: not applicable (B only)",
    "S2-B+A-EBS: not applicable (without B = S2-A-EBS)",
    "S2-CORE+PLANNER-EBS: without B on stock_ebs",
-   "S2-ALL-EBS: without B on stock_ebs"
+   "S2-ALL-EBS: without B on stock_ebs",
+   "S2-CORE-EBS-css: without B on stock_ebs",
+   "S2-CORE+PLANNER-EBS-css: without B on stock_ebs"
   ]
  }
 }

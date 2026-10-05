@@ -116,6 +116,38 @@ def part_g(osbw, tmp, check, generic):
               e.get("atoms") == a.get("atoms") and e.get("cluster_settings") == a.get("cluster_settings") and
               all(k.endswith("_ebs") for k in e["open"]), f"(g) {n[:-4]}-EBS: same switches, atoms, settings on EBS")
     check(not any(n.endswith("-css") for n in set(with_ebs["arms"]) - set(base["arms"])), "(g) -css variants are not copied")
+    css = _copy.deepcopy(with_ebs)
+    added_css = arms_generic.add_ebs_css_arms(css)
+    check("S1-EBS-css" in css["arms"] and css["arms"]["S1-EBS-css"]["node"] == "POC-EBS" and
+          css["arms"]["S1-EBS-css"]["cluster_settings"] == base["arms"]["S1-EFS-css"]["cluster_settings"] and
+          all(k.endswith("_ebs") for k in css["arms"]["S1-EBS-css"]["open"]) and
+          all(n.endswith("-EBS-css") for n in set(css["arms"]) - set(with_ebs["arms"])) and
+          len(added_css) == len(set(css["arms"]) - set(with_ebs["arms"])), "(g) EBS copies of the POC -css arms")
+    p_n = arms_generic.load_profile("nested")
+    cfg_n, _ = arms_generic.adapt_arms(css, p_n, arms_generic.indices_for(p_n, "multi", 6, 6))
+    arms_generic.isolate_split(cfg_n, {"EBS": "POC-B-EBS", "EFS": "POC-B-EFS"})
+    paths = {"S0-EBS": "/e", "S0-EFS": "/f", "POC-EBS": "/e", "POC-EFS": "/f", "POC-B-EBS": "/eb", "POC-B-EFS": "/fb"}
+    import runguards as _rg
+    iso = _rg.check_format_isolation(cfg_n, {k: {"data_path": v} for k, v in paths.items()})
+    check(iso["ok"] and {n for x in iso["poc_only_indices"] for n in x["nodes"]} == {"POC-B-EBS", "POC-B-EFS"} and
+          cfg_n["arms"]["S2-B-EFS"]["node"] == "POC-B-EFS" and cfg_n["arms"]["S2-B-EFS"]["open"] == ["split_efs"] and
+          cfg_n["arms"]["S1-EFS"]["open"] == ["stock_efs"] and cfg_n["arms"]["S2-CORE-EBS"]["node"] == "POC-B-EBS",
+          "(g) nested: split indices on their own nodes, the format-isolation guard accepts the arms")
+    try:
+        _rg.check_format_isolation(css | {"indices": cfg_n["indices"]}, {k: {"data_path": v} for k, v in paths.items()})
+        check(False, "(g) the guard refuses split indices on the stock data paths")
+    except RuntimeError:
+        check(True, "(g) the guard refuses split indices on the stock data paths")
+    import index_equality as _ie
+    pg = [{"hits": {"hits": [{"_id": "x1", "_score": 1.0, "fields": {"qid": ["q7"]},
+                              "inner_hits": {"answers": {"hits": {"hits": [{"_id": "x1", "_nested": {"field": "answers", "offset": 2}}]}}}},
+                             {"_id": "x2", "_score": 1.0, "_source": {"a": 1}}]}}]
+    miss = _ie.rekey(pg, "qid")
+    h = pg[0]["hits"]["hits"]
+    check(miss == 0 and h[0]["_id"] == "q7" and h[1]["_id"].startswith("src:") and
+          h[0]["inner_hits"]["answers"]["hits"]["hits"][0]["_id"] == 'q7/{"field": "answers", "offset": 2}' and
+          _ie.with_key_field({"size": 1}, "qid") == {"size": 1, "docvalue_fields": ["qid"]},
+          "(g) index_equality: hits keyed by the document key (inner hits by parent key and nested offset)")
     ex = json.load(open(os.path.join(here, "arms.generic.example.json")))
     check(ex["other_indices"] == "close" and "S2-CORE+PLANNER-EBS" in ex["arms"] and "S2-A-EBS" in ex["arms"],
           "(g) arms.generic.example.json: other_indices close, EBS POC arms present")

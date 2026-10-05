@@ -28,6 +28,9 @@ Also (harness-ext review findings 4 and 7):
     already has on EBS are kept as they are. -css variants are not copied.
   - "other_indices": "close" (unless the base sets it): on a grouped host the other workloads' open indices are
     closed before the arm's indices open (GENERIC-PLAN section 2).
+  - the EBS copy of every POC -css arm (S1-EBS-css, S2-x-EBS-css): the concurrent segment search factor on both storages.
+  - where split BKD applies: split_* indices on their own agent arms and data paths (--split-node-ebs/-efs, default
+    POC-B-EBS / POC-B-EFS); arms on the stock data paths open no split index (common-rules "Data-path separation").
 
   arms_generic.py build --base arms.example.json --corpus geoshape --layout multi --shards 6 --segments 10 \
       --out arms.geoshape.json
@@ -113,6 +116,56 @@ def add_ebs_arms(cfg):
     return changes
 
 
+def add_ebs_css_arms(cfg):
+    """
+    Adds the EBS copy of every -css arm on EFS (S1-EFS-css -> S1-EBS-css, S2-x-EFS-css -> S2-x-EBS-css) that the arms
+    file lacks: common-rules "Both storages" makes the EBS baseline and POC arms first-class, and the concurrent segment
+    search factor is measured on both storages. Same rule as add_ebs_arms (node POC-EBS, *_ebs keys).
+    """
+    arms, changes = cfg["arms"], []
+    for n, a in list(arms.items()):
+        m = re.fullmatch(r"(S[12].*)-EFS-css", n)
+        if not m or a.get("not_applicable") or m.group(1) + "-EBS-css" in arms:
+            continue
+        if a.get("node") != "POC-EFS" or a.get("storage") != "EFS" or not a.get("bufferpool"):
+            continue  # stock -css arms already exist on both storages (S0-EBS-css, S0-EFS-css)
+        e = copy.deepcopy(a)
+        e["node"], e["storage"] = "POC-EBS", "EBS"
+        e["index"] = _ebs_key(a["index"])
+        e["open"] = [_ebs_key(k) for k in a["open"]]
+        e["store_types"] = {_ebs_key(k): v for k, v in a.get("store_types", {}).items()}
+        e["note"] = (a.get("note", "") + f" [generic: EBS copy of {n}, common-rules: POC arms on both storages]").strip()
+        arms[m.group(1) + "-EBS-css"] = e
+        changes.append(f"{m.group(1)}-EBS-css: added (EBS copy of {n})")
+    return changes
+
+
+def isolate_split(cfg, nodes):
+    """
+    common-rules "Data-path separation for POC-only indices": the stock binary cannot start next to a closed split-BKD
+    index, so split_* indices live on their own data paths with their own agent arms (nodes: {"EBS": "POC-B-EBS",
+    "EFS": "POC-B-EFS"}). An arm that queries a split index runs on that node and opens only split indices of its
+    storage; every other arm opens no split index. runguards.check_format_isolation refuses any other layout.
+    """
+    changes = []
+    for n, a in cfg["arms"].items():
+        if a.get("not_applicable"):
+            continue
+        if a["index"].startswith("split_"):
+            node = nodes[a["storage"]]
+            keep = [k for k in a["open"] if k.startswith("split_")]
+            if a.get("node") != node or keep != a["open"]:
+                changes.append(f"{n}: node {a.get('node')} -> {node}, open {a['open']} -> {keep} (split data path)")
+            a["node"], a["open"] = node, keep
+        else:
+            keep = [k for k in a["open"] if not k.startswith("split_")]
+            if keep != a["open"]:
+                changes.append(f"{n}: open {a['open']} -> {keep} (no split index on a stock data path)")
+            a["open"] = keep
+        a["store_types"] = {k: v for k, v in a.get("store_types", {}).items() if k in a["open"]}
+    return changes
+
+
 def adapt_arms(base, profile, indices):
     b = profile.get("split_bkd", {})
     cfg = copy.deepcopy(base)
@@ -169,8 +222,11 @@ def cmd_build(a):
     changes = add_ebs_arms(with_ebs)
     with_ebs.setdefault("other_indices", "close")
     changes.append(f"other_indices: {with_ebs['other_indices']}")
+    changes += add_ebs_css_arms(with_ebs)
     cfg, more = adapt_arms(with_ebs, profile, idx)
     changes += more
+    if profile.get("split_bkd", {}).get("applicable"):
+        changes += isolate_split(cfg, {"EBS": a.split_node_ebs, "EFS": a.split_node_efs})
     cfg["_generic"] = {"corpus": a.corpus, "layout": a.layout, "base_arms_file": a.base,
                        "base_arms_sha256": hashlib.sha256(base_raw).hexdigest(), "split_bkd": profile.get("split_bkd"),
                        "changes": changes}
@@ -203,6 +259,10 @@ def main():
                        "--segments in every shard (indexprep.py forcemerge reports it); recorded in the file")
         p.add_argument("--out", required=True)
     sub.choices["build"].add_argument("--base", required=True, help="the main workflow's arms file")
+    sub.choices["build"].add_argument("--split-node-ebs", default="POC-B-EBS", help="agent arm (own data path) of the "
+                                      "split-BKD index on EBS")
+    sub.choices["build"].add_argument("--split-node-efs", default="POC-B-EFS", help="agent arm (own data path) of the "
+                                      "split-BKD index on EFS")
     a = ap.parse_args()
     {"build": cmd_build, "indices": cmd_indices}[a.cmd](a)
 
