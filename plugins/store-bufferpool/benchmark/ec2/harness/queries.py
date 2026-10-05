@@ -164,11 +164,23 @@ def _get(src, dotted):
     return v
 
 
+def phrase_bigrams(client, index, field, text):
+    """
+    Phrase candidates of one document: two TOKEN tokens at ADJACENT positions of the field's own analyzer (_analyze).
+    TOKEN-filtered tokens are not adjacent in the indexed text when a number or a short word sits between them (big5:
+    "mar cron" from "Mar 22 ... cron"); such a phrase matches nothing, and on a match_only_text field the phrase query
+    then confirms every candidate from _source (161 s on big5 100 GB).
+    """
+    an = client.request("POST", f"/{index}/_analyze", {"field": field, "text": str(text or "")})
+    pos = {tk["position"]: tk["token"] for tk in an.get("tokens", [])}
+    return {(pos[p], pos[p + 1]) for p in pos if p + 1 in pos and TOKEN.fullmatch(pos[p]) and TOKEN.fullmatch(pos[p + 1])}
+
+
 def discover(client, index, profile):
     """Values for the generated ops, from the data, with fixed rank/percentile rules (recorded in the output)."""
     vals = {"rules": "time: middle of [min,max]; keyword: terms by count, ranks 0 / len//10 / last of top 1000; "
                      "numeric: p5/p40/p50/p60/p95; text: sample of 200 docs (random_score seed 42), token doc "
-                     "frequency ranks 0/1/2 and len//4, most frequent adjacent bigram"}
+                     "frequency ranks 0/1/2 and len//4, most frequent bigram of adjacent analyzer positions (_analyze)"}
     tf = profile["time_field"]
     r = client.request("POST", f"/{index}/_search?request_cache=false",
                        {"size": 0, "aggs": {"min": {"min": {"field": tf}}, "max": {"max": {"field": tf}}}})
@@ -202,7 +214,7 @@ def discover(client, index, profile):
                 t = " ".join(map(str, t))
             toks = TOKEN.findall(str(t or "").lower())
             docfreq.update(set(toks))
-            bigrams.update(set(zip(toks, toks[1:])))
+            bigrams.update(phrase_bigrams(client, index, f, t))
         ranked = [w for w, _ in sorted(docfreq.items(), key=lambda kv: (-kv[1], kv[0]))]
         if len(ranked) < 4:
             continue

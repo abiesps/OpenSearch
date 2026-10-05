@@ -35,6 +35,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -287,6 +288,9 @@ class MockSearch:
 
     def request(self, method, path, body=None, timeout=None):
         self.calls.append(json.dumps(body, sort_keys=True))
+        if path.endswith("/_analyze"):
+            toks = re.findall(r"[a-z0-9]+", body["text"].lower())
+            return {"tokens": [{"token": t, "position": i} for i, t in enumerate(toks)]}
         aggs = (body or {}).get("aggs", {})
         out = {"hits": {"hits": [{"_source": {"message": "alpha beta gamma delta alpha beta", "title": "alpha beta zeta"}}] * 3}}
         res = {}

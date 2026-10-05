@@ -164,7 +164,7 @@ def _text_vals(client, index, fields):
                 t = " ".join(map(str, t))
             toks = queries.TOKEN.findall(str(t or "").lower())
             docfreq.update(set(toks))
-            bigrams.update(set(zip(toks, toks[1:])))
+            bigrams.update(queries.phrase_bigrams(client, index, f, t))
         ranked = [w for w, _ in sorted(docfreq.items(), key=lambda kv: (-kv[1], kv[0]))]
         if len(ranked) < 4:
             continue
@@ -223,7 +223,7 @@ def _nested_vals(client, index, nested):
 
 UNTIMED_RULES = ("keyword: terms by count, ranks 0 / len//10 / last of top 1000; numeric: p5/p40/p50/p60/p95; text: "
                  "sample of 200 docs (random_score seed 42), token doc frequency ranks 0/1/2 and len//4, most frequent "
-                 "adjacent bigram (the rules of queries.discover, without a time field)")
+                 "bigram of adjacent analyzer positions (the rules of queries.discover, without a time field)")
 
 
 def discover(client, index, profile):
