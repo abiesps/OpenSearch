@@ -277,6 +277,10 @@ def generate(profile, vals):
             {"query": {"multi_match": {"query": " ".join(vals["text"][f0]["terms"][:2]), "fields": mm_fields}}})
     # bool
     k0 = kws[0]
+    # must_not field: the highest-cardinality keyword field other than k0 when k0 is itself the highest-cardinality
+    # one (eventdata: agent), so a filter and a must_not never name the same term (an always-empty bool); profiles
+    # whose k0 is not the highest-cardinality field keep hi_card (unchanged op sets)
+    neg = hi_card if hi_card != k0 else max((f for f in kws if f != k0), key=lambda f: kw[f]["cardinality"], default=k0)
     text_clause = {"match": {texts[0]: vals["text"][texts[0]]["terms"][0]}} if texts else {"term": {k0: kw[k0]["high"]}}
     add("bool_must_filter", {"bool:must", "bool:filter", "bkd:range_date"},
         {"query": {"bool": {"must": [text_clause], "filter": [{"range": {tf: rng["1d"]}}]}}})
@@ -284,10 +288,10 @@ def generate(profile, vals):
         {"query": {"bool": {"should": [{"term": {k0: kw[k0]["mid"]}}, {"term": {hi_card: kw[hi_card]["low"]}}],
                             "minimum_should_match": 1}}})
     add("bool_filter_must_not", {"bool:filter", "bool:must_not", "keyword:term"},
-        {"query": {"bool": {"filter": [{"term": {k0: kw[k0]["high"]}}], "must_not": [{"term": {hi_card: kw[hi_card]["high"]}}]}}})
+        {"query": {"bool": {"filter": [{"term": {k0: kw[k0]["high"]}}], "must_not": [{"term": {neg: kw[neg]["high"]}}]}}})
     add("bool_all", {"bool:must", "bool:should", "bool:filter", "bool:must_not", "bkd:range_date"},
         {"query": {"bool": {"must": [text_clause], "should": [{"term": {k0: kw[k0]["mid"]}}],
-                            "filter": [{"range": {tf: rng["7d"]}}], "must_not": [{"term": {hi_card: kw[hi_card]["mid"]}}]}}})
+                            "filter": [{"range": {tf: rng["7d"]}}], "must_not": [{"term": {neg: kw[neg]["mid"]}}]}}})
     # bkd ranges and sorts
     for w in ("1h", "1d", "7d"):
         add(f"range_{tf}_{w}", {"bkd:range_date"}, {"query": {"range": {tf: rng[w]}}})

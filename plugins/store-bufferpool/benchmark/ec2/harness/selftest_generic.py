@@ -325,6 +325,12 @@ def part_d(osbw, tmp):
         check(d["reference_op"] in {o["name"] for o in d["ops"]}, f"(d) {c}: reference op exists")
         names = [o["name"] for o in d["ops"]]
         check(len(names) == len(set(names)), f"(d) {c}: op names unique")
+        # a bool op never excludes a term it also requires or scores (an always-empty or dead clause)
+        def terms(clauses):
+            return {json.dumps(x["term"], sort_keys=True) for x in clauses or [] if "term" in x}
+        dead = [o["name"] for o in d["ops"] for b in [o["body"].get("query", {}).get("bool")] if b
+                and terms(b.get("must_not")) & (terms(b.get("filter")) | terms(b.get("must")) | terms(b.get("should")))]
+        check(not dead, f"(d) {c}: no bool op whose must_not repeats one of its own terms: {dead}")
         p = json.load(open(os.path.join(here, "corpora", c + ".json")))
         if p.get("geo_fields"):
             check(all(f in d["families"] for f in families_ext.GEO_FAMILIES), f"(d) {c}: geo families generated")
