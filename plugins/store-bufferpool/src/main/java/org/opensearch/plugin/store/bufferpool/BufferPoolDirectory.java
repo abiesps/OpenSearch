@@ -13,6 +13,9 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.LockFactory;
+import org.apache.lucene.store.MMapDirectory;
+import org.apache.lucene.store.ReadAdvice;
+import org.apache.lucene.util.Constants;
 import org.opensearch.common.util.io.IOUtils;
 
 import java.io.IOException;
@@ -33,6 +36,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * its id, so blocks cached from an old file can never be served for a new file with the same name, even when an old
  * reader re-populates them after the file was replaced. Those orphaned blocks age out through normal eviction or are
  * removed when the directory closes.
+ *
+ * <p>An input reads {@link BlockCache#randomReadSize()} bytes per miss if its {@link IOContext} asks for random access,
+ * else {@link BlockCache#sequentialReadSize()} bytes. The access pattern is taken from the context the same way OpenSearch
+ * configures {@code mmapfs} and {@code hybridfs} ({@link MMapDirectory#ADVISE_BY_CONTEXT}): merges and flushes are
+ * sequential, then the context's {@code DataAccessHint}, then Lucene's default read advice.
  */
 public final class BufferPoolDirectory extends FSDirectory {
 
@@ -57,7 +65,14 @@ public final class BufferPoolDirectory extends FSDirectory {
         boolean success = false;
         try {
             final long fileId = fileIds.computeIfAbsent(name, n -> NEXT_FILE_ID.incrementAndGet());
-            final IndexInput input = new BufferPoolIndexInput("BufferPoolIndexInput(path=\"" + file + "\")", file, fileId, channel, cache);
+            final IndexInput input = new BufferPoolIndexInput(
+                "BufferPoolIndexInput(path=\"" + file + "\")",
+                file,
+                fileId,
+                channel,
+                cache,
+                cache.readSize(isRandomAccess(name, context))
+            );
             success = true;
             return input;
         } finally {
@@ -65,6 +80,16 @@ public final class BufferPoolDirectory extends FSDirectory {
                 IOUtils.closeWhileHandlingException(channel);
             }
         }
+    }
+
+    /** Whether reads in {@code context} are random access, as {@link MMapDirectory#ADVISE_BY_CONTEXT} decides it. */
+    static boolean isRandomAccess(String name, IOContext context) {
+        return MMapDirectory.ADVISE_BY_CONTEXT.apply(name, context).orElse(Constants.DEFAULT_READADVICE) == ReadAdvice.RANDOM;
+    }
+
+    /** {@link #isRandomAccess(String, IOContext)} for a context that is not tied to one file name (slices, updates). */
+    static boolean isRandomAccess(IOContext context) {
+        return isRandomAccess(null, context);
     }
 
     @Override

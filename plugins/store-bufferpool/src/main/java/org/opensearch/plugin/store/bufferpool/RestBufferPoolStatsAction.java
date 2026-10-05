@@ -34,21 +34,29 @@ import static org.opensearch.rest.RestRequest.Method.GET;
 import static org.opensearch.rest.RestRequest.Method.POST;
 
 /**
- * Experiment endpoints for the block cache of the node that receives the request (not cluster-wide):
+ * Experiment endpoints for the block cache of the node that receives the request (not cluster-wide).
+ *
+ * <p>A prefetch "node" below is {@link BlockCache#prefetchNodeBytes()} bytes: the configured
+ * {@code bufferpool.io.sequential_read_size}, so one node is one storage read whatever the cache block size is. Parameters
+ * named {@code blocks} count such nodes (they equal cache blocks only when the read size is the block size).
  *
  * <ul>
- *   <li>{@code GET /_bufferpool/stats}: cache size and per-file-type IO counters</li>
+ *   <li>{@code GET /_bufferpool/stats}: cache size, read sizes and per-file-type IO counters. Per file type,
+ *       {@code loads}, {@code prefetch_loads} and {@code readahead_loads} count inserted blocks (demand misses, requested
+ *       prefetch blocks, and blocks inserted only because they share a read window with one of those), {@code bytes_loaded}
+ *       their bytes; {@code reads}, {@code prefetch_reads}, {@code bytes_read} and {@code reads_by_size} (count per size
+ *       class, keyed by the class's upper bound in bytes) count the storage reads</li>
  *   <li>{@code POST /_bufferpool/stats/_reset}: sets the counters to zero</li>
  *   <li>{@code POST /_bufferpool/cache/_clear}: drops all cached blocks, so the next reads are cold</li>
  *   <li>{@code POST /_bufferpool/dual_nav/_mode?mode=doc|nav}: where {@code Lucene104DualNav} postings read skip data
  *       from, for postings lists opened from now on (JVM-wide)</li>
- *   <li>{@code POST /_bufferpool/disjunction_prefetch?blocks=N[&aligned=true]}: exhaustive OR queries keep N cache blocks
+ *   <li>{@code POST /_bufferpool/disjunction_prefetch?blocks=N[&aligned=true]}: exhaustive OR queries keep N prefetch nodes
  *       of each clause's postings requested ahead (JVM-wide, see Lucene's {@code DisjunctionPrefetch}); 0 disables it. With
- *       {@code aligned=true} requests are whole cache blocks: when a clause starts reading block k, blocks up to k + N are
+ *       {@code aligned=true} requests are whole nodes: when a clause starts reading node k, nodes up to k + N are
  *       requested</li>
  *   <li>{@code POST /_bufferpool/topk_prefetch?norms_blocks=N[&filter=true|false][&doc_blocks=D]}: top-k OR queries
- *       keep each clause's postings requested D cache blocks ahead, and request norms up to N
- *       cache blocks ahead (N * block size doc IDs, for 1-byte norms), in whole blocks, only for doc windows whose max
+ *       keep each clause's postings requested D prefetch nodes ahead, and request norms up to N
+ *       nodes ahead (N * node size doc IDs, for 1-byte norms), in whole nodes, only for doc windows whose max
  *       score can beat the current threshold unless {@code filter=false} (JVM-wide, see Lucene's {@code TopKPrefetch});
  *       0 disables it</li>
  *   <li>{@code POST /_bufferpool/agg_batch?mode=off|runend|vec|vecdec|pf|pfs|pfl|pfsl|pfw|pfwg|pfwc[&docs=N]}: batch collection experiments for scorers and
@@ -66,7 +74,7 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       approx_single=&approx_bool=&skipper_range=&sort_prefetch=&sort_docs=&clamp=&sample_docs=&skipper_mode=&run_cap=}:
  *       cold-path sort experiment switches (JVM-wide, see {@link SortOptParams}); an absent parameter leaves its switch
  *       unchanged, a bad value returns 400 and changes nothing. Every POST also sets the node size of the BKD and sort
- *       prefetches to the cache block size. {@code GET /_bufferpool/sort_opt} returns every value; {@code GET
+ *       prefetches to the prefetch node size. {@code GET /_bufferpool/sort_opt} returns every value; {@code GET
  *       /_bufferpool/stats} reports them as {@code sort_opt_*}</li>
  * </ul>
  */
@@ -137,13 +145,13 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             }
             if (docBlocks > 0) {
                 // Lucene104DualNav plans postings prefetch in whole nodes only when the node size is set
-                DisjunctionPrefetch.setNodeBytes(cache.blockSize());
+                DisjunctionPrefetch.setNodeBytes(cache.prefetchNodeBytes());
             }
             TopKPrefetch.setDocNodesAhead(docBlocks);
-            // norms are 1 byte per doc for BM25 text fields: N blocks of norms = N * block size doc IDs
-            TopKPrefetch.setNodeBytes(cache.blockSize());
+            // norms are 1 byte per doc for BM25 text fields: N nodes of norms = N * node size doc IDs
+            TopKPrefetch.setNodeBytes(cache.prefetchNodeBytes());
             TopKPrefetch.setFilter(request.paramAsBoolean("filter", true));
-            TopKPrefetch.setNormsDocsAhead(Math.toIntExact((long) blocks * cache.blockSize()));
+            TopKPrefetch.setNormsDocsAhead(Math.toIntExact((long) blocks * cache.prefetchNodeBytes()));
         } else if (path.endsWith("/agg_batch")) {
             final String mode = request.param("mode");
             switch (mode == null ? "" : mode) {
@@ -153,14 +161,14 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                 case "vecdec" -> setAggBatch(true, true, true);
                 case "pf", "pfs", "pfl", "pfsl" -> {
                     setAggBatch(true, true, true);
-                    DocValuesPrefetch.setNodeBytes(cache.blockSize());
+                    DocValuesPrefetch.setNodeBytes(cache.prefetchNodeBytes());
                     DocValuesPrefetch.setShareLookahead(mode.contains("s"));
                     DocValuesPrefetch.setLeapfrogLookahead(mode.contains("l"));
                     DocValuesPrefetch.setEnabled(true);
                 }
                 case "pfw", "pfwg", "pfwc" -> {
                     setAggBatch(true, true, true);
-                    DocValuesPrefetch.setNodeBytes(cache.blockSize());
+                    DocValuesPrefetch.setNodeBytes(cache.prefetchNodeBytes());
                     DocValuesPrefetch.setRunAheadDocs(request.paramAsInt("docs", 1 << 17));
                     DocValuesPrefetch.setRunAheadGate(mode.equals("pfwg") || mode.equals("pfwc"));
                     DocValuesPrefetch.setRunAheadBypass(mode.equals("pfwc"));
@@ -176,13 +184,17 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             if (blocks < 0) {
                 throw new IllegalArgumentException("missing or negative [blocks]");
             }
-            DisjunctionPrefetch.setNodeBytes(request.paramAsBoolean("aligned", false) ? cache.blockSize() : 0);
-            DisjunctionPrefetch.setBytesAhead((long) blocks * cache.blockSize());
+            DisjunctionPrefetch.setNodeBytes(request.paramAsBoolean("aligned", false) ? cache.prefetchNodeBytes() : 0);
+            DisjunctionPrefetch.setBytesAhead((long) blocks * cache.prefetchNodeBytes());
         }
         return channel -> {
             final XContentBuilder builder = channel.newBuilder();
             builder.startObject();
             builder.field("block_size", cache.blockSize());
+            builder.field("random_read_size", cache.randomReadSize());
+            builder.field("sequential_read_size", cache.sequentialReadSize());
+            builder.field("prefetch_node_bytes", cache.prefetchNodeBytes());
+            builder.field("in_flight_reads", cache.inFlightReads());
             builder.field("cached_blocks", cache.size());
             builder.field("cached_bytes", cache.sizeInBytes());
             builder.field("dual_nav_read_mode", Lucene104DualNavPostingsFormat.getReadMode().name().toLowerCase(Locale.ROOT));
@@ -228,7 +240,17 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                 builder.field("loads", s.loads.sum());
                 builder.field("prefetch_requests", s.prefetchRequests.sum());
                 builder.field("prefetch_loads", s.prefetchLoads.sum());
+                builder.field("readahead_loads", s.readaheadLoads.sum());
+                builder.field("blocks_inserted", s.loads.sum() + s.prefetchLoads.sum() + s.readaheadLoads.sum());
                 builder.field("bytes_loaded", s.bytesLoaded.sum());
+                builder.field("reads", s.reads.sum());
+                builder.field("prefetch_reads", s.prefetchReads.sum());
+                builder.field("bytes_read", s.bytesRead.sum());
+                builder.startObject("reads_by_size");
+                for (Map.Entry<Long, Long> size : s.readsBySize().entrySet()) {
+                    builder.field(Long.toString(size.getKey()), size.getValue());
+                }
+                builder.endObject();
                 builder.field("load_time_micros", TimeUnit.NANOSECONDS.toMicros(s.loadNanos.sum()));
                 builder.endObject();
             }
@@ -258,7 +280,7 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
         }
         return channel -> {
             if (params != null) {
-                params.apply(cache.blockSize());
+                params.apply(cache.prefetchNodeBytes());
             }
             final XContentBuilder builder = channel.newBuilder();
             builder.startObject();

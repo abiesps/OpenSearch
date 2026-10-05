@@ -46,10 +46,10 @@ public class BlockCacheTraceTests extends OpenSearchTestCase {
             cache.startTrace(1000);
             cache.prefetch(file, 1, channel, length, 0, 3, stats);
             assertEquals(3, cache.currentTrace().prefetchedUnreadCount());
-            cache.getOrLoad(key(file, 0), channel, length, stats);
-            cache.getOrLoad(key(file, 2), channel, length, stats);
+            cache.getOrLoad(key(file, 0), channel, length, DEFAULT_BLOCK_SIZE, stats);
+            cache.getOrLoad(key(file, 2), channel, length, DEFAULT_BLOCK_SIZE, stats);
             // a block loaded by a read, not a prefetch, is never counted
-            cache.getOrLoad(key(file, 3), channel, length, stats);
+            cache.getOrLoad(key(file, 3), channel, length, DEFAULT_BLOCK_SIZE, stats);
             final BlockCache.Trace trace = cache.stopTrace();
             assertEquals(1, trace.prefetchedUnreadCount());
             assertEquals(List.of("_0.dvd:1"), trace.prefetchedUnread(DEFAULT_BLOCK_SIZE, 20));
@@ -86,6 +86,34 @@ public class BlockCacheTraceTests extends OpenSearchTestCase {
             assertEquals(0, trace.prefetchedUnreadCount());
             assertEquals(List.of(), trace.prefetchedUnread(DEFAULT_BLOCK_SIZE, 20));
             assertEquals(3, stats.prefetchLoads.sum());
+        }
+    }
+
+    public void testReadAheadBlocksAreReportedApartFromPrefetchedBlocks() throws IOException {
+        final Path file = writeFile("_3.dvd");
+        // 4 blocks of DEFAULT_BLOCK_SIZE / 4 per read window: one prefetch read of the first window brings 4 blocks
+        final int block = DEFAULT_BLOCK_SIZE / 4;
+        final BlockCache cache = new BlockCache(64L * DEFAULT_BLOCK_SIZE, block, block, DEFAULT_BLOCK_SIZE, Runnable::run);
+        final BlockCache.FileStats stats = cache.statsFor(file.getFileName().toString());
+        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            final long length = channel.size();
+            cache.startTrace(1000);
+            cache.prefetch(file, 1, channel, length, block, 1, stats);
+            BlockCache.Trace trace = cache.currentTrace();
+            assertEquals("only the requested block counts as prefetched", 1, trace.prefetchedUnreadCount());
+            assertEquals(3, trace.readaheadUnreadCount());
+            cache.getOrLoad(new BlockKey(file, 1, 0), channel, length, block, stats);
+            cache.getOrLoad(new BlockKey(file, 1, block), channel, length, block, stats);
+            trace = cache.stopTrace();
+            assertEquals(0, trace.prefetchedUnreadCount());
+            assertEquals(2, trace.readaheadUnreadCount());
+            final List<BlockCache.Event> loads = trace.events.stream().filter(e -> e.size() > 0).toList();
+            assertEquals(4, loads.size());
+            assertEquals(1, loads.stream().filter(e -> e.readahead() == false).count());
+            assertTrue(loads.stream().allMatch(BlockCache.Event::prefetch));
+            assertEquals(1, stats.prefetchReads.sum());
+            assertEquals(0, stats.reads.sum());
+            assertEquals(0, stats.loads.sum());
         }
     }
 }

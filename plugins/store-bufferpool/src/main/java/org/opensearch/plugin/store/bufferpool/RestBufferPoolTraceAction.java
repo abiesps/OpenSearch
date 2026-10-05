@@ -32,7 +32,9 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  * </ul>
  *
  * Each event is one block load (a cache miss or a prefetch load) with its file, block offset, and the innermost Lucene
- * codec and search methods on the stack (for a prefetch load: on the stack that requested the prefetch).
+ * codec and search methods on the stack (for a prefetch load: on the stack that requested the prefetch). A load with
+ * {@code readahead: true} is a block nobody requested, inserted because it shares a read window with a requested block;
+ * {@code readahead_unread} counts those that no reader read, apart from {@code prefetched_unread}.
  * {@code prefetched_unread} holds the count of blocks that a prefetch loaded during the trace and that no reader read
  * before the response, the first 20 of them as {@code file:block}, and the count per requesting code
  * ({@code by_requester}, "codec caller / search caller").
@@ -91,6 +93,7 @@ final class RestBufferPoolTraceAction extends BaseRestHandler {
                 builder.field("blocks", trace.prefetchedUnread(cache.blockSize(), 20));
                 builder.field("by_requester", trace.prefetchedUnreadByRequester());
                 builder.endObject();
+                builder.field("readahead_unread", trace.readaheadUnreadCount());
                 builder.startArray("events");
                 for (BlockCache.Event e : trace.events) {
                     builder.startObject();
@@ -101,6 +104,7 @@ final class RestBufferPoolTraceAction extends BaseRestHandler {
                     builder.field("offset", e.blockOffset());
                     builder.field("size", e.size());
                     builder.field("prefetch", e.prefetch());
+                    builder.field("readahead", e.readahead());
                     builder.field("thread", e.thread());
                     builder.field("codec", e.codecCaller());
                     builder.field("search", e.searchCaller());

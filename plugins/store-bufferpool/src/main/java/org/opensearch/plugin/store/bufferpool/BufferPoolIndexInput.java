@@ -9,6 +9,7 @@
 package org.opensearch.plugin.store.bufferpool;
 
 import org.apache.lucene.store.AlreadyClosedException;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.RandomAccessInput;
 
@@ -24,8 +25,11 @@ import java.util.Optional;
  * {@link IndexInput} that serves every read from blocks of the shared {@link BlockCache}.
  *
  * <p>The input keeps a reference to the block that holds the current position, so sequential reads within a block do not
- * touch the cache. When a read leaves that block, the input looks up the next block and loads it from the file on a miss.
- * There is no read-ahead; {@link #prefetch(long, long)} loads blocks in the background on request.
+ * touch the cache. When a read leaves that block, the input looks up the next block and, on a miss, reads the aligned
+ * window of its read size that holds the block: {@link BlockCache#randomReadSize()} if the input was opened (or its
+ * {@link IOContext} was updated) for random access, else {@link BlockCache#sequentialReadSize()}. Clones keep the read size
+ * of their input; a slice takes the read size of the {@link IOContext} it is created with, if any.
+ * {@link #prefetch(long, long)} loads blocks in the background on request.
  *
  * <p>The input that {@link BufferPoolDirectory} opens owns the file channel. Clones and slices share the channel and are
  * not usable after that input is closed.
@@ -45,6 +49,8 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
     private final long sliceOffset;
     /** Length of this input. */
     private final long length;
+    /** Bytes read per miss, {@link BlockCache#randomReadSize()} or {@link BlockCache#sequentialReadSize()}. */
+    private int readSize;
     /** True for clones and slices, which do not own the channel. */
     private boolean isClone;
     private boolean closed;
@@ -58,7 +64,9 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
     /** End (exclusive) of the readable part of {@link #block}, relative to this input. */
     private long blockEnd;
 
-    BufferPoolIndexInput(String resourceDescription, Path file, long fileId, FileChannel channel, BlockCache cache) throws IOException {
+    /** @param readSize bytes read per miss, {@link BlockCache#randomReadSize()} or {@link BlockCache#sequentialReadSize()} */
+    BufferPoolIndexInput(String resourceDescription, Path file, long fileId, FileChannel channel, BlockCache cache, int readSize)
+        throws IOException {
         this(
             resourceDescription,
             file,
@@ -69,6 +77,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
             channel.size(),
             0L,
             channel.size(),
+            readSize,
             false
         );
     }
@@ -83,6 +92,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         long fileLength,
         long sliceOffset,
         long length,
+        int readSize,
         boolean isClone
     ) {
         super(resourceDescription);
@@ -96,6 +106,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         this.fileLength = fileLength;
         this.sliceOffset = sliceOffset;
         this.length = length;
+        this.readSize = readSize;
         this.isClone = isClone;
     }
 
@@ -109,7 +120,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         final long blockOffset = (sliceOffset + p) & ~blockMask;
         final ByteBuffer b;
         try {
-            b = cache.getOrLoad(new BlockKey(file, fileId, blockOffset), channel, fileLength, stats);
+            b = cache.getOrLoad(new BlockKey(file, fileId, blockOffset), channel, fileLength, readSize, stats);
         } catch (ClosedChannelException e) {
             throw new AlreadyClosedException("Already closed: " + this, e);
         }
@@ -321,8 +332,32 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         return clone;
     }
 
+    /** Reads of this input from now on use the read size of {@code context}; clones made before keep theirs. */
+    @Override
+    public void updateIOContext(IOContext context) throws IOException {
+        if (closed) {
+            throw new AlreadyClosedException("Already closed: " + this);
+        }
+        readSize = cache.readSize(BufferPoolDirectory.isRandomAccess(context));
+    }
+
+    /** Read size of this input, for tests. */
+    int readSize() {
+        return readSize;
+    }
+
     @Override
     public IndexInput slice(String sliceDescription, long offset, long len) throws IOException {
+        return slice(sliceDescription, offset, len, readSize);
+    }
+
+    /** A slice whose reads use the read size of {@code context}, the way compound files open their sub-files. */
+    @Override
+    public IndexInput slice(String sliceDescription, long offset, long len, IOContext context) throws IOException {
+        return slice(sliceDescription, offset, len, cache.readSize(BufferPoolDirectory.isRandomAccess(context)));
+    }
+
+    private IndexInput slice(String sliceDescription, long offset, long len, int sliceReadSize) throws IOException {
         if (closed) {
             throw new AlreadyClosedException("Already closed: " + this);
         }
@@ -350,6 +385,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
             fileLength,
             sliceOffset + offset,
             len,
+            sliceReadSize,
             true
         );
     }

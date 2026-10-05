@@ -8,12 +8,18 @@
 
 package org.opensearch.plugin.store.bufferpool;
 
+import org.apache.lucene.store.DataAccessHint;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSLockFactory;
+import org.apache.lucene.store.FileTypeHint;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.store.MergeInfo;
 import org.apache.lucene.store.RandomAccessInput;
+import org.apache.lucene.store.ReadAdvice;
+import org.apache.lucene.tests.util.TestUtil;
+import org.apache.lucene.util.Constants;
 import org.opensearch.index.store.OpenSearchBaseDirectoryTestCase;
 
 import java.io.IOException;
@@ -21,6 +27,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Map;
 
 import static org.opensearch.plugin.store.bufferpool.BlockCache.DEFAULT_BLOCK_SIZE;
 
@@ -28,9 +35,17 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
 
     @Override
     protected Directory getDirectory(Path file) throws IOException {
-        // a cache of a few blocks exercises eviction; prefetch runs on the calling thread
-        final long maxBytes = random().nextBoolean() ? 4L * DEFAULT_BLOCK_SIZE : 64L * DEFAULT_BLOCK_SIZE;
-        return new BufferPoolDirectory(file, FSLockFactory.getDefault(), new BlockCache(maxBytes, Runnable::run));
+        // random block and read sizes; a cache of a few blocks (possibly smaller than one read window) exercises eviction;
+        // prefetch runs on the calling thread
+        final int blockSize = 1 << TestUtil.nextInt(random(), 9, 17);
+        final int randomReadSize = blockSize << TestUtil.nextInt(random(), 0, 3);
+        final int sequentialReadSize = blockSize << TestUtil.nextInt(random(), 0, 5);
+        final long maxBytes = random().nextBoolean() ? 4L * blockSize : 64L * DEFAULT_BLOCK_SIZE;
+        return new BufferPoolDirectory(
+            file,
+            FSLockFactory.getDefault(),
+            new BlockCache(maxBytes, blockSize, randomReadSize, sequentialReadSize, Runnable::run)
+        );
     }
 
     private static byte[] randomData(int size) {
@@ -149,5 +164,69 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
             }
         }
         assertEquals("closing the directory drops its blocks", 0, cache.size());
+    }
+
+    public void testReadSizeFollowsTheIOContext() throws IOException {
+        final int block = 1024;
+        final int random = 4 * block;
+        final int sequential = 32 * block;
+        final BlockCache cache = new BlockCache(1L << 26, block, random, sequential, Runnable::run);
+        final int byDefault = Constants.DEFAULT_READADVICE == ReadAdvice.RANDOM ? random : sequential;
+        final byte[] data = randomData(64 * block + 7);
+        try (Directory dir = new BufferPoolDirectory(createTempDir(), FSLockFactory.getDefault(), cache)) {
+            write(dir, "_0.fdt", data);
+            final IOContext randomContext = IOContext.DEFAULT.withHints(FileTypeHint.DATA, DataAccessHint.RANDOM);
+            final IOContext merge = IOContext.merge(new MergeInfo(10, 1000, false, 1)).withHints(DataAccessHint.RANDOM);
+            try (
+                BufferPoolIndexInput randomInput = (BufferPoolIndexInput) dir.openInput("_0.fdt", randomContext);
+                BufferPoolIndexInput defaultInput = (BufferPoolIndexInput) dir.openInput("_0.fdt", IOContext.DEFAULT);
+                BufferPoolIndexInput sequentialInput = (BufferPoolIndexInput) dir.openInput(
+                    "_0.fdt",
+                    IOContext.DEFAULT.withHints(DataAccessHint.SEQUENTIAL)
+                );
+                BufferPoolIndexInput readOnce = (BufferPoolIndexInput) dir.openInput("_0.fdt", IOContext.READONCE);
+                BufferPoolIndexInput merging = (BufferPoolIndexInput) dir.openInput("_0.fdt", merge)
+            ) {
+                assertEquals(random, randomInput.readSize());
+                assertEquals(byDefault, defaultInput.readSize());
+                assertEquals(sequential, sequentialInput.readSize());
+                assertEquals(sequential, readOnce.readSize());
+                assertEquals("merges read sequentially whatever their hints", sequential, merging.readSize());
+                // clones keep the read size; slices take the one of their context, if they have one
+                assertEquals(random, randomInput.clone().readSize());
+                assertEquals(random, ((BufferPoolIndexInput) randomInput.slice("s", 10, 100)).readSize());
+                assertEquals(sequential, ((BufferPoolIndexInput) randomInput.slice("s", 10, 100, IOContext.READONCE)).readSize());
+                assertEquals(random, ((BufferPoolIndexInput) defaultInput.slice("s", 10, 100, randomContext)).readSize());
+
+                // a random miss reads one random window, a sequential miss one sequential window
+                final BlockCache.FileStats stats = cache.statsFor("_0.fdt");
+                randomInput.seek(5L * block + 3);
+                assertEquals(data[5 * block + 3], randomInput.readByte());
+                assertEquals(Map.of((long) random, 1L), stats.readsBySize());
+                sequentialInput.seek(40L * block);
+                assertEquals(data[40 * block], sequentialInput.readByte());
+                assertEquals(Map.of((long) random, 1L, (long) sequential, 1L), stats.readsBySize());
+                assertEquals((long) random + sequential, stats.bytesRead.sum());
+
+                // the update applies to later reads of this input only
+                final BufferPoolIndexInput before = defaultInput.clone();
+                defaultInput.updateIOContext(randomContext);
+                assertEquals(random, defaultInput.readSize());
+                assertEquals(byDefault, before.readSize());
+
+                // every byte reads back the same through inputs of both read sizes
+                final byte[] a = new byte[data.length];
+                final byte[] b = new byte[data.length];
+                randomInput.seek(0);
+                randomInput.readBytes(a, 0, a.length);
+                sequentialInput.seek(0);
+                sequentialInput.readBytes(b, 0, b.length);
+                assertArrayEquals(data, a);
+                assertArrayEquals(data, b);
+                assertEquals(stats.bytesRead.sum(), stats.bytesLoaded.sum());
+                assertEquals(cache.sizeInBytes(), stats.bytesRead.sum());
+                assertEquals(data.length, cache.sizeInBytes());
+            }
+        }
     }
 }
