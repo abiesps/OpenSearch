@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Sun, 4 Oct 2026 20:30:31 -0700
+Subject: [PATCH] Find ProfileResults on the Lucene 10.5.x line
+
+Lucene main moved the JFR summary class to org.apache.lucene.gradle.plugins.java; the 10.x line keeps it in org.apache.lucene.gradle. makeIndex summarized the indexing profile with the main-only name and failed after a complete build. Use whichever class the checkout has.
+---
+ src/python/benchUtil.py   | 11 ++++++++++-
+ src/python/competition.py |  2 +-
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/src/python/benchUtil.py b/src/python/benchUtil.py
+index 1e47a75a..6787b04a 100644
+--- a/src/python/benchUtil.py
++++ b/src/python/benchUtil.py
+@@ -1969,6 +1969,15 @@ def fixupPerfOutput(s):
+   return "\n".join(linesOut)
+ 
+ 
++def profileResultsClass(checkoutPath):
++  # Lucene main moved ProfileResults to org.apache.lucene.gradle.plugins.java; the 10.x line has it in org.apache.lucene.gradle
++  base = f"{checkoutPath}/build-tools/build-infra/build/classes/java/main"
++  for name in ("org.apache.lucene.gradle.plugins.java.ProfileResults", "org.apache.lucene.gradle.ProfileResults"):
++    if os.path.exists(os.path.join(base, name.replace(".", "/") + ".class")):
++      return name
++  raise RuntimeError(f"no ProfileResults class under {base}")
++
++
+ def profilerOutput(javaCommand, jfrOutput, checkoutPath, profilerCount, profilerStackSize, desc=None):
+   profilerResults = []
+ 
+@@ -1991,7 +2000,7 @@ def profilerOutput(javaCommand, jfrOutput, checkoutPath, profilerCount, profiler
+         f"-Dtests.profile.count={profilerCount}",
+         f"-Dtests.profile.stacksize={stackSize}",
+         "-Dtests.profile.linenumbers=true",
+-        "org.apache.lucene.gradle.plugins.java.ProfileResults",
++        profileResultsClass(checkoutPath),
+         jfrOutput,
+       ]
+       print(f"profile command: {' '.join([shlex.quote(x) for x in profileCommand])}")
+diff --git a/src/python/competition.py b/src/python/competition.py
+index 3a7ec3a5..c10013a7 100644
+--- a/src/python/competition.py
++++ b/src/python/competition.py
+@@ -387,7 +387,7 @@ class Competitor:
+           f"-Dtests.profile.stacksize={size}",
+           f"-Dtests.profile.count={count}",
+           "-Dtests.profile.linenumbers=true",
+-          "org.apache.lucene.gradle.plugins.java.ProfileResults",
++          benchUtil.profileResultsClass(benchUtil.checkoutToPath(self.checkout)),
+         ]
+         + glob.glob(f"{constants.LOGS_DIR}/bench-search-{id}-{self.name}-*.jfr")
+       )
+-- 
+2.54.0 (Apple Git-157)
+

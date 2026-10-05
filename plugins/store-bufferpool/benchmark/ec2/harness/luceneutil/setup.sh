@@ -7,7 +7,7 @@
 # compatible open source license.
 #
 # Sets up luceneutil for the coldpath luceneutil branch (GENERIC-PLAN section 5) on the luceneutil host:
-#   1. luceneutil at the pin, with the coldpath patches (patches/0000-0003; 0000 makes luceneutil, which tracks
+#   1. luceneutil at the pin, with the coldpath patches (patches/0000-0004; 0000 and 0004 make luceneutil, which tracks
 #      Lucene main, compile against the Lucene 10.5.x line; see its commit message);
 #   2. two Lucene checkouts: stock = releases/lucene/10.5.1 (the fork's base) and POC = the fork at POC_COMMIT, each
 #      with a PRIVATE luceneutil copy (<checkout>/luceneutil: luceneutil compiles and runs a checkout against that
