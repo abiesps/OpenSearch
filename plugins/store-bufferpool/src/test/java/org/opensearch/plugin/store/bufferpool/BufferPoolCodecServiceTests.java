@@ -185,10 +185,26 @@ public class BufferPoolCodecServiceTests extends OpenSearchTestCase {
         // one warning per codec name that cannot split points, none for the others
         assertEquals(names.size(), written.size() + readOnly.size());
         LOGGER.info("codec names written and checked: {}; read-only (cannot write): {}", written, readOnly);
-        final long notLucene104 = names.stream().filter(n -> (stock.codec(n) instanceof Lucene104Codec) == false).count();
-        final long pointWarnings = warnings.messages.stream().filter(m -> m.contains("[points_format]")).count();
-        assertEquals(warnings.messages.toString(), notLucene104, pointWarnings);
+        // one WARN per codec name and mapping key it cannot honour, at the first flush (a read-only codec may warn before
+        // it refuses to write)
+        for (String name : names) {
+            final Codec base = stock.codec(name);
+            final String codecTag = "codec [" + name + "] ";
+            final long points = warnings.messages.stream().filter(m -> m.contains("[points_format]") && m.contains(codecTag)).count();
+            final long postings = warnings.messages.stream().filter(m -> m.contains("[postings_format]") && m.contains(codecTag)).count();
+            if (written.contains(name)) {
+                assertEquals(name + " " + warnings.messages, splits(base) ? 0 : 1, points);
+                assertEquals(name + " " + warnings.messages, PostingsFormatSelectingCodec.supports(base) ? 0 : 1, postings);
+            } else {
+                assertTrue(name + " " + warnings.messages, points <= (splits(base) ? 0 : 1) && postings <= 1);
+            }
+        }
         assertTrue(warnings.messages.stream().allMatch(m -> m.contains("field [ts_split]") || m.contains("field [kw_nav]")));
+    }
+
+    /** Whether the service writes the split points format for meta fields with {@code codec} as the index codec. */
+    private static boolean splits(Codec codec) {
+        return codec instanceof Lucene104Codec || codec instanceof Lucene104SplitPointsCodec;
     }
 
     public void testStoredFieldsModeOfTheOpenSearchNames() throws Exception {
@@ -233,7 +249,7 @@ public class BufferPoolCodecServiceTests extends OpenSearchTestCase {
     private static void assertSegment(String name, Codec base, Directory baseDir, Directory dir) throws IOException {
         final SegmentCommitInfo baseInfo = onlySegment(baseDir);
         final SegmentCommitInfo info = onlySegment(dir);
-        final boolean split = base instanceof Lucene104Codec;
+        final boolean split = splits(base);
         final boolean postings = PostingsFormatSelectingCodec.supports(base);
         assertEquals(name, split ? Lucene104SplitPointsCodec.NAME : baseInfo.info.getCodec().getName(), info.info.getCodec().getName());
         // the stored-fields codec is the requested one (best_compression keeps BEST_COMPRESSION)
