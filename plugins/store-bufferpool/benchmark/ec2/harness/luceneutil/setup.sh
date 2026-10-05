@@ -16,7 +16,8 @@
 #   4. luceneutil's wikimediumall line file (URL read from luceneutil's own initial_setup.py, not typed here),
 #      decompressed, sha256 recorded;
 #   5. localconstants.py (BASE_DIR, INDEX_DIR_BASE on EBS, LOGS_DIR, JAVA_COMMAND) and both Lucene builds;
-#   6. switches.json checked against the POC commit (gen_switches.py --check): the switch table is the fork's.
+#   6. switches.json checked against the POC commit (gen_switches.py --check, classes discovered from git in
+#      STOCK_TAG..POC_COMMIT): the switch table is the fork's.
 # Idempotent where it can be; it never deletes anything. Record its output (setup.log) in the branch results.
 #
 #   setup.sh BASE_DIR POC_COMMIT [LUCENE_FORK_URL]
@@ -128,5 +129,6 @@ for c in lucene-stock lucene-poc; do
 done
 
 # 6. the switch table is the fork's
-python3 "$HERE/gen_switches.py" --fork "$BASE/lucene-poc" --commit HEAD --check "$HERE/switches.json"
+# (the switch classes are discovered from git in $STOCK_TAG..HEAD; a class missing from the table fails the check)
+python3 "$HERE/gen_switches.py" --fork "$BASE/lucene-poc" --commit HEAD --base "$STOCK_TAG" --check "$HERE/switches.json"
 echo "== setup done"

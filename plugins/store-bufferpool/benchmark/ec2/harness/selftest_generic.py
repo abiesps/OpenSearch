@@ -463,6 +463,60 @@ def _patch_new_file(patch, path):
     return "\n".join(lines) + "\n"
 
 
+def _part_f_discovery(tmp, gen_switches):
+    """gen_switches finds the switch classes from git: a fixture repo with a base tag, then fork commits."""
+    repo = os.path.join(tmp, "fork-fixture")
+    src = os.path.join(repo, "lucene", "core", "src", "java", "org", "example")
+    os.makedirs(src)
+
+    def git(*args):
+        subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True, text=True)
+
+    def commit(msg):
+        git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg)
+    git("init", "-q")
+    stock = ("package org.example;\npublic final class Stock {\n  public static void setLimit(int v) { }\n"
+             "  public static int getLimit() { return 0; }\n  public static void setPair(int a, int b) { }\n}\n")
+    open(os.path.join(src, "Stock.java"), "w").write(stock)
+    open(os.path.join(src, "Plain.java"), "w").write("package org.example;\npublic final class Plain { }\n")
+    commit("base")
+    git("tag", "base")
+    open(os.path.join(src, "Exp.java"), "w").write(JAVA_FIXTURE.replace("org.example.exp", "org.example"))
+    # a stock class the fork changes (adds a switch), and one it changes without adding a setter
+    open(os.path.join(src, "Stock.java"), "w").write(stock.replace("}\n}", "}\n  public static void setFast(boolean v) { }\n"
+                                                                    "  public static boolean isFast() { return true; }\n}"))
+    open(os.path.join(src, "Plain.java"), "w").write("package org.example;\npublic final class Plain { int x; }\n")
+    commit("fork 1")
+    t1 = gen_switches.build(repo, "HEAD", "base")
+    check(sorted(t1["classes"]) == ["org.example.Exp", "org.example.Stock"],
+          f"(f) discovery: the added class and the changed stock class with a new setter ({sorted(t1['classes'])})")
+    check(sorted(t1["classes"]["org.example.Stock"]["setters"]) == ["setFast"],
+          "(f) discovery: only the fork's added setters of a stock class (not setLimit / setPair)")
+    check(sorted(t1["classes"]["org.example.Exp"]["setters"]) == ["setMode", "setN", "setOn", "setOrphan"],
+          "(f) discovery: every setter of a new class")
+    # a 7th class in a later POC commit: the old table no longer matches
+    open(os.path.join(src, "More.java"), "w").write("package org.example;\npublic final class More {\n"
+                                                    "  public static void setDepth(int v) { }\n"
+                                                    "  public static int getDepth() { return 1; }\n}\n")
+    commit("fork 2")
+    t2 = gen_switches.build(repo, "HEAD", "base")
+    diff = gen_switches.compare(t1, t2)
+    check(len(diff) == 1 and "org.example.More" in diff[0] and "not in the table" in diff[0],
+          f"(f) --check fails on a switch class missing from switches.json ({diff})")
+    back = gen_switches.compare(t2, t1)
+    check(back and "adds no switch" in back[0], "(f) --check fails on a table class the fork does not have")
+    # an added setter the parser cannot read stops the generation
+    open(os.path.join(src, "More.java"), "w").write("package org.example;\npublic final class More {\n"
+                                                    "  public static void setDepth(int v, int w) { }\n}\n")
+    commit("fork 3")
+    try:
+        gen_switches.build(repo, "HEAD", "base")
+        check(False, "(f) discovery: unreadable added setter stops the generation")
+    except SystemExit as e:
+        check("does not read" in str(e), f"(f) discovery: unreadable added setter stops the generation ({e})")
+
+
 def part_f(tmp, fork, fork_commit):
     import analyze_luceneutil
     import gen_switches
@@ -483,6 +537,8 @@ def part_f(tmp, fork, fork_commit):
     if fork:
         fresh = gen_switches.build(fork, fork_commit)
         check(fresh["classes"] == table["classes"], f"(f) switches.json equals a fresh generation from {fork_commit}")
+        check(gen_switches.compare(table, fresh) == [], "(f) --check: no difference")
+    _part_f_discovery(tmp, gen_switches)
     B = "org.apache.lucene.util.bkd.BKDExperiments."
     K = "org.apache.lucene.search.comparators.ComparatorExperiments."
     flag, res = sw.jvm_flag(table, {B + "setIntersectPrefetch": True, B + "setNodeBytes": "{io.sequential_bytes}",
