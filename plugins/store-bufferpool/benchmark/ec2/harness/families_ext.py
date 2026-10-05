@@ -168,7 +168,8 @@ def _text_vals(client, index, fields):
                 t = " ".join(map(str, t))
             toks = queries.TOKEN.findall(str(t or "").lower())
             docfreq.update(set(toks))
-            bigrams.update(queries.phrase_bigrams(client, index, f, t))
+            # _analyze needs one concrete index: the hit's own (http_logs discovers over logs-*)
+            bigrams.update(queries.phrase_bigrams(client, h.get("_index") or index, f, t))
         ranked = [w for w, _ in sorted(docfreq.items(), key=lambda kv: (-kv[1], kv[0]))]
         if len(ranked) < 4:
             continue
