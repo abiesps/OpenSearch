@@ -85,7 +85,7 @@ def set_field_meta(mappings, dotted, meta):
 
 
 def derive(osb_workloads, corpus, out, shards=None, replicas=0, renames=None, split_fields=None, procedure="append",
-           clients=8, bulk_size=None, params=None, store_type=None):
+           clients=8, bulk_size=None, params=None, store_type=None, index_settings=None):
     """Writes the derived workload into `out`; returns its derivation record."""
     profile = load_profile(corpus)
     wd = os.path.join(osb_workloads, profile["osb"]["workload"])
@@ -140,6 +140,11 @@ def derive(osb_workloads, corpus, out, shards=None, replicas=0, renames=None, sp
             st.pop("store.type", None)
             st["index.store.type"] = store_type
             overrides.append(f"{idx['name']}: index.store.type={store_type}")
+        # explicit index settings of a build (e.g. index.compound_format for a B index and its control, so both get
+        # the same segment structure); recorded, applied after the workload's and the default procedure's settings
+        for k, v in (index_settings or {}).items():
+            st[k] = v
+            overrides.append(f"{idx['name']}: {k}={v} (--setting)")
         for f in (split_fields or []):
             set_field_meta(body["mappings"], f, SPLIT_META)
             overrides.append(f"{idx['name']}: mapping {f} meta {json.dumps(SPLIT_META)}")
@@ -336,7 +341,7 @@ def _parse_params(items):
 def cmd_render(a):
     rec = derive(a.osb_workloads, a.corpus, a.out, a.shards, a.replicas, _parse_kv(a.rename),
                  [f for f in (a.split_fields or "").split(",") if f], a.procedure, a.clients, a.bulk_size, _parse_params(a.param),
-                 a.store_type)
+                 a.store_type, _parse_kv(a.setting))
     print(json.dumps(rec, indent=1))
 
 
@@ -414,6 +419,7 @@ def main():
     r = sub.choices["render"]
     r.add_argument("--replicas", type=int, default=0)
     r.add_argument("--rename", action="append", help="OLD=NEW index name")
+    r.add_argument("--setting", action="append", help="index setting KEY=VALUE for every index of the build (recorded)")
     r.add_argument("--store-type", help="index.store.type of every index (bufferpoolfs for a B index: the split points "
                    "format is written only for bufferpoolfs indices)")
     c = sub.choices["check"]

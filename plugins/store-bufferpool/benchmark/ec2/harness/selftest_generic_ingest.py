@@ -89,6 +89,12 @@ def part_g(osbw, tmp, check, generic):
           all(body["mappings"]["properties"][f].get("meta") == {"points_format": "Lucene90Split"}
               for f in ("pickup_datetime", "dropoff_datetime")),
           "(g) nyc_taxis: index op only, the default procedure's create-index settings, split meta, bufferpoolfs")
+    rec2 = ingest_osb.derive(osbw, "nyc_taxis", out + "-s", shards=6, store_type="bufferpoolfs",
+                             index_settings={"index.compound_format": "false"})
+    st2 = json.load(open(os.path.join(out + "-s", "index-nyc_taxis.json")))["settings"]
+    check(st2["index.compound_format"] == "false" and st2["index.codec"] == "best_compression" and
+          any("index.compound_format=false (--setting)" in o for o in rec2["overrides"]),
+          "(g) nyc_taxis: --setting adds a recorded index setting next to the workload's")
     check(rec["expected_docs"] == {"nyc_taxis_split": 165346692} and rec["known_rejected_docs"]["count"] == 1,
           "(g) nyc_taxis: expected docs = document-count, one known rejected document recorded")
     try:
