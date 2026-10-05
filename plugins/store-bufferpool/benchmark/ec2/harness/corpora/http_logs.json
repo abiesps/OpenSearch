@@ -66,5 +66,11 @@
   "corpus_base_urls": {
     "http_logs": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/http_logs"
   },
-  "corpus_base_urls_note": "the pinned workload (29dd7e1f) removed base-url in faf49bbd; the old CloudFront URL still serves the same files (sizes and line counts equal workload.json; sha256 in br-httplogs/ingest.json)"
+  "corpus_base_urls_note": "the pinned workload (29dd7e1f) removed base-url in faf49bbd; the old CloudFront URL still serves the same files (sizes and line counts equal workload.json; sha256 in br-httplogs/ingest.json)",
+  "ingest_bulk_ops": {
+    "append": [
+      "index-append"
+    ]
+  },
+  "ingest_bulk_ops_note": "the workload's append-no-conflicts-index-only procedure (used for the stock ingest) bulk-loads with index-append only; the other bulk ops add ingest pipelines, the unparsed corpus or updates"
 }

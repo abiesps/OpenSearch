@@ -62,6 +62,20 @@ def part_g(osbw, tmp, check, generic):
         body2 = json.load(open(os.path.join(out2, json.load(open(os.path.join(out2, "workload.json")))["indices"][0]["body"])))
         check(body2["settings"].get("index.store.type") == ("hybridfs" if c == "nested" else None),
               f"(g) {c}: without --store-type the workload's own store type (template parameter) is kept")
+    # http_logs (main workflow): the profile names index-append, the only bulk op of the workload's index-only procedure
+    p = json.load(open(os.path.join(here, "corpora", "http_logs.json")))
+    out = os.path.join(tmp, "ingest-http_logs-split")
+    rename = {i["name"]: i["name"].replace("logs", "logs_split", 1) for i in p["indices"]}
+    rec = ingest_osb.derive(osbw, "http_logs", out, shards=6, renames=rename, split_fields=["@timestamp"],
+                            store_type="bufferpoolfs")
+    wl = json.load(open(os.path.join(out, "workload.json")))
+    check(rec["bulk_ops"] == ["index-append"] and [c["name"] for c in wl["corpora"]] == ["http_logs"],
+          "(g) http_logs: only index-append (no pipeline, unparsed or update variants)")
+    check(rec["expected_docs"] == {rename[i["name"]]: i["document_count"] for i in p["indices"]},
+          "(g) http_logs: expected doc counts per renamed index")
+    body = json.load(open(os.path.join(out, "index-logs_split-241998.json")))
+    check(body["mappings"]["properties"]["@timestamp"].get("meta") == {"points_format": "Lucene90Split"} and
+          body["settings"]["index.store.type"] == "bufferpoolfs", "(g) http_logs: split meta and bufferpoolfs")
     try:
         ingest_osb.derive(osbw, "so", os.path.join(tmp, "ingest-bad"), split_fields=["title"])
         check(False, "(g) split meta refused on a text field")

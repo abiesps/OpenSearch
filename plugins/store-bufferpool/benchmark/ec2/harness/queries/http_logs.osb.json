@@ -509,12 +509,63 @@
  "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
  "profile": {
   "corpus": "http_logs",
-  "keyword_fields": [
-   "geoip.country_name",
-   "geoip.city_name",
-   "request.raw"
+  "corpus_base_urls": {
+   "http_logs": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/http_logs"
+  },
+  "corpus_base_urls_note": "the pinned workload (29dd7e1f) removed base-url in faf49bbd; the old CloudFront URL still serves the same files (sizes and line counts equal workload.json; sha256 in br-httplogs/ingest.json)",
+  "indices": [
+   {
+    "document_count": 2708746,
+    "name": "logs-181998",
+    "workload_default_shards": 5
+   },
+   {
+    "document_count": 9697882,
+    "name": "logs-191998",
+    "workload_default_shards": 5
+   },
+   {
+    "document_count": 13053463,
+    "name": "logs-201998",
+    "workload_default_shards": 5
+   },
+   {
+    "document_count": 17647279,
+    "name": "logs-211998",
+    "workload_default_shards": 5
+   },
+   {
+    "document_count": 10716760,
+    "name": "logs-221998",
+    "workload_default_shards": 5
+   },
+   {
+    "document_count": 11961342,
+    "name": "logs-231998",
+    "workload_default_shards": 5
+   },
+   {
+    "document_count": 181463624,
+    "name": "logs-241998",
+    "workload_default_shards": 5
+   },
+   {
+    "document_count": 0,
+    "name": "reindexed-logs",
+    "workload_default_shards": 5
+   }
   ],
-  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
+  "ingest_bulk_ops": {
+   "append": [
+    "index-append"
+   ]
+  },
+  "ingest_bulk_ops_note": "the workload's append-no-conflicts-index-only procedure (used for the stock ingest) bulk-loads with index-append only; the other bulk ops add ingest pipelines, the unparsed corpus or updates",
+  "keyword_fields": [
+   "request.raw",
+   "clientip"
+  ],
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules). The mapping has geoip.country_name / geoip.city_name keywords, but no document of the OSB http_logs corpus fills them (cardinality 0 on all 247,249,096 docs), so they cannot drive term or aggregation ops. The keyword role is held by request.raw (keyword, about 60,600 values) and clientip (ip, about 1.15 million values): an ip field keeps sorted-set doc values like a keyword (terms, cardinality, composite, sort), while its term query runs on points.",
   "numeric_fields": [
    "status",
    "size"

@@ -96,7 +96,15 @@ def derive(osb_workloads, corpus, out, shards=None, replicas=0, renames=None, sp
     for rel in osb_import_ext.ops_files(wd, {"ops_files": ["operations/*.json"]}):
         items += osb_import_ext.render_items(wd, rel, params)
     bulk = [o for o in items if o.get("operation-type") == "bulk"]
-    if procedure == "update":
+    # a profile can name the bulk ops of a procedure when the workload has several append variants (http_logs: ingest
+    # pipelines and an unparsed corpus besides index-append, which its own index-only procedure uses)
+    named = (profile.get("ingest_bulk_ops") or {}).get(procedure)
+    if named:
+        chosen = [o for o in bulk if o["name"] in named]
+        if sorted(o["name"] for o in chosen) != sorted(named):
+            raise RuntimeError(f"{corpus}: profile ingest_bulk_ops {named} not all bulk ops of the workload "
+                               f"({[o['name'] for o in bulk]})")
+    elif procedure == "update":
         chosen = [o for o in bulk if o["name"] == "index-update"]
         if not chosen:
             raise RuntimeError(f"{corpus}: no index-update op (only {[o['name'] for o in bulk]})")
