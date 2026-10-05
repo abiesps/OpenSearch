@@ -725,6 +725,7 @@ def part_f(tmp, fork, fork_commit):
     check([x["storage"] for x in s2["arms"]] == ["EBS", "EFS", "EFS", "EBS"] and s2["storage"] == "EBS,EFS"
           and s2["arms"][1]["storage_spec"]["index_dir_base"] == cfg["storages"]["EFS"]["index_dir_base"],
           "(f) driver: per-arm storage from the label, default --storage")
+    check(s2["cold_protocol"] == "jit-warm" and s["cold_protocol"] is None, "(f) driver: strict cold is jit-warm, warm has none")
     check("cold_jvm_count" in open(d2).read() and "/cache/drop?pageout=0" in open(d2).read(),
           "(f) driver: cold JVM count read; cold-luceneutil drops through the agent")
     # luceneutil's comparison reads the JVM runs from the manifest (a driver that kept them only in memory lost them)
@@ -794,7 +795,7 @@ def part_f(tmp, fork, fork_commit):
             f.write(json.dumps(m) + "\n")
     analyze_luceneutil.convert(bad, os.path.join(bad, "coldbench"))
     runs = [json.loads(l) for l in open(os.path.join(bad, "coldbench", "samples.jsonl")) if '"type": "run"' in l]
-    gap = [r for r in runs if r["run_id"] == "L2-A#r0"]
+    gap = [r for r in runs if r["label"] == "L2-A" and r["run_id"].endswith("#r0")]
     check(gap and gap[0]["available"] is False, "(f) missing switch read-back makes the JVM run a gap")
 
 

@@ -142,8 +142,10 @@ def cold_protocols(data, skip):
     (common-rules DECISION "cold means data-cold on a JIT-warm JVM").
     """
     seen = {}
+    # only runs that measured cold samples have a cold protocol (a warm-only session's runs have none)
+    cold_runs = {k[2] for k in data.samples if k[0] == "cold"}
     for r in data.runs.values():
-        if r.get("available", True):
+        if r.get("available", True) and (not cold_runs or r["run_id"] in cold_runs):
             p = r.get("cold_protocol", "jit-cold") + (f"/skip-iter{skip}" if skip else "")
             seen.setdefault(p, set()).add(r["label"])
     if len(seen) > 1:

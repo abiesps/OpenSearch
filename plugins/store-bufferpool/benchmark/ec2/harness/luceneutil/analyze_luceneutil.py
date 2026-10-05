@@ -84,8 +84,11 @@ def convert(session_dir, out_dir, reference=None):
     counts = collections.Counter()
     for m, res in parsed:
         label = m["label"]
-        run_id = f"{label}#r{m['iter']}"
+        # the session id keeps run ids of a warm and a cold session (analysed together) apart
+        run_id = f"{label}#{session.get('id', 's')}#r{m['iter']}"
         run = {"arm": m["arm"], "label": label, "round": m["iter"], "run_id": run_id}
+        if session.get("cold_protocol"):
+            run["cold_protocol"] = session["cold_protocol"]
         stdout = open(m["stdout"], errors="replace").read() if os.path.exists(m.get("stdout") or "") else ""
         try:
             readbacks = sw.parse_readbacks(stdout)

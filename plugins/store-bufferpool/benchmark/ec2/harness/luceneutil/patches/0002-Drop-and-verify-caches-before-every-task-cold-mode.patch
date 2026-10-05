@@ -1,21 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: coldpath <coldpath@localhost>
-Date: Sun, 4 Oct 2026 22:26:31 -0700
+Date: Mon, 5 Oct 2026 04:10:32 -0700
 Subject: [PATCH 2/3] Drop and verify caches before every task (cold mode)
 
 ---
- src/main/perf/ColdpathCold.java   | 139 ++++++++++++++++++++++++++++++
+ src/main/perf/ColdpathCold.java   | 161 ++++++++++++++++++++++++++++++
  src/main/perf/SearchPerfTest.java |   3 +
- src/main/perf/TaskThreads.java    |   9 ++
- 3 files changed, 151 insertions(+)
+ src/main/perf/TaskThreads.java    |  14 +++
+ 3 files changed, 178 insertions(+)
  create mode 100644 src/main/perf/ColdpathCold.java
 
 diff --git a/src/main/perf/ColdpathCold.java b/src/main/perf/ColdpathCold.java
 new file mode 100644
-index 00000000..2facbe15
+index 00000000..03913a1f
 --- /dev/null
 +++ b/src/main/perf/ColdpathCold.java
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,161 @@
 +package perf;
 +
 +/**
@@ -118,6 +118,28 @@ index 00000000..2facbe15
 +    return URLEncoder.encode(v, StandardCharsets.UTF_8);
 +  }
 +
++  /**
++   * JIT warm-up of the cold protocol: runs a clone of every distinct task (by its toString(), the TASK line) once on
++   * the search executor, in the order of the task list, without timing or logging it. Prints one COLDPATH line.
++   */
++  public static void jitWarmup(java.util.List<Task> all, IndexState state, TaskParser parser, java.util.concurrent.ExecutorService executor)
++      throws Exception {
++    java.util.LinkedHashMap<String, Task> distinct = new java.util.LinkedHashMap<>();
++    for (Task t : all) {
++      distinct.putIfAbsent(t.toString(), t);
++    }
++    long t0 = System.nanoTime();
++    for (Task t : distinct.values()) {
++      final Task w = t.clone();
++      executor.submit(() -> {
++        w.go(state, parser);
++        return null;
++      }).get();
++    }
++    System.out.println("COLDPATH jit warm-up: " + distinct.size() + " distinct tasks of " + all.size() + " ran once, unmeasured, in "
++        + ((System.nanoTime() - t0) / 1000000L) + " ms");
++  }
++
 +  /** Drops the caches and verifies them, before the task starts (not timed). */
 +  public static synchronized void beforeTask(Task task) throws IOException {
 +    init();
@@ -137,7 +159,7 @@ index 00000000..2facbe15
 +    long tolerance = Long.getLong("coldpath.cold.residencyTolerance", 0L);
 +    boolean ok = preResident >= 0 && preResident <= tolerance;
 +    log.println("{\"n\":" + (count++) + ",\"category\":" + json(task.getCategory()) + ",\"task\":" + json(task.toString())
-+        + ",\"run_ms\":" + (task.runTimeNanos / 1e6) + ",\"resident_bytes\":" + preResident + ",\"cold_ok\":" + ok
++        + ",\"run_ms\":" + (task.runTimeNanos / 1e6) + ",\"resident_bytes\":" + preResident + ",\"cold_ok\":" + ok + ",\"cold_protocol\":\"jit-warm\""
 +        + ",\"drop\":" + preDrop + ",\"residency\":" + preResidency + ",\"pre\":" + preSnapshot + ",\"post\":" + post + "}");
 +  }
 +
@@ -170,10 +192,22 @@ index 8917d61c..47aa0d8f 100755
      final boolean printHeap = args.getFlag("-printHeap");
      final boolean doPKLookup = args.getFlag("-pk");
 diff --git a/src/main/perf/TaskThreads.java b/src/main/perf/TaskThreads.java
-index 16509654..5ad84e08 100644
+index 16509654..f579aa03 100644
 --- a/src/main/perf/TaskThreads.java
 +++ b/src/main/perf/TaskThreads.java
-@@ -153,7 +153,16 @@ public class TaskThreads {
+@@ -135,6 +135,11 @@ public class TaskThreads {
+       }
+ 
+       try {
++        if (ColdpathCold.enabled()) {
++          // coldpath harness: data-cold on a JIT-warm JVM - every distinct task runs once, unmeasured and not logged,
++          // before the cold block; the first cold task's drop then evicts every page this pass read
++          ColdpathCold.jitWarmup(tasks.getAllTasks(), indexState, taskParser, executor);
++        }
+         while (stop.get() == false) {
+           final Task task = tasks.nextTask();
+           if (task == null) {
+@@ -153,7 +158,16 @@ public class TaskThreads {
            // each time.  or, could we somehow "fix this in post"?  are there dedup
            // tools/regexps/something?  Java mission control somehow dedups these
            // annoyingly named anon lambdas...

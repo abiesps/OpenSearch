@@ -103,7 +103,10 @@ def plan(cfg, table, mode, tasks, storage, labels, out, iter_offset=0):
                "storage_spec": {s: cfg["storages"][s] for s in storages}, "labels": labels, "arms": arms,
                "competition": comp, "luceneutil": cfg["luceneutil"], "params": params, "data": cfg.get("data", "wikimediumall"),
                "switches_fork_commit": table.get("fork_commit"), "id": os.path.basename(os.path.abspath(out)),
-               "iter_offset": iter_offset}
+               "iter_offset": iter_offset,
+               # cold-strict: every task runs once, unmeasured, before the cold block of each JVM (patch 0002);
+               # cold-luceneutil is luceneutil's own definition (the first instance after a cold JVM start): jit-cold
+               "cold_protocol": {"cold-strict": "jit-warm", "cold-luceneutil": "jit-cold"}.get(mode)}
     driver = os.path.join(out, "driver.py")
     with open(driver, "w") as f:
         f.write(DRIVER.replace("@SESSION@", repr(json.dumps(session))).replace("@OUT@", repr(os.path.abspath(out))))
