@@ -1,0 +1,41 @@
+{
+ "_doc": "Single-shard >= 30 GB copies (1 primary, 0 replicas), used with coldbench --indices this-file and the SAME arms file. Build with indexprep.py single-shard, force-merge to a fixed count (forcemerge), and the 1-segment variant with clone --segments 1 (a second indices file whose names point at the *_1seg copies). Set segments_per_shard to the recorded count.",
+ "indices": {
+  "stock_ebs": {
+   "name": "big5_1s",
+   "storage": "EBS",
+   "format": "stock",
+   "segments_per_shard": 10,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  },
+  "split_ebs": {
+   "name": "big5_split_1s",
+   "storage": "EBS",
+   "format": "split BKD",
+   "segments_per_shard": 10,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  },
+  "stock_efs": {
+   "name": "big5_1s",
+   "storage": "EFS",
+   "format": "stock",
+   "segments_per_shard": 10,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  },
+  "split_efs": {
+   "name": "big5_split_1s",
+   "storage": "EFS",
+   "format": "split BKD",
+   "segments_per_shard": 10,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  }
+ }
+}

@@ -1,0 +1,30 @@
+{
+  "corpus": "big5",
+  "time_field": "@timestamp",
+  "keyword_fields": [
+    "process.name",
+    "cloud.region",
+    "log.file.path",
+    "aws.cloudwatch.log_stream",
+    "agent.name"
+  ],
+  "numeric_fields": [
+    "metrics.size",
+    "metrics.tmin"
+  ],
+  "text_fields": [
+    "message"
+  ],
+  "osb": {
+    "workload": "big5",
+    "ops_files": [
+      "operations/default.json"
+    ],
+    "params": {}
+  },
+  "reference_op": "gen:range_@timestamp_1d",
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
+  "date_fields": [
+    "event.ingested"
+  ]
+}

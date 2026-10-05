@@ -1,0 +1,237 @@
+{
+ "corpus": "pmc",
+ "families": [
+  "agg:date_histogram",
+  "keyword:term",
+  "scroll",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "text:phrase"
+ ],
+ "missing_families": [
+  "keyword:terms",
+  "text:match",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [],
+   "name": "osb:match-all",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "term": {
+      "body": "physician"
+     }
+    }
+   },
+   "families": [
+    "keyword:term"
+   ],
+   "name": "osb:term",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_phrase": {
+      "body": "newspaper coverage"
+     }
+    }
+   },
+   "families": [
+    "text:phrase"
+   ],
+   "name": "osb:phrase",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "articles_over_time": {
+      "date_histogram": {
+       "calendar_interval": "month",
+       "field": "timestamp"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram"
+   ],
+   "name": "osb:articles_monthly_agg_uncached",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "articles_over_time": {
+      "date_histogram": {
+       "calendar_interval": "month",
+       "field": "timestamp"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram"
+   ],
+   "name": "osb:articles_monthly_agg_cached",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [
+    "scroll"
+   ],
+   "name": "osb:scroll",
+   "page_size": 100,
+   "pages": 25,
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "scroll"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "timestamp": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:date_asc"
+   ],
+   "name": "osb:asc_sort_timestamp",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "timestamp": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:date_desc"
+   ],
+   "name": "osb:desc_sort_timestamp",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "pmid": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:asc_sort_pmid",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "pmid": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:desc_sort_pmid",
+   "params": {},
+   "source": "osb:pmc/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "pmc",
+  "keyword_fields": [
+   "name",
+   "accession"
+  ],
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
+  "numeric_fields": [
+   "pmid"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/default.json"
+   ],
+   "params": {},
+   "workload": "pmc"
+  },
+  "reference_op": "gen:range_timestamp_1d",
+  "text_fields": [
+   "body",
+   "journal"
+  ],
+  "time_field": "timestamp"
+ },
+ "reference_op": "gen:range_timestamp_1d",
+ "values": null
+}

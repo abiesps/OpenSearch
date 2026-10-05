@@ -1,0 +1,550 @@
+{
+ "corpus": "nyc_taxis",
+ "families": [
+  "agg:date_histogram",
+  "agg:stats",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "bool:filter",
+  "sort:numeric_asc",
+  "sort:numeric_desc"
+ ],
+ "missing_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:must_not",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [],
+   "name": "osb:match-all",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "total_amount": {
+       "gte": 5,
+       "lt": 15
+      }
+     }
+    }
+   },
+   "families": [
+    "bkd:range_numeric"
+   ],
+   "name": "osb:range",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "distance_histo": {
+      "aggs": {
+       "total_amount_stats": {
+        "stats": {
+         "field": "total_amount"
+        }
+       }
+      },
+      "histogram": {
+       "field": "trip_distance",
+       "interval": 1
+      }
+     }
+    },
+    "query": {
+     "bool": {
+      "filter": {
+       "range": {
+        "trip_distance": {
+         "gte": 0,
+         "lt": 50
+        }
+       }
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "bkd:range_numeric",
+    "bool:filter"
+   ],
+   "name": "osb:distance_amount_agg",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "auto_date_histogram": {
+       "buckets": 20,
+       "field": "dropoff_datetime"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "format": "dd/MM/yyyy",
+       "gte": "01/01/2015",
+       "lte": "21/01/2015"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:autohisto_agg",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "date_histogram": {
+       "calendar_interval": "day",
+       "field": "dropoff_datetime"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "format": "dd/MM/yyyy",
+       "gte": "01/01/2015",
+       "lte": "21/01/2015"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:date_histogram_agg",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "date_histogram": {
+       "calendar_interval": "month",
+       "field": "dropoff_datetime"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:date_histogram_calendar_interval",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "date_histogram": {
+       "calendar_interval": "month",
+       "field": "dropoff_datetime",
+       "time_zone": "America/New_York"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:date_histogram_calendar_interval_with_tz",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "date_histogram": {
+       "field": "dropoff_datetime",
+       "fixed_interval": "60d"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:date_histogram_fixed_interval",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "date_histogram": {
+       "field": "dropoff_datetime",
+       "fixed_interval": "60d",
+       "time_zone": "America/New_York"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:date_histogram_fixed_interval_with_tz",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "aggs": {
+       "tip_amount": {
+        "stats": {
+         "field": "tip_amount"
+        }
+       },
+       "total_amount": {
+        "stats": {
+         "field": "total_amount"
+        }
+       },
+       "trip_distance": {
+        "stats": {
+         "field": "trip_distance"
+        }
+       }
+      },
+      "date_histogram": {
+       "field": "dropoff_datetime",
+       "fixed_interval": "60d"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:stats",
+    "bkd:range_date"
+   ],
+   "name": "osb:date_histogram_fixed_interval_with_metrics",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "auto_date_histogram": {
+       "buckets": "12",
+       "field": "dropoff_datetime"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:auto_date_histogram",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "auto_date_histogram": {
+       "buckets": "13",
+       "field": "dropoff_datetime",
+       "time_zone": "America/New_York"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:auto_date_histogram_with_tz",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "dropoffs_over_time": {
+      "aggs": {
+       "tip_amount": {
+        "stats": {
+         "field": "tip_amount"
+        }
+       },
+       "total_amount": {
+        "stats": {
+         "field": "total_amount"
+        }
+       },
+       "trip_distance": {
+        "stats": {
+         "field": "trip_distance"
+        }
+       }
+      },
+      "auto_date_histogram": {
+       "buckets": "12",
+       "field": "dropoff_datetime"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "dropoff_datetime": {
+       "gte": "2015-01-01 00:00:00",
+       "lt": "2016-01-01 00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:stats",
+    "bkd:range_date"
+   ],
+   "name": "osb:auto_date_histogram_with_metrics",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "tip_amount": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:desc_sort_tip_amount",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "tip_amount": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:asc_sort_tip_amount",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "passenger_count": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:desc_sort_passenger_count",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "passenger_count": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:asc_sort_passenger_count",
+   "params": {},
+   "source": "osb:nyc_taxis/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "nyc_taxis",
+  "date_fields": [
+   "dropoff_datetime"
+  ],
+  "keyword_fields": [
+   "payment_type",
+   "vendor_id",
+   "rate_code_id",
+   "store_and_fwd_flag",
+   "trip_type",
+   "cab_color"
+  ],
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
+  "numeric_fields": [
+   "total_amount",
+   "trip_distance",
+   "passenger_count",
+   "tip_amount"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/default.json"
+   ],
+   "params": {},
+   "workload": "nyc_taxis"
+  },
+  "reference_op": "gen:range_pickup_datetime_1d",
+  "text_fields": [
+   "vendor_name"
+  ],
+  "time_field": "pickup_datetime"
+ },
+ "reference_op": "gen:range_pickup_datetime_1d",
+ "values": null
+}

@@ -1,0 +1,24 @@
+{
+  "corpus": "pmc",
+  "time_field": "timestamp",
+  "keyword_fields": [
+    "name",
+    "accession"
+  ],
+  "numeric_fields": [
+    "pmid"
+  ],
+  "text_fields": [
+    "body",
+    "journal"
+  ],
+  "osb": {
+    "workload": "pmc",
+    "ops_files": [
+      "operations/default.json"
+    ],
+    "params": {}
+  },
+  "reference_op": "gen:range_timestamp_1d",
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)"
+}

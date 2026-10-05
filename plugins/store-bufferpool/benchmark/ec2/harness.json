@@ -1,0 +1,41 @@
+{
+  "repo": "https://github.com/abiesps/OpenSearch.git",
+  "branch": "ec2-bench",
+  "path": "plugins/store-bufferpool/benchmark/ec2/harness",
+  "python": "load generator: python3 >= 3.8 stdlib (jinja2 only for queries.py OSB rendering, installed with opensearch-benchmark); data node agent: python3 stdlib, root",
+  "selftest": "python3 harness/selftest.py [--osb-bin opensearch-benchmark]",
+  "data_node_agent": {
+    "install": "copy harness/agent/coldpath_agent.py to /opt/coldpath/; write /etc/coldpath-agent/agent.json from harness/agent/agent.example.json (one arm per binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS with data_path and start/stop argv); umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token; install harness/agent/coldpath-agent.service; systemctl enable --now coldpath-agent",
+    "port": 9700,
+    "auth": "header X-Coldpath-Token; allow the port only from the load generator security group",
+    "endpoints": ["GET /health", "POST /cache/drop?pageout=1&arm=A", "GET /cache/residency?arm=A&uuids=U", "GET /snapshot?arm=A", "GET /host?arm=A", "GET /index/du?arm=A&uuids=U", "POST /readahead?arm=A&kb=N|default", "POST /trace/nfs/_start", "POST /trace/nfs/_stop", "GET /node/status", "POST /node/stop", "POST /node/restart {arm}"]
+  },
+  "entrypoints": {
+    "build_ops": "python3 harness/queries.py build --corpus {big5|nyc_taxis|http_logs|pmc} --osb-workloads <opensearch-benchmark-workloads checkout> --osb-commit <sha> --url http://DATA:9200 --index <stock index> --out ops/<corpus>.json --check-coverage   (once per corpus after ingest, BEFORE any measurement; the file is the pre-registered op set)",
+    "check_ops": "python3 harness/queries.py check --ops ops/<corpus>.json --url http://DATA:9200 --index <index>",
+    "prepare_single_shard": "python3 harness/indexprep.py single-shard --url http://DATA:9200 --source <index> --target <index>_1s [--range-gte .. --range-lt ..] --min-size-gb 30; indexprep.py forcemerge --index <index>_1s --segments N; indexprep.py clone --source <index>_1s --target <index>_1s_1seg --segments 1; indexprep.py describe --index X --agent http://DATA:9700 --token-file TOKEN --agent-arm S0-EBS",
+    "aa_run": "python3 harness/coldbench.py run --arms arms.json --ops ops/<corpus>.json --arm-list S0-EBS@a,S0-EBS@b,S1-EFS@a,S1-EFS@b --rounds 5 --modes cold,warm --url http://DATA:9200 --agent http://DATA:9700 --token-file TOKEN --read-ahead-kb 128 --nfs-trace --executor {replay|osb} --out results/<corpus>/aa-1",
+    "cold_and_warm_run": "python3 harness/coldbench.py run --arms arms.json --ops ops/<corpus>.json --arm-list S0-EBS,S0-EFS,S1-EFS,S2-CORE-EFS,S2-CORE+PLANNER-EFS --rounds 5 --modes cold,warm --cold-iters 3 --warm-warmup 5 --warm-iters 10 --order abba --url http://DATA:9200 --agent http://DATA:9700 --token-file TOKEN --read-ahead-kb 128 --nfs-trace --executor {replay|osb} --out results/<corpus>/session-1",
+    "cold_only_run": "same as cold_and_warm_run with --modes cold",
+    "warm_only_run": "same as cold_and_warm_run with --modes warm",
+    "attribution_run": "same as cold_and_warm_run with --arm-list S1-EFS,S2-<x>-EFS (one change on vs S1-EFS)",
+    "concurrent_run": "same as cold_and_warm_run with --modes ccold,cwarm --clients 4|8 --concurrent-batches 20 --concurrent-seconds 120",
+    "single_shard_run": "any run above plus --indices harness/indices.single-shard.example.json (or indices.single-shard-1seg.example.json), edited to the built index names and segment counts",
+    "probe": "python3 harness/coldbench.py probe --arms arms.json --ops ops/<corpus>.json --arm S1-EFS --op <op name> --url ... --agent ... --token-file ...   (one verified cold iteration on the running node, printed in full)",
+    "plan": "python3 harness/coldbench.py plan --ops ops/<corpus>.json --arm-list ... --rounds 5   (expected session time)",
+    "analysis": "python3 harness/analyze.py results/<corpus>/aa-1 results/<corpus>/session-1 [...] --base S1-EFS --aa S1-EFS@a,S1-EFS@b --ni-ref S0-EBS,S0-EBS@a,S0-EBS@b --ni-aa S0-EBS@a,S0-EBS@b --ni-target S2-CORE-EFS,S2-CORE+PLANNER-EFS --out results/<corpus>/analysis   (writes report.md and analysis.json; --no-id-compare when arms query different indices whose _id differ)"
+  },
+  "inputs": {
+    "arms": "harness/arms.example.json: copy and set the [indices] names, shards, segments_per_shard, docs; base_switches; per-arm switches (S2-E8 parameter name, ORPF/TOPK block counts) from the final POC report; the 'outcome' block gives the analysis defaults",
+    "corpora": "harness/corpora/<corpus>.json (field roles); harness/queries/<corpus>.osb.json are the rendered OSB search ops at opensearch-benchmark-workloads 29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f, for review"
+  },
+  "outputs": {
+    "session": "<out>/samples.jsonl (records: session, run, sample, result, batch, osb_summary, run_end) and <out>/session.log; osb executor also <out>/osb/<run>-<mode>/ (derived workload, OSB log, OSB results csv)",
+    "analysis": "<out>/report.md and <out>/analysis.json"
+  },
+  "gaps": [
+    "store-bufferpool reads exactly one cache block per miss (BlockCache.load reads blockSize bytes; prefetch issues one read per missing block); there is no setting for an IO size larger than the block size and the directory ignores IOContext/ReadAdvice. 8 KiB blocks with 32 KiB random / 128 KiB sequential reads need a plugin change on ec2-bench (settings: block size, random IO size, sequential IO size) and a rebuild.",
+    "prefetched_not_read is not exported by /_bufferpool/stats (only by the bufferpool trace).",
+    "EFS server-side cache cannot be cleared from the client (same for every EFS arm)."
+  ]
+}

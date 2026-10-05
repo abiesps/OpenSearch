@@ -1,0 +1,1494 @@
+{
+ "corpus": "big5",
+ "families": [
+  "agg:cardinality",
+  "agg:composite",
+  "agg:date_histogram",
+  "agg:range",
+  "agg:significant_terms",
+  "agg:stats",
+  "agg:terms",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "bool:must",
+  "bool:should",
+  "collapse",
+  "keyword:term",
+  "keyword:terms",
+  "scroll",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:keyword",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:search_after",
+  "text:match",
+  "text:query_string"
+ ],
+ "missing_families": [
+  "text:phrase",
+  "text:multi_match",
+  "bool:filter",
+  "bool:must_not"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [],
+   "name": "osb:match-all",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "term": {
+      "log.file.path": {
+       "value": "/var/log/messages/birdknight"
+      }
+     }
+    }
+   },
+   "families": [
+    "keyword:term"
+   ],
+   "name": "osb:term",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-01T00:00:00",
+       "lt": "2023-01-03T00:00:00"
+      }
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date"
+   ],
+   "name": "osb:range",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "metrics.size": {
+       "gte": 20,
+       "lte": 200
+      }
+     }
+    }
+   },
+   "families": [
+    "bkd:range_numeric"
+   ],
+   "name": "osb:range-numeric",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "range": {
+         "@timestamp": {
+          "gte": "2023-01-01T00:00:00",
+          "lt": "2023-01-03T00:00:00"
+         }
+        }
+       },
+       {
+        "match": {
+         "process.name": "kernel"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "text:match"
+   ],
+   "name": "osb:keyword-in-range",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "by_hour": {
+      "date_histogram": {
+       "calendar_interval": "hour",
+       "field": "@timestamp"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram"
+   ],
+   "name": "osb:date_histogram_hourly_agg",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "by_hour": {
+      "date_histogram": {
+       "calendar_interval": "hour",
+       "field": "@timestamp"
+      }
+     }
+    },
+    "query": {
+     "term": {
+      "process.name": "systemd"
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "keyword:term"
+   ],
+   "name": "osb:date_histogram_hourly_with_filter_agg",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "by_hour": {
+      "date_histogram": {
+       "calendar_interval": "minute",
+       "field": "@timestamp"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-01T00:00:00",
+       "lt": "2023-01-03T00:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:date_histogram_minute_agg",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [
+    "scroll"
+   ],
+   "name": "osb:scroll",
+   "page_size": 1000,
+   "pages": 25,
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "scroll"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "@timestamp": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:date_desc"
+   ],
+   "name": "osb:desc_sort_timestamp",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "search_after": [
+     "2023-01-01T23:59:58.000Z"
+    ],
+    "sort": [
+     {
+      "@timestamp": "desc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_desc",
+    "sort:search_after"
+   ],
+   "name": "osb:desc_sort_with_after_timestamp",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "@timestamp": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:date_asc"
+   ],
+   "name": "osb:asc_sort_timestamp",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "search_after": [
+     "2023-01-01T23:59:58.000Z"
+    ],
+    "sort": [
+     {
+      "@timestamp": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_asc",
+    "sort:search_after"
+   ],
+   "name": "osb:asc_sort_with_after_timestamp",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "process.name": "kernel"
+     }
+    },
+    "sort": [
+     {
+      "@timestamp": "desc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_desc",
+    "text:match"
+   ],
+   "name": "osb:desc_sort_timestamp_can_match_shortcut",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "process.name": "kernel"
+     }
+    },
+    "sort": [
+     {
+      "@timestamp": "desc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_desc",
+    "text:match"
+   ],
+   "name": "osb:desc_sort_timestamp_no_can_match_shortcut",
+   "params": {
+    "pre_filter_shard_size": "100000"
+   },
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "process.name": "kernel"
+     }
+    },
+    "sort": [
+     {
+      "@timestamp": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_asc",
+    "text:match"
+   ],
+   "name": "osb:asc_sort_timestamp_can_match_shortcut",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "process.name": "kernel"
+     }
+    },
+    "sort": [
+     {
+      "@timestamp": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_asc",
+    "text:match"
+   ],
+   "name": "osb:asc_sort_timestamp_no_can_match_shortcut",
+   "params": {
+    "pre_filter_shard_size": "100000"
+   },
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "process.name": "kernel"
+     }
+    },
+    "sort": [
+     {
+      "meta.file": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:keyword",
+    "text:match"
+   ],
+   "name": "osb:sort_keyword_can_match_shortcut",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "process.name": "kernel"
+     }
+    },
+    "sort": [
+     {
+      "meta.file": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:keyword",
+    "text:match"
+   ],
+   "name": "osb:sort_keyword_no_can_match_shortcut",
+   "params": {
+    "pre_filter_shard_size": "100000"
+   },
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "metrics.size": "desc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:sort_numeric_desc",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "metrics.size": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:sort_numeric_asc",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "log.file.path": "/var/log/messages/solarshark"
+     }
+    },
+    "sort": [
+     {
+      "metrics.size": "desc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:numeric_desc",
+    "text:match"
+   ],
+   "name": "osb:sort_numeric_desc_with_match",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "log.file.path": "/var/log/messages/solarshark"
+     }
+    },
+    "sort": [
+     {
+      "metrics.size": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:numeric_asc",
+    "text:match"
+   ],
+   "name": "osb:sort_numeric_asc_with_match",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "terms": {
+      "aggs": {
+       "significant_ips": {
+        "significant_terms": {
+         "field": "process.name"
+        }
+       }
+      },
+      "terms": {
+       "field": "aws.cloudwatch.log_stream",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-01T00:00:00",
+       "lt": "2023-01-03T00:00:00"
+      }
+     }
+    },
+    "size": 0,
+    "track_total_hits": false
+   },
+   "families": [
+    "agg:significant_terms",
+    "agg:terms",
+    "bkd:range_date",
+    "keyword:terms"
+   ],
+   "name": "osb:terms-significant-1",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "terms": {
+      "aggs": {
+       "significant_ips": {
+        "significant_terms": {
+         "field": "aws.cloudwatch.log_stream"
+        }
+       }
+      },
+      "terms": {
+       "field": "process.name",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-01T00:00:00",
+       "lt": "2023-01-03T00:00:00"
+      }
+     }
+    },
+    "size": 0,
+    "track_total_hits": false
+   },
+   "families": [
+    "agg:significant_terms",
+    "agg:terms",
+    "bkd:range_date",
+    "keyword:terms"
+   ],
+   "name": "osb:terms-significant-2",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "term": {
+         "process.name": "systemd"
+        }
+       },
+       {
+        "range": {
+         "metrics.size": {
+          "gte": 1,
+          "lte": 100
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_numeric",
+    "bool:must",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_conjunction_big_range_big_term_query",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "should": [
+       {
+        "term": {
+         "aws.cloudwatch.log_stream": "indigodagger"
+        }
+       },
+       {
+        "range": {
+         "metrics.size": {
+          "gte": 1,
+          "lte": 100
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_numeric",
+    "bool:should",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_disjunction_big_range_small_term_query",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "should": [
+       {
+        "term": {
+         "aws.cloudwatch.log_stream": "indigodagger"
+        }
+       },
+       {
+        "range": {
+         "metrics.size": {
+          "gte": 10,
+          "lte": 20
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_numeric",
+    "bool:should",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_conjunction_small_range_small_term_query",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "range": {
+         "metrics.size": {
+          "gte": 20,
+          "lte": 30
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_numeric",
+    "bool:must"
+   ],
+   "name": "osb:range_field_conjunction_small_range_big_term_query",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "auto_date_histogram": {
+         "buckets": 20,
+         "field": "@timestamp"
+        }
+       }
+      },
+      "range": {
+       "field": "metrics.size",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 100
+        },
+        {
+         "from": 100,
+         "to": 1000
+        },
+        {
+         "from": 1000,
+         "to": 2000
+        },
+        {
+         "from": 2000
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:range"
+   ],
+   "name": "osb:range-auto-date-histo",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "tavg": {
+        "avg": {
+         "field": "metrics.size"
+        }
+       },
+       "tmax": {
+        "max": {
+         "field": "metrics.size"
+        }
+       },
+       "tmin": {
+        "min": {
+         "field": "metrics.tmin"
+        }
+       },
+       "tstats": {
+        "stats": {
+         "field": "metrics.size"
+        }
+       },
+       "tsum": {
+        "sum": {
+         "field": "metrics.size"
+        }
+       }
+      },
+      "range": {
+       "field": "metrics.size",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 100
+        },
+        {
+         "from": 100,
+         "to": 1000
+        },
+        {
+         "from": 1000,
+         "to": 2000
+        },
+        {
+         "from": 2000
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:range",
+    "agg:stats"
+   ],
+   "name": "osb:range-with-metrics",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "aggs": {
+         "tavg": {
+          "avg": {
+           "field": "metrics.size"
+          }
+         },
+         "tmax": {
+          "max": {
+           "field": "metrics.size"
+          }
+         },
+         "tmin": {
+          "min": {
+           "field": "metrics.tmin"
+          }
+         }
+        },
+        "auto_date_histogram": {
+         "buckets": 10,
+         "field": "@timestamp"
+        }
+       }
+      },
+      "range": {
+       "field": "metrics.size",
+       "ranges": [
+        {
+         "to": 100
+        },
+        {
+         "from": 100,
+         "to": 1000
+        },
+        {
+         "from": 1000,
+         "to": 2000
+        },
+        {
+         "from": 2000
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:range",
+    "agg:stats"
+   ],
+   "name": "osb:range-auto-date-histo-with-metrics",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "range": {
+       "field": "metrics.size",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 100
+        },
+        {
+         "from": 100,
+         "to": 1000
+        },
+        {
+         "from": 1000,
+         "to": 2000
+        },
+        {
+         "from": 2000
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:range"
+   ],
+   "name": "osb:range-agg-1",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "range": {
+       "field": "metrics.size",
+       "ranges": [
+        {
+         "to": 100
+        },
+        {
+         "from": 100,
+         "to": 1000
+        },
+        {
+         "from": 1000,
+         "to": 2000
+        },
+        {
+         "from": 2000
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:range"
+   ],
+   "name": "osb:range-agg-2",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "important_terms": {
+      "multi_terms": {
+       "terms": [
+        {
+         "field": "process.name"
+        },
+        {
+         "field": "cloud.region"
+        }
+       ]
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-05T00:00:00",
+       "lt": "2023-01-05T05:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "keyword:terms"
+   ],
+   "name": "osb:multi_terms-keyword",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "logs": {
+      "composite": {
+       "sources": [
+        {
+         "process_name": {
+          "terms": {
+           "field": "process.name",
+           "order": "desc"
+          }
+         }
+        },
+        {
+         "cloud_region": {
+          "terms": {
+           "field": "cloud.region",
+           "order": "asc"
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-02T00:00:00",
+       "lt": "2023-01-02T10:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:composite",
+    "agg:terms",
+    "bkd:range_date",
+    "keyword:terms"
+   ],
+   "name": "osb:composite-terms",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "logs": {
+      "composite": {
+       "sources": [
+        {
+         "process_name": {
+          "terms": {
+           "field": "process.name",
+           "order": "desc"
+          }
+         }
+        },
+        {
+         "cloud_region": {
+          "terms": {
+           "field": "cloud.region",
+           "order": "asc"
+          }
+         }
+        },
+        {
+         "cloudstream": {
+          "terms": {
+           "field": "aws.cloudwatch.log_stream",
+           "order": "asc"
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-02T00:00:00",
+       "lt": "2023-01-02T10:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:composite",
+    "agg:terms",
+    "bkd:range_date",
+    "keyword:terms"
+   ],
+   "name": "osb:composite_terms-keyword",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "logs": {
+      "composite": {
+       "sources": [
+        {
+         "date": {
+          "date_histogram": {
+           "calendar_interval": "day",
+           "field": "@timestamp"
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2022-12-30T00:00:00",
+       "lt": "2023-01-07T12:00:00"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:composite",
+    "agg:date_histogram",
+    "bkd:range_date"
+   ],
+   "name": "osb:composite-date_histogram-daily",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "terms": {
+       "field": "aws.cloudwatch.log_stream",
+       "size": 500
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:keyword-terms",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "country": {
+      "terms": {
+       "field": "aws.cloudwatch.log_stream",
+       "size": 50
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:keyword-terms-low-cardinality",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "region": {
+      "cardinality": {
+       "field": "cloud.region"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:cardinality"
+   ],
+   "name": "osb:cardinality-agg-low",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "agent": {
+      "cardinality": {
+       "execution_hint": "ordinals",
+       "field": "agent.name"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:cardinality"
+   ],
+   "name": "osb:cardinality-agg-high",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "agent": {
+      "cardinality": {
+       "execution_hint": "ordinals",
+       "field": "event.id"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:cardinality"
+   ],
+   "name": "osb:cardinality-agg-high-2",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "query_string": {
+      "query": "message: monkey jackal bear"
+     }
+    }
+   },
+   "families": [
+    "text:query_string"
+   ],
+   "name": "osb:query-string-on-message",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "range": {
+         "@timestamp": {
+          "gte": "2023-01-03T00:00:00",
+          "lt": "2023-01-03T10:00:00"
+         }
+        }
+       },
+       {
+        "query_string": {
+         "query": "message: monkey jackal bear"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "text:query_string"
+   ],
+   "name": "osb:query-string-on-message-filtered",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "range": {
+         "@timestamp": {
+          "gte": "2023-01-03T00:00:00",
+          "lt": "2023-01-03T10:00:00"
+         }
+        }
+       },
+       {
+        "query_string": {
+         "query": "message: monkey jackal bear"
+        }
+       }
+      ]
+     }
+    },
+    "sort": [
+     {
+      "@timestamp": {
+       "order": "asc"
+      }
+     }
+    ]
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "sort:date_asc",
+    "text:query_string"
+   ],
+   "name": "osb:query-string-on-message-filtered-sorted-num",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-01T00:00:00",
+       "lte": "2023-01-13T00:00:00"
+      }
+     }
+    },
+    "sort": [
+     {
+      "@timestamp": "asc"
+     }
+    ]
+   },
+   "families": [
+    "bkd:range_date",
+    "sort:date_asc"
+   ],
+   "name": "osb:range_with_asc_sort",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "2023-01-01T00:00:00",
+       "lte": "2023-01-13T00:00:00"
+      }
+     }
+    },
+    "sort": [
+     {
+      "@timestamp": "desc"
+     }
+    ]
+   },
+   "families": [
+    "bkd:range_date",
+    "sort:date_desc"
+   ],
+   "name": "osb:range_with_desc_sort",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "collapse": {
+     "field": "host.name"
+    },
+    "query": {
+     "match": {
+      "message": "50-136-239-27"
+     }
+    }
+   },
+   "families": [
+    "collapse",
+    "text:match"
+   ],
+   "name": "osb:field-collapsing-high-cardinality",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "collapse": {
+     "field": "process.name"
+    },
+    "query": {
+     "match": {
+      "message": "50-136-239-27"
+     }
+    }
+   },
+   "families": [
+    "collapse",
+    "text:match"
+   ],
+   "name": "osb:field-collapsing-low-cardinality",
+   "params": {},
+   "source": "osb:big5/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "big5",
+  "date_fields": [
+   "event.ingested"
+  ],
+  "keyword_fields": [
+   "process.name",
+   "cloud.region",
+   "log.file.path",
+   "aws.cloudwatch.log_stream",
+   "agent.name"
+  ],
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
+  "numeric_fields": [
+   "metrics.size",
+   "metrics.tmin"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/default.json"
+   ],
+   "params": {},
+   "workload": "big5"
+  },
+  "reference_op": "gen:range_@timestamp_1d",
+  "text_fields": [
+   "message"
+  ],
+  "time_field": "@timestamp"
+ },
+ "reference_op": "gen:range_@timestamp_1d",
+ "values": null
+}

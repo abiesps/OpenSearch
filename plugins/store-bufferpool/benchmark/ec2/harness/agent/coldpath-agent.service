@@ -1,0 +1,18 @@
+# systemd unit for the cold-path agent on the data node.
+# Install: cp coldpath_agent.py /opt/coldpath/; cp agent.json /etc/coldpath-agent/agent.json;
+#          umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token;
+#          cp coldpath-agent.service /etc/systemd/system/; systemctl daemon-reload; systemctl enable --now coldpath-agent
+# The load generator reads the token through SSM (or from the S3 artifacts bucket, encrypted); never commit it.
+[Unit]
+Description=Cold-path benchmark agent (drop caches, residency, IO counters, node restart)
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/coldpath/coldpath_agent.py /etc/coldpath-agent/agent.json
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

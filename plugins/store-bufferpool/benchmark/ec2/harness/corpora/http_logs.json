@@ -1,0 +1,25 @@
+{
+  "corpus": "http_logs",
+  "time_field": "@timestamp",
+  "keyword_fields": [
+    "geoip.country_name",
+    "geoip.city_name",
+    "request.raw"
+  ],
+  "numeric_fields": [
+    "status",
+    "size"
+  ],
+  "text_fields": [
+    "request"
+  ],
+  "osb": {
+    "workload": "http_logs",
+    "ops_files": [
+      "operations/default.json"
+    ],
+    "params": {}
+  },
+  "reference_op": "gen:range_@timestamp_1d",
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)"
+}

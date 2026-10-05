@@ -1,0 +1,41 @@
+{
+ "_doc": "The 1-segment variant (max_num_segments=1, the laptop layout) of the single-shard >= 30 GB copies.",
+ "indices": {
+  "stock_ebs": {
+   "name": "big5_1s_1seg",
+   "storage": "EBS",
+   "format": "stock",
+   "segments_per_shard": 1,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  },
+  "split_ebs": {
+   "name": "big5_split_1s_1seg",
+   "storage": "EBS",
+   "format": "split BKD",
+   "segments_per_shard": 1,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  },
+  "stock_efs": {
+   "name": "big5_1s_1seg",
+   "storage": "EFS",
+   "format": "stock",
+   "segments_per_shard": 1,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  },
+  "split_efs": {
+   "name": "big5_split_1s_1seg",
+   "storage": "EFS",
+   "format": "split BKD",
+   "segments_per_shard": 1,
+   "shards": 1,
+   "docs": null,
+   "min_store_bytes": 32212254720
+  }
+ }
+}

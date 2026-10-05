@@ -1,0 +1,537 @@
+{
+ "corpus": "http_logs",
+ "families": [
+  "agg:date_histogram",
+  "agg:stats",
+  "agg:terms",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "bool:filter",
+  "bool:must",
+  "keyword:term",
+  "keyword:terms",
+  "scroll",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:search_after",
+  "text:match"
+ ],
+ "missing_families": [
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:should",
+  "bool:must_not",
+  "sort:keyword",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [],
+   "name": "osb:match-all",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "term": {
+      "request.raw": {
+       "value": "GET / HTTP/1.0"
+      }
+     }
+    }
+   },
+   "families": [
+    "keyword:term"
+   ],
+   "name": "osb:term",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "filter": [
+       {
+        "term": {
+         "status": 200
+        }
+       }
+      ],
+      "must": [
+       {
+        "term": {
+         "request.raw": {
+          "value": "GET / HTTP/1.0"
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bool:filter",
+    "bool:must",
+    "keyword:term"
+   ],
+   "name": "osb:multi-term-filter",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "now-10004d/d",
+       "lt": "now/d"
+      }
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date"
+   ],
+   "name": "osb:range",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "range": {
+         "@timestamp": {
+          "gte": "1998-05-01T00:00:00Z",
+          "lt": "1998-05-02T00:00:00Z"
+         }
+        }
+       },
+       {
+        "match": {
+         "status": "200"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "text:match"
+   ],
+   "name": "osb:200s-in-range",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "range": {
+         "@timestamp": {
+          "gte": "1998-05-01T00:00:00Z",
+          "lt": "1998-05-02T00:00:00Z"
+         }
+        }
+       },
+       {
+        "match": {
+         "status": "400"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "text:match"
+   ],
+   "name": "osb:400s-in-range",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "by_hour": {
+      "date_histogram": {
+       "calendar_interval": "hour",
+       "field": "@timestamp"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram"
+   ],
+   "name": "osb:hourly_agg",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "by_hour": {
+      "date_histogram": {
+       "calendar_interval": "hour",
+       "field": "@timestamp"
+      }
+     }
+    },
+    "query": {
+     "term": {
+      "status": 200
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "keyword:term"
+   ],
+   "name": "osb:hourly_agg_with_filter",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "by_hour": {
+      "date_histogram": {
+       "calendar_interval": "hour",
+       "field": "@timestamp"
+      }
+     },
+     "size_stats": {
+      "stats": {
+       "field": "size"
+      }
+     }
+    },
+    "query": {
+     "term": {
+      "status": 200
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:stats",
+    "keyword:term"
+   ],
+   "name": "osb:hourly_agg_with_filter_and_metrics",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "mterms": {
+      "multi_terms": {
+       "terms": [
+        {
+         "field": "clientip"
+        },
+        {
+         "field": "status"
+        },
+        {
+         "field": "size"
+        }
+       ]
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "@timestamp": {
+       "gte": "1998-05-03T00:00:00Z",
+       "lt": "1998-05-07T00:00:00Z"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "keyword:terms"
+   ],
+   "name": "osb:multi_term_agg",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [
+    "scroll"
+   ],
+   "name": "osb:scroll",
+   "page_size": 1000,
+   "pages": 25,
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "scroll"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "size": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:desc_sort_size",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "size": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:asc_sort_size",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "size": {
+       "gte": 20,
+       "lte": 200
+      }
+     }
+    }
+   },
+   "families": [
+    "bkd:range_numeric"
+   ],
+   "name": "osb:range_size",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "@timestamp": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:date_desc"
+   ],
+   "name": "osb:desc_sort_timestamp",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "search_after": [
+     "1998-06-10"
+    ],
+    "sort": [
+     {
+      "@timestamp": "desc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_desc",
+    "sort:search_after"
+   ],
+   "name": "osb:desc_sort_with_after_timestamp",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "@timestamp": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:date_asc"
+   ],
+   "name": "osb:asc_sort_timestamp",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "search_after": [
+     "1998-06-10"
+    ],
+    "sort": [
+     {
+      "@timestamp": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:date_asc",
+    "sort:search_after"
+   ],
+   "name": "osb:asc_sort_with_after_timestamp",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "size": {
+       "gte": 10,
+       "lte": 200
+      }
+     }
+    },
+    "size": 100,
+    "sort": [
+     {
+      "size": "desc"
+     }
+    ]
+   },
+   "families": [
+    "bkd:range_numeric",
+    "sort:numeric_desc"
+   ],
+   "name": "osb:range_with_desc_sort",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "size": {
+       "gte": 10,
+       "lte": 200
+      }
+     }
+    },
+    "size": 100,
+    "sort": [
+     {
+      "size": "asc"
+     }
+    ]
+   },
+   "families": [
+    "bkd:range_numeric",
+    "sort:numeric_asc"
+   ],
+   "name": "osb:range_with_asc_sort",
+   "params": {},
+   "source": "osb:http_logs/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "http_logs",
+  "keyword_fields": [
+   "geoip.country_name",
+   "geoip.city_name",
+   "request.raw"
+  ],
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
+  "numeric_fields": [
+   "status",
+   "size"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/default.json"
+   ],
+   "params": {},
+   "workload": "http_logs"
+  },
+  "reference_op": "gen:range_@timestamp_1d",
+  "text_fields": [
+   "request"
+  ],
+  "time_field": "@timestamp"
+ },
+ "reference_op": "gen:range_@timestamp_1d",
+ "values": null
+}

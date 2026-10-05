@@ -1,0 +1,67 @@
+{
+  "listen": "0.0.0.0",
+  "port": 9700,
+  "token_file": "/etc/coldpath-agent/token",
+  "data_path": "/data/ebs/opensearch",
+  "device": null,
+  "jvm_match": "org.opensearch.bootstrap.OpenSearch",
+  "command_timeout_s": 300,
+  "stop_timeout_s": 180,
+  "start_timeout_s": 180,
+  "stop_all": [],
+  "arms": {
+    "S0-EBS": {
+      "start": [
+        "systemctl",
+        "start",
+        "opensearch-s0-ebs"
+      ],
+      "stop": [
+        "systemctl",
+        "stop",
+        "opensearch-s0-ebs"
+      ],
+      "data_path": "/data/ebs/opensearch"
+    },
+    "S0-EFS": {
+      "start": [
+        "systemctl",
+        "start",
+        "opensearch-s0-efs"
+      ],
+      "stop": [
+        "systemctl",
+        "stop",
+        "opensearch-s0-efs"
+      ],
+      "data_path": "/mnt/efs/opensearch"
+    },
+    "POC-EBS": {
+      "start": [
+        "systemctl",
+        "start",
+        "opensearch-poc-ebs"
+      ],
+      "stop": [
+        "systemctl",
+        "stop",
+        "opensearch-poc-ebs"
+      ],
+      "data_path": "/data/ebs/opensearch"
+    },
+    "POC-EFS": {
+      "start": [
+        "systemctl",
+        "start",
+        "opensearch-poc-efs"
+      ],
+      "stop": [
+        "systemctl",
+        "stop",
+        "opensearch-poc-efs"
+      ],
+      "data_path": "/mnt/efs/opensearch"
+    }
+  },
+  "_doc": "One agent arm per binary x storage. S0-* and POC-* on the same storage share one data path (one cluster state, one copy of the stock-format index); the harness closes every index before a node stops and sets index.store.type before it opens, so S0 never sees an open bufferpoolfs or split-format index."
+}

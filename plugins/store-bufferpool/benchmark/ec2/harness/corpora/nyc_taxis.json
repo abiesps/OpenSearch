@@ -1,0 +1,33 @@
+{
+  "corpus": "nyc_taxis",
+  "time_field": "pickup_datetime",
+  "keyword_fields": [
+    "payment_type",
+    "vendor_id",
+    "rate_code_id",
+    "store_and_fwd_flag",
+    "trip_type",
+    "cab_color"
+  ],
+  "numeric_fields": [
+    "total_amount",
+    "trip_distance",
+    "passenger_count",
+    "tip_amount"
+  ],
+  "text_fields": [
+    "vendor_name"
+  ],
+  "osb": {
+    "workload": "nyc_taxis",
+    "ops_files": [
+      "operations/default.json"
+    ],
+    "params": {}
+  },
+  "reference_op": "gen:range_pickup_datetime_1d",
+  "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules)",
+  "date_fields": [
+    "dropoff_datetime"
+  ]
+}
