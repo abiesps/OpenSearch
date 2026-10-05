@@ -61,7 +61,10 @@ Endpoints (JSON in and out):
   GET  /storage/incidents?since=T&until=T  kernel log lines "nfs: server X not responding" / "nfs: server X OK"
                                      between the two epoch times (journalctl -k), as stall windows per NFS server;
                                      samples inside a window are a storage incident (the caller excludes them)
-  GET  /node/memory                  node JVM VmRSS / RssAnon (kB and % of MemTotal), MemAvailable, MALLOC_ARENA_MAX
+  GET  /node/memory                  node JVM VmRSS / RssAnon (kB and % of MemTotal), MemAvailable, MALLOC_ARENA_MAX,
+                                     and (v4) "allocator": LD_PRELOAD, MALLOC_CONF, MALLOC_ARENA_MAX of the JVM, the
+                                     libjemalloc files mapped in /proc/<pid>/maps with their sha256, name jemalloc or
+                                     glibc, and the node_allocator.sh setup record (/etc/coldpath/allocator.json)
   GET  /node/status                  running JVM pid and command line, last started arm
   POST /node/stop                    runs every configured stop command; waits until no JVM matches
   POST /node/restart  {"arm": "S1"}  stop as above, then the arm's start command; returns the new pid
@@ -91,7 +94,7 @@ import coldpath_readahead  # noqa: E402 - installed next to this file
 import coldpath_readattr  # noqa: E402 - installed next to this file
 import coldpath_efsconn  # noqa: E402 - installed next to this file
 
-VERSION = "3"
+VERSION = "4"
 PAGE = os.sysconf("SC_PAGE_SIZE")
 MADV_PAGEOUT = 21
 SYS_PIDFD_OPEN = 434  # same number on x86_64 and aarch64 (generic syscall table)
@@ -108,6 +111,39 @@ _libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_
 _libc.munmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t)
 _libc.mincore.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p)
 MAP_FAILED = ctypes.c_void_p(-1).value
+ALLOCATOR_STATE = "/etc/coldpath/allocator.json"  # written by harness/node_allocator.sh apply
+ALLOCATOR_ENV = ("LD_PRELOAD", "MALLOC_CONF", "MALLOC_ARENA_MAX")
+
+
+def allocator_info(environ, maps):
+    """
+    environ: raw /proc/<pid>/environ bytes; maps: /proc/<pid>/maps text. Returns the allocator variables (None when
+    unset), the mapped libjemalloc files, and the allocator name: "jemalloc" when a libjemalloc file is mapped, else
+    "glibc" (the C library's malloc). A preload that the dynamic loader ignored (bad path, wrong architecture) has the
+    variable but no mapping, so the name says glibc.
+    """
+    env = dict(x.split(b"=", 1) for x in environ.split(b"\0") if b"=" in x)
+    out = {k.lower(): (env[k.encode()].decode(errors="replace") if k.encode() in env else None) for k in ALLOCATOR_ENV}
+    mapped = set()
+    for line in maps.splitlines():
+        parts = line.split(None, 5)
+        if len(parts) == 6 and "libjemalloc" in os.path.basename(parts[5].strip()):
+            mapped.add(parts[5].strip())
+    out["jemalloc_mapped"] = sorted(mapped)
+    out["name"] = "jemalloc" if mapped else "glibc"
+    return out
+
+
+def _sha256_file(path):
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError as e:
+        return f"error: {e}"
+    return h.hexdigest()
 
 
 class Iovec(ctypes.Structure):
@@ -315,8 +351,42 @@ class Agent:
         pids = self.jvm_pids()
         return self.pick_jvm_pid(pids, self.unit_main_pids() if len(pids) > 1 else {}, self.jvm_match)
 
+    def node_allocator(self, pid):
+        """
+        The C memory allocator of the node JVM `pid` (common-rules: jemalloc for every node unit), read once per pid:
+        LD_PRELOAD / MALLOC_CONF / MALLOC_ARENA_MAX from /proc/<pid>/environ, the libjemalloc files mapped in
+        /proc/<pid>/maps (a preload that the loader did not honour shows as no mapping), the sha256 of each mapped
+        file, and the setup record of node_allocator.sh (ALLOCATOR_STATE). Cached by (pid, process start time).
+        """
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                start = f.read().rsplit(")", 1)[1].split()[19]
+        except OSError as e:
+            return {"error": str(e)}
+        key = (pid, start)
+        cached = getattr(self, "_allocator_cache", None)
+        if cached and cached[0] == key:
+            return cached[1]
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                environ = f.read()
+            with open(f"/proc/{pid}/maps") as f:
+                maps = f.read()
+        except OSError as e:
+            return {"error": str(e)}
+        info = allocator_info(environ, maps)
+        info["jemalloc_sha256"] = {p: _sha256_file(p) for p in info["jemalloc_mapped"]}
+        try:
+            with open(ALLOCATOR_STATE) as f:
+                info["setup"] = json.load(f)
+        except (OSError, ValueError):
+            info["setup"] = None
+        self._allocator_cache = (key, info)
+        return info
+
     def node_memory(self):
-        """Resident and anonymous memory of the node JVM against host memory, and its MALLOC_ARENA_MAX (environ)."""
+        """Resident and anonymous memory of the node JVM against host memory, its MALLOC_ARENA_MAX (environ) and its
+        allocator (node_allocator: jemalloc mapped or not, LD_PRELOAD, MALLOC_CONF)."""
         def kb(path, key):
             with open(path) as f:
                 for line in f:
@@ -334,6 +404,7 @@ class Agent:
                     env = dict(x.split(b"=", 1) for x in f.read().split(b"\0") if b"=" in x)
                 v = env.get(b"MALLOC_ARENA_MAX")
                 out["malloc_arena_max"] = v.decode() if v is not None else None
+                out["allocator"] = self.node_allocator(pid)
             except OSError as e:  # the JVM exited between the two reads
                 out["error"] = str(e)
             if total and out.get("vm_rss_kb") is not None:

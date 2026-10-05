@@ -22,6 +22,8 @@ indices are closed, so the heap, the bufferpool and the page cache hold only the
   "refuse"  stop the session.
 Names starting with "." (system and plugin indices) are never touched.
 """
+import json
+
 import indices_ext
 
 IO_DEFAULTS = {"block_size": 8192, "random_read_size": 32768, "sequential_read_size": 131072}
@@ -77,6 +79,148 @@ def check_cache_cleanup(arm_name, node_settings):
     return rec
 
 
+# ---------------------------------------------------------------- builds (USER DECISION 2026-10-05)
+# An arm's "build" names the binary its agent arm (node) runs:
+#   "baseline"  stock OpenSearch (stock Lucene) WITH the bufferpool plugin built for it (artifact baseline_bufferpool);
+#               GET /_bufferpool/stats reports build_target "stock"; it has no experiment endpoint, so it gets no
+#               base_switches and no switches
+#   "poc"       the proof-of-concept OpenSearch and Lucene fork with the same plugin (build_target "poc")
+#   "stock"     stock OpenSearch without the plugin (memory mapping): a context arm only, no verdict
+# An arm without "build" keeps the earlier meaning: bufferpool true = poc, false = stock.
+BUILDS = ("baseline", "poc", "stock")
+BUILD_TARGET = {"baseline": "stock", "poc": "poc"}
+
+
+def arm_build(arm):
+    b = arm.get("build")
+    if b is None:
+        return "poc" if arm.get("bufferpool") else "stock"
+    return b
+
+
+def validate_build(arm_name, arm):
+    """Arms-file check (load_arms): the build exists and agrees with bufferpool and switches."""
+    b = arm.get("build")
+    if b is None:
+        return
+    if b not in BUILDS:
+        raise ValueError(f"arm {arm_name}: build {b!r}: one of {list(BUILDS)}")
+    if (b == "stock") == bool(arm.get("bufferpool")):
+        raise ValueError(f"arm {arm_name}: build {b} needs bufferpool {b != 'stock'}")
+    if b == "baseline" and arm.get("switches"):
+        raise ValueError(f"arm {arm_name}: the baseline build has no experiment switches")
+
+
+def stock_binary_paths(cfg, path):
+    """Data paths of nodes that run a binary without the split points codec (stock and baseline builds)."""
+    return {path.get(a["node"]) for a in cfg["arms"].values()
+            if arm_build(a) in ("stock", "baseline") and not indices_ext.not_applicable(a) and "node" in a}
+
+
+def check_build(arm_name, arm, cfg, root, bp_stats):
+    """
+    The running node is the arm's build: GET /_bufferpool/stats build_target (baseline -> stock, poc -> poc) and, when
+    the arms file's "builds" block names one, GET / version.build_hash starts with it. Only for arms with an explicit
+    "build" (older arms files: recorded as unchecked). Returns the record; raises when the node is another build.
+    """
+    b = arm.get("build")
+    got = {"build_target": (bp_stats or {}).get("build_target"),
+           "build_hash": ((root or {}).get("version") or {}).get("build_hash"),
+           "lucene_version": ((root or {}).get("version") or {}).get("lucene_version")}
+    rec = {"build": b, "node": got, "ok": None}
+    if b is None or b == "stock":
+        return rec
+    want = dict((cfg.get("builds") or {}).get(b) or {})
+    want.setdefault("build_target", BUILD_TARGET[b])
+    rec["want"] = want
+    errors = []
+    if got["build_target"] != want["build_target"]:
+        errors.append(f"build_target {got['build_target']!r}, the {b} build reports {want['build_target']!r}")
+    if want.get("build_hash") and not str(got["build_hash"] or "").startswith(want["build_hash"]):
+        errors.append(f"build_hash {got['build_hash']!r} does not start with {want['build_hash']!r}")
+    rec["ok"] = not errors
+    if errors:
+        raise RuntimeError(f"arm {arm_name}: the node is not the {b} build ({'; '.join(errors)}); check the agent arm "
+                           f"{arm.get('node')} unit; not measuring")
+    return rec
+
+
+# ---------------------------------------------------------------- C memory allocator (jemalloc for every node unit)
+ALLOCATOR_KEYS = ("ld_preload", "malloc_conf", "malloc_arena_max")
+
+
+def want_allocator(cfg, a):
+    """
+    The allocator the session requires: --allocator (jemalloc | glibc | any) over the arms file's "allocator" block
+    {"name": "jemalloc", "ld_preload": ..., "malloc_conf": ..., "jemalloc_sha256": ...}. None = record only (older
+    arms files). For jemalloc, MALLOC_ARENA_MAX must be unset (common-rules: removed once jemalloc is in place).
+    """
+    block = dict(cfg.get("allocator") or {})
+    cli = getattr(a, "allocator", None)
+    if cli == "any":
+        return None
+    if cli and cli != block.get("name"):
+        block = {"name": cli}
+    if not block.get("name"):
+        return None
+    if block["name"] not in ("jemalloc", "glibc"):
+        raise ValueError(f"allocator {block['name']!r}: jemalloc or glibc")
+    if block["name"] == "jemalloc":
+        block.setdefault("malloc_arena_max", None)
+    return block
+
+
+def allocator_signature(alloc):
+    """What must be identical in every run of a session: name, the three variables and the mapped files' sha256."""
+    alloc = alloc or {}
+    return json.dumps({"name": alloc.get("name"), **{k: alloc.get(k) for k in ALLOCATOR_KEYS},
+                       "jemalloc_sha256": sorted((alloc.get("jemalloc_sha256") or {}).values())}, sort_keys=True)
+
+
+def check_allocator(arm_name, mem, want):
+    """
+    mem: agent GET /node/memory of the running node (v4 "allocator": read from /proc/<pid>/maps and environ). Returns
+    the record {want, node, ok}; raises when the node's allocator differs from `want` (None = record only).
+    """
+    alloc = (mem or {}).get("allocator")
+    rec = {"want": want, "node": alloc, "ok": None}
+    if want is None:
+        return rec
+    errors = []
+    if not isinstance(alloc, dict) or alloc.get("error"):
+        errors.append(f"the agent reports no allocator ({alloc!r}; agent before v4, or the JVM exited)")
+    else:
+        if alloc.get("name") != want["name"]:
+            errors.append(f"allocator {alloc.get('name')} (libjemalloc mapped: {alloc.get('jemalloc_mapped')}), want "
+                          f"{want['name']}")
+        for k in ALLOCATOR_KEYS:
+            if k in want and alloc.get(k) != want[k]:
+                errors.append(f"{k.upper()} {alloc.get(k)!r}, want {want[k]!r}")
+        if want["name"] == "glibc" and alloc.get("ld_preload"):
+            errors.append(f"LD_PRELOAD {alloc.get('ld_preload')!r} on a glibc node")
+        sha = want.get("jemalloc_sha256")
+        if sha and any(v != sha for v in (alloc.get("jemalloc_sha256") or {}).values()):
+            errors.append(f"libjemalloc sha256 {alloc.get('jemalloc_sha256')}, want {sha}")
+    rec["ok"] = not errors
+    if errors:
+        raise RuntimeError(f"arm {arm_name}: node allocator differs: {'; '.join(errors)}; write the same drop-in to every "
+                           "node unit (node_allocator.sh apply) and restart; not measuring")
+    return rec
+
+
+# bufferpool settings that must be identical in every configuration on one storage (USER DECISION: the bufferpool is
+# not a variable), from GET /_bufferpool/stats; opt-in with the arms file's "same_bufferpool_settings": true
+BP_SAME_KEYS = ("block_size", "random_read_size", "sequential_read_size", "read_hint", "prefetch_node_bytes",
+                "prefetch_task_per_window")
+BP_SAME_SCHEDULER_KEYS = ("max_in_flight", "budget_scope", "queue_size", "queue_policy")
+
+
+def bufferpool_signature(stats):
+    s = stats or {}
+    sched = s.get("prefetch_scheduler") or {}
+    return {**{k: s.get(k) for k in BP_SAME_KEYS}, **{f"prefetch_scheduler.{k}": sched.get(k) for k in BP_SAME_SCHEDULER_KEYS}}
+
+
 def poc_only(idx):
     """An [indices] entry in a format the stock binary cannot read (split BKD), or marked "poc_only": true."""
     return bool(idx.get("poc_only")) or "split" in str(idx.get("format", "")).lower()
@@ -90,8 +234,8 @@ def check_format_isolation(cfg, storages):
     uses. storages: the agent's /health "storages" (agent arm -> data_path). Raises before any run; returns the record.
     """
     path = {name: (s or {}).get("data_path") for name, s in (storages or {}).items()}
-    stock_paths = {path.get(a["node"]) for a in cfg["arms"].values()
-                   if not a.get("bufferpool") and not indices_ext.not_applicable(a) and "node" in a}
+    # the baseline build (stock OpenSearch and Lucene with the bufferpool plugin) has no split codec either
+    stock_paths = stock_binary_paths(cfg, path)
     rec = {"poc_only_indices": [], "ok": True}
     for key, idx in cfg["indices"].items():
         if not poc_only(idx):
@@ -103,7 +247,7 @@ def check_format_isolation(cfg, storages):
                 raise RuntimeError(f"indices[{key}] ({idx.get('format')}): agent arm {n} has no data path in the agent config")
             if path[n] in stock_paths:
                 raise RuntimeError(f"indices[{key}] ({idx.get('format')}) is opened by node {n} whose data path {path[n]} "
-                                   "is also a stock arm's data path: the stock binary cannot start next to it (closed "
+                                   "is also the data path of a stock or baseline build's node: that binary cannot start next to it (closed "
                                    "indices stay allocated); give the POC-only index its own agent arm and data path")
     return rec
 

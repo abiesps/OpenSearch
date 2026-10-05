@@ -476,7 +476,8 @@ class MemoryMonitor:
                     "samples": self.samples, "errors": self.errors, "max_rss_pct": round(self.max_rss_pct, 2),
                     "max_anon_pct": round(self.max_anon_pct, 2), "max_rss_kb": self.max_rss_kb, "first": self.first,
                     "last": self.last, "series": self.series, "exceeded": self.exceeded,
-                    "malloc_arena_max": (self.first or {}).get("malloc_arena_max")}
+                    "malloc_arena_max": (self.first or {}).get("malloc_arena_max"),
+                    "allocator": (self.first or {}).get("allocator")}
 
     def check(self):
         with self.lock:
@@ -498,15 +499,27 @@ NODE_START_RETRY_WAIT_S = float(os.environ.get("COLDBENCH_NODE_START_RETRY_WAIT_
 RUN_REQUEUES = 1
 
 
-def load_arms(path, indices_override=None):
-    """Arms file; --indices replaces its [indices] (e.g. the single-shard >= 30 GB copies, same arms)."""
+def load_arms(path, indices_override=None, labels=None):
+    """
+    Arms file; --indices replaces its [indices] (e.g. the single-shard >= 30 GB copies, same arms).
+    "context_arms" (USER DECISION 2026-10-05): arms kept for context only, never in an outcome verdict, for example
+    stock OpenSearch with memory mapping. They join [arms] only when a label of the session names them (labels), so a
+    session that does not ask for them sees no stock arm (no store-type reset of the shared indices to hybridfs).
+    """
     cfg = json.load(open(path))
     if indices_override:
         cfg["indices"] = json.load(open(indices_override))["indices"]
     indices_ext.normalize(cfg["indices"])
+    context = cfg.get("context_arms") or {}
+    clash = sorted(set(context) & set(cfg["arms"]))
+    if clash:
+        raise ValueError(f"arms {clash} are both in [arms] and in [context_arms]")
+    for name in sorted({parse_label(lab)[0] for lab in (labels or [])} & set(context)):
+        cfg["arms"][name] = {**context[name], "context": True}
     for name, a in cfg["arms"].items():
         if indices_ext.not_applicable(a):
             continue
+        runguards.validate_build(name, a)
         for key in ("node", "index", "open"):
             if key not in a:
                 raise ValueError(f"arm {name}: missing [{key}]")
@@ -668,8 +681,13 @@ def apply_settings(node, cfg, arm):
 
 
 def apply_switches(node, cfg, arm_name, arm):
-    """Posts the base switches (bufferpool arms) and the arm's own; checks the read-back. 400 = switch not in binary."""
-    calls = (cfg.get("base_switches", []) if arm.get("bufferpool") else []) + arm.get("switches", [])
+    """
+    Posts the base switches (bufferpool arms of the proof-of-concept build) and the arm's own; checks the read-back.
+    400 = switch not in binary. The baseline build (stock OpenSearch with the plugin) has no experiment endpoint: it gets
+    no base switches and its sort_opt state is not read (load_arms refuses switches on it).
+    """
+    baseline = runguards.arm_build(arm) == "baseline"
+    calls = (cfg.get("base_switches", []) if arm.get("bufferpool") and not baseline else []) + arm.get("switches", [])
     applied = []
     for c in calls:
         status, resp = node.os.raw(c.get("method", "POST"), c["path"])
@@ -683,7 +701,8 @@ def apply_switches(node, cfg, arm_name, arm):
         applied.append({"path": c["path"], "response": resp})
     state = {}
     if arm.get("bufferpool"):
-        state["sort_opt"] = node.os.request("GET", "/_bufferpool/sort_opt")
+        if not baseline:
+            state["sort_opt"] = node.os.request("GET", "/_bufferpool/sort_opt")
         st = node.bp_stats()
         state["bp"] = {k: v for k, v in st.items() if k != "files"}
     return applied, state
@@ -1089,7 +1108,9 @@ def schedule(labels, rounds, order, seed, offset=0):
 class Session:
     def __init__(self, a):
         self.a = a
-        self.cfg = load_arms(a.arms, a.indices)
+        labels = (a.arm_list.split(",") if getattr(a, "arm_list", None) else
+                  [a.arm] if getattr(a, "arm", None) else [])
+        self.cfg = load_arms(a.arms, a.indices, labels)
         opsfile = json.load(open(a.ops))
         self.ref = a.reference_op or opsfile["reference_op"]
         ops = opsfile["ops"]
@@ -1121,6 +1142,46 @@ class Session:
         self.isolation = (runguards.check_format_isolation(self.cfg, self.node.agent.request("GET", "/health").get("storages"))
                           if self.node.agent else None)
         self.other_indices = None
+        # C memory allocator of every node of the session (arms file "allocator", --allocator), checked at every node
+        # start; every run of a session must also match the first run's allocator exactly (allocator_signature)
+        self.want_allocator = runguards.want_allocator(self.cfg, a)
+        if self.want_allocator and not self.node.agent:
+            sys.exit("the allocator check (arms file \"allocator\" or --allocator) reads the node's /proc through "
+                     "--agent; pass --agent or --allocator any")
+        self.allocator_signature = None
+        self.bp_signatures = {}  # storage -> bufferpool settings of the first run (same_bufferpool_settings)
+
+    def check_allocator(self, arm_name):
+        """At node start: the JVM's allocator from the agent (GET /node/memory), against the session's requirement
+        and against the first run of the session. Returns the record for the run; raises otherwise."""
+        if not self.node.agent:
+            return None
+        mem = self.node.agent.request("GET", "/node/memory")
+        rec = runguards.check_allocator(arm_name, mem, self.want_allocator)
+        sig = runguards.allocator_signature(rec["node"])
+        rec["signature"] = sig
+        if self.allocator_signature is None:
+            self.allocator_signature = sig
+        elif sig != self.allocator_signature and self.want_allocator is not None:
+            raise RuntimeError(f"arm {arm_name}: node allocator {sig} differs from the session's first run "
+                               f"{self.allocator_signature}; every node unit needs the same drop-in; not measuring")
+        a = rec["node"] or {}
+        self.log(f"  allocator {a.get('name')} LD_PRELOAD={a.get('ld_preload')} MALLOC_CONF={a.get('malloc_conf')} "
+                 f"MALLOC_ARENA_MAX={a.get('malloc_arena_max')}" + ("" if self.want_allocator else " (record only)"))
+        return rec
+
+    def check_same_bufferpool(self, arm_name, arm, bp_stats):
+        """same_bufferpool_settings: every bufferpool configuration on one storage runs the same plugin settings."""
+        if not (self.cfg.get("same_bufferpool_settings") and arm.get("bufferpool")):
+            return None
+        sig = runguards.bufferpool_signature(bp_stats)
+        storage = arm.get("storage") or arm["node"]
+        first = self.bp_signatures.setdefault(storage, {"arm": arm_name, "settings": sig})
+        diff = {k: (first["settings"].get(k), v) for k, v in sig.items() if first["settings"].get(k) != v}
+        if diff:
+            raise RuntimeError(f"arm {arm_name}: bufferpool settings differ from {first['arm']} on {storage}: {diff} "
+                               "(same_bufferpool_settings: the bufferpool is not a variable); not measuring")
+        return {"storage": storage, "settings": sig, "same_as": first["arm"]}
 
     def log(self, msg):
         line = f"{time.strftime('%H:%M:%S')} {msg}"
@@ -1392,6 +1453,7 @@ class Session:
             self.storage_nfs = readahead["nfs"]
             self.log(f"  readahead {readahead['mode']}: " + ", ".join(f"{x['key']}={x['read_ahead_kb']}" for x in readahead["layers"]))
         indices = self.start_arm(arm_name, arm)
+        self.run_allocator = self.check_allocator(arm_name)
         self.mem_monitor = None
         if self.node.agent and getattr(a, "mem_limit_pct", 70.0) > 0:
             self.mem_monitor = MemoryMonitor(self.node, a.mem_interval, a.mem_limit_pct).start()
@@ -1420,6 +1482,8 @@ class Session:
             self.record(type="run", **run, available=False, reason=str(e), indices=indices)
             return
         io_config = runguards.check_io_config(arm_name, state["bp"], runguards.want_io(a)) if arm.get("bufferpool") else None
+        build = runguards.check_build(arm_name, arm, self.cfg, self.node.os.request("GET", "/"), state.get("bp"))
+        same_bp = self.check_same_bufferpool(arm_name, arm, state.get("bp"))
         cache_cleanup = None
         if any(m in a.modes.split(",") for m in ("cold", "ccold")):
             cache_cleanup = runguards.check_cache_cleanup(arm_name, node_settings(self.node))
@@ -1439,6 +1503,8 @@ class Session:
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
                     cold_protocol="jit-warm" if a.jit_warmup else "jit-cold",
                     readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
+                    build=build, allocator=getattr(self, "run_allocator", None), same_bufferpool=same_bp,
+                    context_arm=bool(arm.get("context")),
                     cache_cleanup=cache_cleanup, nfs_xprt=self.nfs_transport(arm) if it.efs else None,
                     efs_connections_target=a.efs_connections if it.efs else None, efs_precondition_start=efs_start,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
@@ -1630,6 +1696,10 @@ def add_common(p):
                         "passes this %% of host memory (agent GET /node/memory, polled every --mem-interval s); 0 = off "
                         "(common-rules BLOCKER: native memory growth)")
     p.add_argument("--mem-interval", type=float, default=10.0, help="node memory poll interval in seconds")
+    p.add_argument("--allocator", choices=["jemalloc", "glibc", "any"],
+                   help="C memory allocator every node must run with, checked at each node start from /proc/<pid>/maps "
+                        "and environ (agent v4 GET /node/memory); default: the arms file's \"allocator\" block, else "
+                        "record only; any = record only")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
     p.add_argument("--efs-connections", type=int, default=EFS_CONNECTIONS_DEFAULT,
                    help="EFS arms: efs-proxy backend TCP connections every sample must have at its start and end (at "
@@ -1676,7 +1746,9 @@ def cmd_probe(a):
     indices = s.start_arm(a.arm, arm)
     if s.node.agent:
         check_opened_readahead(s.node, arm, a.poc_read_ahead_kb)
+    print(json.dumps({"allocator": s.check_allocator(a.arm)}, default=str))
     _, state = apply_switches(s.node, s.cfg, a.arm, arm)
+    print(json.dumps({"build": runguards.check_build(a.arm, arm, s.cfg, s.node.os.request("GET", "/"), state.get("bp"))}))
     if arm.get("bufferpool"):
         print(json.dumps({"io_config": runguards.check_io_config(a.arm, state["bp"], runguards.want_io(a))}))
     op = next(o for o in s.ops if o["name"] == a.op)

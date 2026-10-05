@@ -1,5 +1,5 @@
 {
- "_doc": "Arms of one data node host. node = agent arm (binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS; each has its own data_path in the agent config, so EBS and EFS are separate cluster states). index/open/store_types refer to keys of [indices]. Every index is closed before a node stops; open_indices sets the arm's store type and opens. base_switches are posted before every bufferpool arm's own switches; each switch's verify map is checked; HTTP 400 = switch not in this binary = arm NOT AVAILABLE (a gap, never a zero). Every arm sets search.concurrent_segment_search.mode explicitly. Set segments_per_shard / shards / docs to the verified values of the corpus before the first run.",
+ "_doc": "Arms of one data node host, configuration set of the USER DECISION 2026-10-05 (arms_baseline.py): baseline BASE-EBS / BASE-EFS (stock OpenSearch and Lucene with the bufferpool plugin, agent arms BASE-*), changes S2-* and the all-off attribution reference S1-* (proof-of-concept build, agent arms POC-*), all with the bufferpool store, the same plugin settings, readahead 0 plus the window hint, and jemalloc on every node unit (\"allocator\", node_allocator.sh). Stock memory-mapping arms are in \"context_arms\": a session runs one only when its --arm-list names it. build: baseline arms get no base_switches. Earlier text: Arms of one data node host. node = agent arm (binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS; each has its own data_path in the agent config, so EBS and EFS are separate cluster states). index/open/store_types refer to keys of [indices]. Every index is closed before a node stops; open_indices sets the arm's store type and opens. base_switches are posted before every bufferpool arm's own switches; each switch's verify map is checked; HTTP 400 = switch not in this binary = arm NOT AVAILABLE (a gap, never a zero). Every arm sets search.concurrent_segment_search.mode explicitly. Set segments_per_shard / shards / docs to the verified values of the corpus before the first run.",
  "indices": {
   "stock_ebs": {
    "name": "big5",
@@ -90,51 +90,46 @@
   }
  ],
  "outcome": {
-  "reference": "S0-EBS",
+  "reference": "BASE-EBS",
   "targets": [
    "S2-CORE-EFS",
    "S2-CORE+PLANNER-EFS"
   ],
-  "aa": "S0-EBS@a,S0-EBS@b",
-  "delta_min": 0.05
+  "aa": "BASE-EBS@a,BASE-EBS@b",
+  "delta_min": 0.05,
+  "same_storage": [
+   {
+    "reference": "BASE-EBS",
+    "targets": [
+     "S2-CORE-EBS"
+    ],
+    "aa": "BASE-EBS@a,BASE-EBS@b"
+   },
+   {
+    "reference": "BASE-EFS",
+    "targets": [
+     "S2-CORE-EFS",
+     "S2-CORE+PLANNER-EFS"
+    ],
+    "aa": "BASE-EFS@a,BASE-EFS@b"
+   }
+  ],
+  "attribution_reference": {
+   "EBS": "S1-EBS",
+   "EFS": "S1-EFS"
+  },
+  "rule": "USER DECISION 2026-10-05 (confirmed): for every query, cold latency of the changes on Amazon EFS should match the baseline on Amazon EBS (reference/targets); improvements are measured on both storages against the baseline on the same storage, with no warm regression against it (same_storage: analyze.py --ni-ref <reference> --ni-target <targets> --ni-aa <aa>). Each change alone is attributed against S1 of its storage. Context arms carry no verdict.",
+  "_previous": {
+   "reference": "S0-EBS",
+   "targets": [
+    "S2-CORE-EFS",
+    "S2-CORE+PLANNER-EFS"
+   ],
+   "aa": "S0-EBS@a,S0-EBS@b",
+   "delta_min": 0.05
+  }
  },
  "arms": {
-  "S0-EBS": {
-   "node": "S0-EBS",
-   "storage": "EBS",
-   "bufferpool": false,
-   "index": "stock_ebs",
-   "open": [
-    "stock_ebs"
-   ],
-   "store_types": {
-    "stock_ebs": "hybridfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "none"
-   },
-   "atoms": [],
-   "note": "REFERENCE of the outcome: stock OpenSearch on EBS gp3"
-  },
-  "S0-EFS": {
-   "node": "S0-EFS",
-   "storage": "EFS",
-   "bufferpool": false,
-   "index": "stock_efs",
-   "open": [
-    "stock_efs"
-   ],
-   "store_types": {
-    "stock_efs": "hybridfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "none"
-   },
-   "atoms": [],
-   "note": "stock on EFS: the size of the problem"
-  },
   "S1-EFS": {
    "node": "POC-EFS",
    "storage": "EFS",
@@ -153,7 +148,8 @@
     "search.concurrent_segment_search.mode": "none"
    },
    "atoms": [],
-   "note": "POC binary, bufferpoolfs, every switch off: storage layer alone"
+   "note": "POC binary, bufferpoolfs, every switch off: storage layer alone",
+   "build": "poc"
   },
   "S2-A-EFS": {
    "node": "POC-EFS",
@@ -182,7 +178,8 @@
    },
    "atoms": [
     "A"
-   ]
+   ],
+   "build": "poc"
   },
   "S2-B-EFS": {
    "node": "POC-EFS",
@@ -204,7 +201,8 @@
    "atoms": [
     "B"
    ],
-   "note": "split BKD format alone"
+   "note": "split BKD format alone",
+   "build": "poc"
   },
   "S2-B+A-EFS": {
    "node": "POC-EFS",
@@ -234,7 +232,8 @@
    "atoms": [
     "A",
     "B"
-   ]
+   ],
+   "build": "poc"
   },
   "S2-C-EFS": {
    "node": "POC-EFS",
@@ -264,7 +263,8 @@
    "atoms": [
     "C"
    ],
-   "note": "planner"
+   "note": "planner",
+   "build": "poc"
   },
   "S2-E-EFS": {
    "node": "POC-EFS",
@@ -293,7 +293,8 @@
    },
    "atoms": [
     "E"
-   ]
+   ],
+   "build": "poc"
   },
   "S2-E8-EFS": {
    "node": "POC-EFS",
@@ -324,7 +325,8 @@
    "atoms": [
     "E8"
    ],
-   "note": "look-ahead 8: set the real parameter name from the final POC binary; until then 400 = NOT AVAILABLE"
+   "note": "look-ahead 8: set the real parameter name from the final POC binary; until then 400 = NOT AVAILABLE",
+   "build": "poc"
   },
   "S2-K2-EFS": {
    "node": "POC-EFS",
@@ -353,7 +355,8 @@
    },
    "atoms": [
     "K2"
-   ]
+   ],
+   "build": "poc"
   },
   "S2-K3-EFS": {
    "node": "POC-EFS",
@@ -382,7 +385,8 @@
    },
    "atoms": [
     "K3"
-   ]
+   ],
+   "build": "poc"
   },
   "S2-K4-EFS": {
    "node": "POC-EFS",
@@ -411,7 +415,8 @@
    },
    "atoms": [
     "K4"
-   ]
+   ],
+   "build": "poc"
   },
   "S2-AGG-EFS": {
    "node": "POC-EFS",
@@ -442,7 +447,8 @@
    "atoms": [
     "AGG"
    ],
-   "note": "agg batch collection C2 + doc-values prefetch C3e (pfwc)"
+   "note": "agg batch collection C2 + doc-values prefetch C3e (pfwc)",
+   "build": "poc"
   },
   "S2-ORPF-EFS": {
    "node": "POC-EFS",
@@ -470,7 +476,8 @@
    "atoms": [
     "ORPF"
    ],
-   "note": "OR-query postings prefetch; set blocks from the final POC report"
+   "note": "OR-query postings prefetch; set blocks from the final POC report",
+   "build": "poc"
   },
   "S2-TOPK-EFS": {
    "node": "POC-EFS",
@@ -500,7 +507,8 @@
    "atoms": [
     "TOPK"
    ],
-   "note": "top-k norms/postings prefetch; set blocks from the final POC report"
+   "note": "top-k norms/postings prefetch; set blocks from the final POC report",
+   "build": "poc"
   },
   "S2-K1-EFS": {
    "node": "POC-EFS",
@@ -530,7 +538,8 @@
    "atoms": [
     "K1"
    ],
-   "note": "SHORTCUT, informational"
+   "note": "SHORTCUT, informational",
+   "build": "poc"
   },
   "S2-Da-EFS": {
    "node": "POC-EFS",
@@ -560,7 +569,8 @@
    "atoms": [
     "Da"
    ],
-   "note": "SHORTCUT, informational"
+   "note": "SHORTCUT, informational",
+   "build": "poc"
   },
   "S2-Db-EFS": {
    "node": "POC-EFS",
@@ -590,7 +600,8 @@
    "atoms": [
     "Db"
    ],
-   "note": "SHORTCUT, informational"
+   "note": "SHORTCUT, informational",
+   "build": "poc"
   },
   "S2-CORE-EFS": {
    "node": "POC-EFS",
@@ -676,7 +687,8 @@
     "TOPK",
     "B"
    ],
-   "note": "TARGET: every core change"
+   "note": "TARGET: every core change",
+   "build": "poc"
   },
   "S2-CORE+PLANNER-EFS": {
    "node": "POC-EFS",
@@ -770,7 +782,8 @@
     "C",
     "B"
    ],
-   "note": "TARGET (headline)"
+   "note": "TARGET (headline)",
+   "build": "poc"
   },
   "S2-ALL-EFS": {
    "node": "POC-EFS",
@@ -888,7 +901,8 @@
     "Db",
     "B"
    ],
-   "note": "informational only (includes shortcuts)"
+   "note": "informational only (includes shortcuts)",
+   "build": "poc"
   },
   "S1-EBS": {
    "node": "POC-EBS",
@@ -908,7 +922,8 @@
     "search.concurrent_segment_search.mode": "none"
    },
    "atoms": [],
-   "note": "informational"
+   "note": "informational",
+   "build": "poc"
   },
   "S2-CORE-EBS": {
    "node": "POC-EBS",
@@ -994,43 +1009,8 @@
     "TOPK",
     "B"
    ],
-   "note": "informational"
-  },
-  "S0-EBS-css": {
-   "node": "S0-EBS",
-   "storage": "EBS",
-   "bufferpool": false,
-   "index": "stock_ebs",
-   "open": [
-    "stock_ebs"
-   ],
-   "store_types": {
-    "stock_ebs": "hybridfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "all"
-   },
-   "atoms": [],
-   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
-  },
-  "S0-EFS-css": {
-   "node": "S0-EFS",
-   "storage": "EFS",
-   "bufferpool": false,
-   "index": "stock_efs",
-   "open": [
-    "stock_efs"
-   ],
-   "store_types": {
-    "stock_efs": "hybridfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "all"
-   },
-   "atoms": [],
-   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
+   "note": "informational",
+   "build": "poc"
   },
   "S1-EFS-css": {
    "node": "POC-EFS",
@@ -1050,7 +1030,8 @@
     "search.concurrent_segment_search.mode": "all"
    },
    "atoms": [],
-   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
+   "build": "poc"
   },
   "S2-CORE-EFS-css": {
    "node": "POC-EFS",
@@ -1136,7 +1117,8 @@
     "TOPK",
     "B"
    ],
-   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
+   "build": "poc"
   },
   "S2-CORE+PLANNER-EFS-css": {
    "node": "POC-EFS",
@@ -1230,7 +1212,203 @@
     "C",
     "B"
    ],
-   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)"
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
+   "build": "poc"
+  },
+  "BASE-EBS": {
+   "node": "BASE-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "BASELINE on Amazon EBS: stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EBS without switches",
+   "build": "baseline"
+  },
+  "BASE-EFS": {
+   "node": "BASE-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "BASELINE on Amazon EFS: stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EFS without switches",
+   "build": "baseline"
+  },
+  "BASE-EBS-css": {
+   "node": "BASE-EBS",
+   "storage": "EBS",
+   "bufferpool": true,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "BASELINE on Amazon EBS (css variant of S0-EBS-css): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EBS without switches",
+   "build": "baseline"
+  },
+  "BASE-EFS-css": {
+   "node": "BASE-EFS",
+   "storage": "EFS",
+   "bufferpool": true,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "bufferpoolfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "BASELINE on Amazon EFS (css variant of S0-EFS-css): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EFS-css without switches",
+   "build": "baseline"
   }
+ },
+ "context_arms": {
+  "S0-EBS": {
+   "node": "S0-EBS",
+   "storage": "EBS",
+   "bufferpool": false,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): REFERENCE of the outcome: stock OpenSearch on EBS gp3",
+   "build": "stock"
+  },
+  "S0-EFS": {
+   "node": "S0-EFS",
+   "storage": "EFS",
+   "bufferpool": false,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): stock on EFS: the size of the problem",
+   "build": "stock"
+  },
+  "S0-EBS-css": {
+   "node": "S0-EBS",
+   "storage": "EBS",
+   "bufferpool": false,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
+   "build": "stock"
+  },
+  "S0-EFS-css": {
+   "node": "S0-EFS",
+   "storage": "EFS",
+   "bufferpool": false,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
+   "build": "stock"
+  }
+ },
+ "builds": {
+  "baseline": {
+   "artifact": "baseline_bufferpool",
+   "build_target": "stock",
+   "build_hash": "b44de786cef",
+   "sha256": "728244131e67ca255d0d154f4b9f840f3495c612144942a5c0aa6c71a4e19175",
+   "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-baseline-bufferpool-3.10.0-SNAPSHOT-osb44de786cef-pluginc83c646b873-no-jdk-linux-x64.tar.gz"
+  },
+  "poc": {
+   "artifact": "poc_iosize_conc2",
+   "build_target": "poc",
+   "build_hash": "d6daba062dc",
+   "sha256": "43289e8cf90ca8dda9bd1636db949585987ef4ea706795bc0ce8f7b7064b3e52",
+   "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-poc-3.10.0-SNAPSHOT-osc83c646b873-lucene59f87aa1af-bufferpool-iosize_conc2-no-jdk-linux-x64.tar.gz"
+  }
+ },
+ "allocator": {
+  "name": "jemalloc",
+  "ld_preload": "/usr/lib64/libjemalloc.so.2",
+  "malloc_conf": "background_thread:true",
+  "malloc_arena_max": null,
+  "jemalloc_sha256": "99d2ff028c115cfba4d8e249bca417e03b36e650b257550e687b52ac40be65bf",
+  "package": "jemalloc-5.2.1-7.amzn2023.x86_64",
+  "_note": "written to every node unit by node_allocator.sh apply (the same drop-in 90-coldpath-allocator.conf); validated in baseline-bufferpool-2026-10-05/jemalloc-validation.md"
+ },
+ "same_bufferpool_settings": true,
+ "_baseline": {
+  "source": "arms.example.json",
+  "source_sha256": "8284b40436b78e17696edb88a8af740ea8d786c27a86bd76480472b052a8ebff",
+  "changes": [
+   "S0-EBS: moved to context_arms",
+   "S0-EFS: moved to context_arms",
+   "S0-EBS-css: moved to context_arms",
+   "S0-EFS-css: moved to context_arms",
+   "BASE-EBS: added (baseline build, copied from S1-EBS, cluster settings of S0-EBS)",
+   "BASE-EFS: added (baseline build, copied from S1-EFS, cluster settings of S0-EFS)",
+   "BASE-EBS-css: added (baseline build, copied from S1-EBS, cluster settings of S0-EBS-css)",
+   "BASE-EFS-css: added (baseline build, copied from S1-EFS-css, cluster settings of S0-EFS-css)",
+   "outcome: reference BASE-EBS, targets ['S2-CORE-EFS', 'S2-CORE+PLANNER-EFS'], same-storage EBS targets ['S2-CORE-EBS']"
+  ]
  }
 }

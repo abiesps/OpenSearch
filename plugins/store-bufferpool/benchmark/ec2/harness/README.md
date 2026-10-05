@@ -20,6 +20,9 @@ target (S2-CORE-EFS, S2-CORE+PLANNER-EFS) not worse than reference (S0-EBS). Met
 | `agent/coldpath_efsconn.py` | data node (agent `GET /efs/connections`, `POST /efs/precondition`, and in every `/snapshot`) | EFS backend connection count: efs-proxy's established TCP connections to the mount target port 2049; pre-conditioning to a target count (below) |
 | `selftest_efsconn.py` | anywhere (the O_DIRECT read on Linux only) | the connection count against a fake /proc, and the pre-conditioning rules |
 | `selftest_segformat.py` | anywhere | the segment format check on real Lucene shards (`testdata/segformat`: a split BKD and Nav postings copy written by the plugin's codec service, and a stock control), the agent endpoint, `indexprep.py formats` logic and the coldbench verify step |
+| `node_allocator.sh` | data node, root | the C memory allocator of every OpenSearch node unit: installs the pinned jemalloc (AL2023 package 5.2.1-7, sha256 checked) and writes the same systemd drop-in to every `opensearch-*.service` (below) |
+| `arms_baseline.py` | anywhere | converts an arms file to the configuration set of the user decision of 2026-10-05 (below) |
+| `selftest_baseline.py` | anywhere | `node_allocator.sh` under a fake root, the agent's allocator parsing, the converted templates, and coldbench end to end with the baseline build, the build and allocator checks and context arms |
 
 ## EFS backend connection count (common-rules "Amazon EFS connection count is a measured variable")
 efs-proxy (efs-utils 3.3.2) starts a mount on one TCP connection to the mount target and adds 4 more only after one
@@ -122,6 +125,42 @@ run a monitor thread polls the agent's `GET /node/memory` (v3) every `--mem-inte
 RssAnon against host MemTotal, and the JVM's MALLOC_ARENA_MAX from its environment. Each run records a `node_memory`
 summary (maximum, a series every 60 s, MALLOC_ARENA_MAX). When either value passes `--mem-limit-pct` (70) the run ends
 at the next operation boundary (`run_discarded`, reason `memory limit`) and is re-queued.
+
+## Configuration set and allocator (common-rules "USER DECISION (2026-10-05) ... the bufferpool is the baseline")
+Every configuration uses the bufferpool store with the same plugin settings and the bufferpool readahead rule
+(read_ahead_kb 0 plus the window hint). `arms_baseline.py convert` turns an arms file into this set:
+- `BASE-EBS`, `BASE-EFS` (and `-css` variants): `"build": "baseline"`, the artifact `baseline_bufferpool` (stock
+  OpenSearch b44de786cef and stock Lucene with the plugin built for it), agent arms `BASE-EBS` / `BASE-EFS` (units
+  `opensearch-base-ebs` / `-efs`) on the same data paths as `POC-EBS` / `POC-EFS`. Each copies `S1-<storage>` (index
+  key, cluster settings) without proof-of-concept-only indices and without switches. coldbench posts no
+  `base_switches` to them and does not read `sort_opt` (the baseline build has no experiment endpoint).
+- `S2-*` (changes on) and `S1-*` (all changes off, the attribution reference): `"build": "poc"`, artifact
+  `poc_iosize_conc2`.
+- stock memory-mapping arms (old `S0-*`) move to `"context_arms"`: a session runs one only when `--arm-list` names
+  it; the run record says `context_arm: true`; no outcome uses it. Without a named context arm there is no stock arm,
+  so the shared stock-format indices keep store type `bufferpoolfs` (no reset to hybridfs).
+- `"builds"`: at every run start the node must report `build_target` (`stock` for the baseline, `poc`) in
+  `GET /_bufferpool/stats` and a `build_hash` starting with the recorded one in `GET /`; else the run is refused.
+- `"same_bufferpool_settings": true`: every bufferpool configuration on one storage must report the same block size,
+  read sizes, read hint, prefetch node size and prefetch scheduler settings as the first run of the session there.
+- `"outcome"`: reference `BASE-EBS` for the targets on Amazon EFS; `same_storage` lists each storage's comparison
+  against the baseline on the same storage (run `analyze.py --ni-ref R --ni-target T --ni-aa AA` for each).
+The format-isolation guard counts the baseline build's nodes as stock binaries (no split codec): a split or other
+proof-of-concept-only index needs its own data path (`POC-B-*`), as before.
+
+Allocator (user decision "For memory fragmentation use jemalloc"): `node_allocator.sh install` then
+`node_allocator.sh apply` on every data node (root). Every `opensearch-*.service` gets the same drop-in
+`90-coldpath-allocator.conf` (`UnsetEnvironment=MALLOC_ARENA_MAX`, `LD_PRELOAD=/usr/lib64/libjemalloc.so.2`,
+`MALLOC_CONF=background_thread:true`); earlier `MALLOC_ARENA_MAX` lines in unit files or drop-ins are removed (backup
+under `/var/lib/coldpath/allocator-backup/`), and `/etc/coldpath/allocator.json` records the setup. Agent v4 adds
+`allocator` to `GET /node/memory`: the JVM's `LD_PRELOAD`, `MALLOC_CONF`, `MALLOC_ARENA_MAX` (from
+`/proc/<pid>/environ`), the libjemalloc files mapped in `/proc/<pid>/maps` with their sha256, and the name
+(`jemalloc` when a libjemalloc file is mapped, else `glibc`). coldbench checks it at every node start against the
+arms file's `"allocator"` block (or `--allocator jemalloc|glibc|any`), requires every run of a session to have the
+same allocator, and records it in the `run` record and in `node_memory`. A run on a node without jemalloc, or with an
+agent before v4, is refused before it measures. The validation (resident memory per cache fill for glibc, glibc with
+2 arenas and jemalloc, and the latency comparison) is in
+`.agents/tasks/baseline-bufferpool-2026-10-05/jemalloc-validation.md`.
 
 ## Index state per run
 Aborted sessions (common-rules "Store type left on the other data path after an aborted session"): (a) a SIGTERM or

@@ -161,7 +161,9 @@ def part_g(osbw, tmp, check, generic):
     p_n = arms_generic.load_profile("nested")
     cfg_n, _ = arms_generic.adapt_arms(css, p_n, arms_generic.indices_for(p_n, "multi", 6, 6))
     arms_generic.isolate_split(cfg_n, {"EBS": "POC-B-EBS", "EFS": "POC-B-EFS"})
-    paths = {"S0-EBS": "/e", "S0-EFS": "/f", "POC-EBS": "/e", "POC-EFS": "/f", "POC-B-EBS": "/eb", "POC-B-EFS": "/fb"}
+    # the baseline build's nodes (BASE-*) share the stock-format data paths with POC-* (arms_baseline.py)
+    paths = {"S0-EBS": "/e", "S0-EFS": "/f", "POC-EBS": "/e", "POC-EFS": "/f", "POC-B-EBS": "/eb", "POC-B-EFS": "/fb",
+             "BASE-EBS": "/e", "BASE-EFS": "/f"}
     import runguards as _rg
     iso = _rg.check_format_isolation(cfg_n, {k: {"data_path": v} for k, v in paths.items()})
     check(iso["ok"] and {n for x in iso["poc_only_indices"] for n in x["nodes"]} == {"POC-B-EBS", "POC-B-EFS"} and

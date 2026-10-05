@@ -65,7 +65,8 @@ class Mock:
         self.searches = 0
         # agent arm -> data path (agent /health storages)
         self.data_paths = {"S0-EBS": "/data/ebs/opensearch", "S0-EFS": "/mnt/efs/opensearch", "POC-EBS": "/data/ebs/opensearch",
-                           "POC-EFS": "/mnt/efs/opensearch", "POC-B-EFS": "/mnt/efs/opensearch-b"}
+                           "POC-EFS": "/mnt/efs/opensearch", "POC-B-EFS": "/mnt/efs/opensearch-b",
+                           "BASE-EBS": "/data/ebs/opensearch", "BASE-EFS": "/mnt/efs/opensearch"}
         self.cluster = {}
         self.read_bytes = 0
         self.disk_reads = 0
@@ -106,6 +107,15 @@ class Mock:
         self.mem_pct = 10.0
         self.mem_high_pct = 80.0
         self.mem_high_restarts = 0
+        # the node's C memory allocator the agent reports in GET /node/memory (agent v4 "allocator"); None = an agent
+        # before v4 (no field). allocator_by_node overrides it per agent arm (one unit without the drop-in)
+        self.allocator = None
+        self.allocator_by_node = {}
+
+    def is_bp(self):
+        """A node with the bufferpool plugin: the proof-of-concept build (POC-*) or the baseline build (BASE-*: stock
+        OpenSearch with the plugin built for it, no experiment endpoints)."""
+        return self.binary.startswith(("POC", "BASE"))
 
     def search(self, index, body):
         key = json.dumps(body, sort_keys=True)
@@ -114,7 +124,7 @@ class Mock:
             self.fielddata += 4096  # global ordinals of the aggregated keyword field
         blocks = [f"{index}:{key}:{i}" for i in range(4)]
         miss = [b for b in blocks if b not in self.cached]
-        bp = self.binary.startswith("POC")
+        bp = self.is_bp()
         efs = self.binary.endswith("EFS")
         cold = bool(miss) if bp else any(b not in self.page_cache for b in blocks)
         if bp:
@@ -187,12 +197,13 @@ def make_os_handler(m):
                         self.close_connection = True
                         return
                 m.calls.append(("os", method, p))
-                bp = m.binary.startswith("POC")
+                bp = m.is_bp()
                 visible = ({n: i for n, i in m.indices.items() if m.binary in i.get("nodes", {m.binary})}
                            if m.strict_store else m.indices)
                 if p == "/":
                     return self.send(200, {"name": "n1", "cluster_name": "mock", "binary": m.binary, "version": {
-                        "distribution": "opensearch", "number": "3.3.0", "build_type": "tar", "build_hash": "mock",
+                        "distribution": "opensearch", "number": "3.3.0", "build_type": "tar",
+                        "build_hash": {"BASE": "b44de786cefeb3bf", "POC": "d6daba062dc7a52b"}.get(m.binary.split("-")[0], "mock"),
                         "build_date": "2026-01-01T00:00:00Z", "build_snapshot": False, "lucene_version": "10.3.0",
                         "minimum_wire_compatibility_version": "2.19.0", "minimum_index_compatibility_version": "2.0.0"}})
                 if p.startswith("/_cluster/health"):
@@ -267,7 +278,10 @@ def make_os_handler(m):
                     if p == "/_bufferpool/cache/_clear":
                         if not m.broken_clear:
                             m.cached.clear()
-                    elif p == "/_bufferpool/sort_opt":
+                    elif p == "/_bufferpool/sort_opt" or (p.startswith("/_bufferpool/") and m.binary.startswith("BASE")
+                                                          and p not in ("/_bufferpool/stats", "/_bufferpool/stats/_reset")):
+                        if m.binary.startswith("BASE"):  # stock OpenSearch with the plugin: no experiment endpoint
+                            return self.send(400, {"error": f"no handler found for uri [{p}] and method [{method}]"})
                         if method == "POST":
                             unknown = [k for k in q if k not in ("bkd_prefetch",)]
                             if unknown:
@@ -276,6 +290,7 @@ def make_os_handler(m):
                                 m.sort_opt[k] = v == "true"
                         return self.send(200, dict(m.sort_opt))
                     return self.send(200, {**m.bp_io, "cached_blocks": len(m.cached), "files": m.files,
+                                           "build_target": "stock" if m.binary.startswith("BASE") else "poc",
                                            "agg_prefetch_requests": 0, "sort_prefetch_requests": 0})
                 if p == "/_search/scroll":
                     return self.send(200, {"took": 1, "hits": {"hits": []}, "_shards": {"failed": 0}})
@@ -440,7 +455,8 @@ def make_agent_handler(m):
                     rss = int(total * m.mem_pct / 100)
                     return self.send(200, {"mem_total_kb": total, "mem_available_kb": total - rss, "pid": m.pid,
                                            "vm_rss_kb": rss, "rss_anon_kb": rss, "malloc_arena_max": "2",
-                                           "rss_pct": m.mem_pct, "anon_pct": m.mem_pct})
+                                           "rss_pct": m.mem_pct, "anon_pct": m.mem_pct,
+                                           "allocator": m.allocator_by_node.get(m.binary, m.allocator)})
                 return self.send(404, {"error": "no route"})
 
         def do_GET(self):  # noqa: N802
@@ -707,7 +723,7 @@ def main():
     p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *[bad_f if x == arms_f else x for x in common],
                         "--arm-list", "S2-X-EFS", "--rounds", "1", "--out", os.path.join(tmp, "session-iso")],
                        capture_output=True, text=True)
-    assert p.returncode != 0 and "also a stock arm's data path" in p.stderr, (p.stdout[-1500:], p.stderr[-1500:])
+    assert p.returncode != 0 and "also the data path of a stock or baseline build's node" in p.stderr, (p.stdout[-1500:], p.stderr[-1500:])
     eq = res["equality"]
     assert eq["across"] and all(e["equal"] for e in eq["across"]), eq
     assert not res["amdahl"], res["amdahl"]

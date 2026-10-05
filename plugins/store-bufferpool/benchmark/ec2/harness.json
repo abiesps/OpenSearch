@@ -3,9 +3,9 @@
   "branch": "ec2-bench",
   "path": "plugins/store-bufferpool/benchmark/ec2/harness",
   "python": "load generator: python3 >= 3.8 stdlib (jinja2 only for queries.py OSB rendering, installed with opensearch-benchmark); data node agent: python3 stdlib, root",
-  "selftest": "python3 harness/selftest.py [--osb-bin opensearch-benchmark]; python3 harness/selftest_segformat.py",
+  "selftest": "python3 harness/selftest.py [--osb-bin opensearch-benchmark]; python3 harness/selftest_segformat.py; python3 harness/selftest_baseline.py",
   "data_node_agent": {
-    "install": "copy harness/agent/coldpath_agent.py, harness/agent/coldpath_readahead.py, harness/agent/coldpath_readattr.py, harness/agent/coldpath_segformat.py and harness/agent/coldpath_efsconn.py to /opt/coldpath/; write /etc/coldpath-agent/agent.json from harness/agent/agent.example.json (one arm per binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS with data_path and start/stop argv); umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token; install harness/agent/coldpath-agent.service; systemctl enable --now coldpath-agent",
+    "install": "copy harness/agent/coldpath_agent.py, harness/agent/coldpath_readahead.py, harness/agent/coldpath_readattr.py, harness/agent/coldpath_segformat.py and harness/agent/coldpath_efsconn.py to /opt/coldpath/; write /etc/coldpath-agent/agent.json from harness/agent/agent.example.json (one arm per binary x storage: BASE-EBS, BASE-EFS, POC-EBS, POC-EFS, and S0-EBS, S0-EFS for context arms, with data_path and start/stop argv); umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token; install harness/agent/coldpath-agent.service; systemctl enable --now coldpath-agent",
     "port": 9700,
     "auth": "header X-Coldpath-Token; allow the port only from the load generator security group",
     "endpoints": [
@@ -26,7 +26,8 @@
       "GET /node/status",
       "POST /node/stop",
       "POST /node/restart {arm}"
-    ]
+    ],
+    "allocator": "every OpenSearch node unit runs with jemalloc: as root, bash harness/node_allocator.sh install, then bash harness/node_allocator.sh apply (every /etc/systemd/system/opensearch-*.service gets the same drop-in 90-coldpath-allocator.conf: LD_PRELOAD=/usr/lib64/libjemalloc.so.2, MALLOC_CONF=background_thread:true, MALLOC_ARENA_MAX unset; earlier MALLOC_ARENA_MAX settings are removed with a backup); agent v4 reports the allocator in GET /node/memory and coldbench refuses a run whose node differs from the arms file's \"allocator\" block"
   },
   "entrypoints": {
     "build_ops": "python3 harness/queries.py build --corpus {big5|nyc_taxis|http_logs|pmc} --osb-workloads <opensearch-benchmark-workloads checkout> --osb-commit <sha> --url http://DATA:9200 --index <stock index> --out ops/<corpus>.json --check-coverage   (once per corpus after ingest, BEFORE any measurement; the file is the pre-registered op set)",
@@ -42,7 +43,9 @@
     "single_shard_run": "any run above plus --indices harness/indices.single-shard.example.json (or indices.single-shard-1seg.example.json), edited to the built index names and segment counts",
     "probe": "python3 harness/coldbench.py probe --arms arms.json --ops ops/<corpus>.json --arm S1-EFS --op <op name> --url ... --agent ... --token-file ...   (one verified cold iteration on the running node, printed in full)",
     "plan": "python3 harness/coldbench.py plan --ops ops/<corpus>.json --arm-list ... --rounds 5   (expected session time)",
-    "analysis": "python3 harness/analyze.py results/<corpus>/aa-1 results/<corpus>/session-1 [...] --base S1-EFS --aa S1-EFS@a,S1-EFS@b --ni-ref S0-EBS,S0-EBS@a,S0-EBS@b --ni-aa S0-EBS@a,S0-EBS@b --ni-target S2-CORE-EFS,S2-CORE+PLANNER-EFS --out results/<corpus>/analysis   (writes report.md and analysis.json; --no-id-compare when arms query different indices whose _id differ)"
+    "analysis": "python3 harness/analyze.py results/<corpus>/aa-1 results/<corpus>/session-1 [...] --base S1-EFS --aa S1-EFS@a,S1-EFS@b --ni-ref S0-EBS,S0-EBS@a,S0-EBS@b --ni-aa S0-EBS@a,S0-EBS@b --ni-target S2-CORE-EFS,S2-CORE+PLANNER-EFS --out results/<corpus>/analysis   (writes report.md and analysis.json; --no-id-compare when arms query different indices whose _id differ)",
+    "convert_arms": "python3 harness/arms_baseline.py convert --in <branch arms file> --out <branch arms file, baseline set>   (USER DECISION 2026-10-05: BASE-EBS/BASE-EFS baseline arms from S1-*, memory-mapping arms to context_arms, builds, allocator jemalloc, outcome against BASE-EBS and per storage)",
+    "baseline_run": "python3 harness/coldbench.py run --arms arms.json --ops ops/<corpus>.json --arm-list BASE-EBS,BASE-EFS,S2-CORE-EBS,S2-CORE-EFS,S2-CORE+PLANNER-EBS,S2-CORE+PLANNER-EFS,S1-EBS,S1-EFS --rounds 5 --modes cold,warm --url http://DATA:9200 --agent http://DATA:9700 --token-file TOKEN --mem-limit-pct 70 --out results/<corpus>/session-1   (a memory-mapping context arm runs only when named, e.g. S0-EBS)"
   },
   "inputs": {
     "arms": "harness/arms.example.json: copy and set the [indices] names, shards, segments_per_shard, docs; base_switches; per-arm switches (S2-E8 parameter name, ORPF/TOPK block counts) from the final POC report; the 'outcome' block gives the analysis defaults",
