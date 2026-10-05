@@ -731,6 +731,11 @@ def part_f(tmp, fork, fork_commit):
     txt = open(d2).read()
     check('results = {l: [m["log"] for m in runs if m["label"] == l] for l in labels}' in txt and "expected {jvm_count} per label" in txt,
           "(f) driver: the result comparison uses every manifest run")
+    d3, s3 = run_luceneutil.plan(cfg, table, "cold-strict", "wikimedium.10M.nostopwords.tasks", "EBS", ["L0:EBS@a", "L1:EFS@a"],
+                                 os.path.join(tmp, "lu-cont"), iter_offset=8)
+    compile(open(d3).read(), d3, "exec")
+    check(s3["iter_offset"] == 8 and "range(iter_offset, iter_offset + comp.jvmCount)" in open(d3).read(),
+          "(f) driver: a continuation session continues the JVM iteration sequence")
     rd = run_luceneutil.report_driver(os.path.join(tmp, "lu-mixed"))
     compile(open(rd).read(), rd, "exec")
     check("results = {l: [m" in open(rd).read(), "(f) report driver for a finished session compiles")

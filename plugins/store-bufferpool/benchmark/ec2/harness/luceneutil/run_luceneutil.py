@@ -72,7 +72,7 @@ def arm_spec(cfg, label, default_storage=None):
     return arm, cfg["arms"][arm], storage
 
 
-def plan(cfg, table, mode, tasks, storage, labels, out):
+def plan(cfg, table, mode, tasks, storage, labels, out, iter_offset=0):
     if mode not in MODES:
         raise ValueError(f"mode {mode}: one of {MODES}")
     if len(set(labels)) != len(labels):
@@ -102,7 +102,8 @@ def plan(cfg, table, mode, tasks, storage, labels, out):
     session = {"mode": mode, "tasks": tasks, "storage": ",".join(storages),
                "storage_spec": {s: cfg["storages"][s] for s in storages}, "labels": labels, "arms": arms,
                "competition": comp, "luceneutil": cfg["luceneutil"], "params": params, "data": cfg.get("data", "wikimediumall"),
-               "switches_fork_commit": table.get("fork_commit"), "id": os.path.basename(os.path.abspath(out))}
+               "switches_fork_commit": table.get("fork_commit"), "id": os.path.basename(os.path.abspath(out)),
+               "iter_offset": iter_offset}
     driver = os.path.join(out, "driver.py")
     with open(driver, "w") as f:
         f.write(DRIVER.replace("@SESSION@", repr(json.dumps(session))).replace("@OUT@", repr(os.path.abspath(out))))
@@ -191,7 +192,12 @@ labels = list(comps)
 if os.path.exists(os.path.join(OUT, "manifest.jsonl")):
     raise SystemExit(f"{OUT}/manifest.jsonl exists: a session writes a new directory (luceneutil log names use its basename)")
 manifest = open(os.path.join(OUT, "manifest.jsonl"), "w")
-for it in range(comp.jvmCount):
+# a continuation session (more JVM runs for the same arms and tasks) starts at iter_offset: the same static seed (same
+# tasks), the per-JVM seeds and the arm rotation continue the sequence of the first session, and the run ids stay unique
+iter_offset = S.get("iter_offset", 0)
+for _ in range(iter_offset):
+    rand.randint(-10000000, 1000000)
+for it in range(iter_offset, iter_offset + comp.jvmCount):
     seed = rand.randint(-10000000, 1000000)
     order = labels[it % len(labels):] + labels[:it % len(labels)]
     for label in order:
@@ -401,6 +407,8 @@ def main():
         p.add_argument("--storage", required=True)
         p.add_argument("--arms", required=True, help="comma list of arm labels; ARM@x repeats an arm (A/A)")
         p.add_argument("--out", required=True)
+        p.add_argument("--iter-offset", type=int, default=0,
+                       help="continue an earlier session of the same arms and tasks: first JVM iteration index (its JVM count)")
     ix = sub.add_parser("index")
     ix.add_argument("--config", required=True)
     ix.add_argument("--index", required=True, help="key of [indices]")
@@ -430,7 +438,7 @@ def main():
         print(d)
         sys.exit(0 if a.dry_run else run_driver(cfg, d))
     table = sw.load(a.switches)
-    driver, session = plan(cfg, table, a.mode, a.tasks, a.storage, a.arms.split(","), a.out)
+    driver, session = plan(cfg, table, a.mode, a.tasks, a.storage, a.arms.split(","), a.out, a.iter_offset)
     print(f"{driver}: {len(session['arms'])} arms, {session['competition']['jvm_count']} JVM iterations, mode {a.mode}")
     for x in session["arms"]:
         print(f"  {x['label']}: " + (f"NOT APPLICABLE {x['not_applicable']}" if x.get("not_applicable") else x["java_command"]))
