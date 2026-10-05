@@ -612,8 +612,14 @@ def device_vs_bufferpool(io):
         out.update({"source": trace.get("source") or ("nfs:nfs_initiate_read" if "nfs_read_sizes" in io else "block"),
                     "device_reads": trace.get("reads"), "device_bytes": trace.get("total_bytes"),
                     "device_bytes_hist": trace.get("bytes_hist"), "device_reads_by_class": dict(sorted(dev.items()))})
-        out["ok"] = (out["device_reads"] == out["bufferpool_reads"] and out["device_bytes"] == out["bufferpool_bytes_read"]
-                     and dev == out["bufferpool_reads_by_size"])
+        att = trace.get("attribution")
+        if att is not None:
+            out["rule"] = "attributed"
+            out["ok"] = attributed_ok(out, att)
+        else:
+            out["rule"] = "strict" + (f" ({trace['attribution_gap']})" if trace.get("attribution_gap") else "")
+            out["ok"] = (out["device_reads"] == out["bufferpool_reads"] and out["device_bytes"] == out["bufferpool_bytes_read"]
+                         and dev == out["bufferpool_reads_by_size"])
     elif io.get("nfs"):
         r = io["nfs"].get("READ") or {}
         out.update({"source": "mountstats", "device_reads": r.get("ops", 0), "device_bytes": io["nfs"].get("server_read_bytes")})
@@ -624,6 +630,32 @@ def device_vs_bufferpool(io):
     else:
         out["ok"] = None
     return out
+
+
+MAX_WINDOW = 128 * 1024  # the largest bufferpool window (bufferpool.io.sequential_read_size; checked per run)
+
+
+def attributed_ok(out, att):
+    """
+    The device check with the agent's attribution of every device read to index-file data or other reads
+    (agent/coldpath_readattr.py; common-rules.md "DECISION ~22:00", device check). Data reads: every one lies inside one
+    window (no read crosses a 128 KiB-aligned file block or is larger than the largest window), no more data bytes than
+    the bufferpool read (page cache hits make it less), no more 128 KiB file blocks touched than bufferpool reads, and no
+    more data reads than bufferpool reads except at extent boundaries of the file (XFS fragmentation splits a window
+    into two requests; a kernel split of a window into 4 KiB pages fails). Other reads (file-system metadata after
+    drop_caches, journal) are reported by size and count, not checked.
+    """
+    reads = out["bufferpool_reads"]
+    checks = {"no_read_crosses_window": att["cross_window"] == 0,
+              "max_data_read_within_window": (att["data_max_bytes"] or 0) <= MAX_WINDOW,
+              "data_bytes_le_bufferpool_bytes": att["data_bytes"] <= out["bufferpool_bytes_read"],
+              "windows_le_bufferpool_reads": att["windows"] <= reads,
+              "data_reads_le_bufferpool_reads_plus_extent_splits": att["data_reads"] <= reads + att["extent_splits"]}
+    out.update({"data_reads": att["data_reads"], "data_bytes": att["data_bytes"], "data_hist": att.get("data_hist"),
+                "windows": att["windows"], "extent_splits": att["extent_splits"], "cross_window": att["cross_window"],
+                "other_reads": att["other_reads"], "other_bytes": att["other_bytes"], "other_hist": att.get("other_hist"),
+                "page_cache_bytes": out["bufferpool_bytes_read"] - att["data_bytes"], "attributed_checks": checks})
+    return all(checks.values())
 
 
 def read_size_trace(a, arm, node, nfs):
@@ -731,7 +763,7 @@ class Session:
         io = io_delta(pre, post)
         if trace:
             io["nfs_read_sizes" if trace == "nfs" else "block_read_sizes"] = self.node.agent.request(
-                "POST", f"/trace/{trace}/_stop?{q}")
+                "POST", f"/trace/{trace}/_stop?{q}&uuids=" + ",".join(it.uuids))
         ok, checks = it.verify(pre_state, io)
         # IO-size configuration check (separate from cold_ok) of the bufferpool arms: no device read larger than the
         # largest configured IO size. Stock arms keep the kernel's default readahead, so their sizes are only recorded.

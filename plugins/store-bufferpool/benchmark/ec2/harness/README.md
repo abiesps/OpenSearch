@@ -40,8 +40,13 @@ its own client and records network time only (`wall_ms`) and the server's `took`
    0 (`--poc-read-ahead-kb`; the bufferpool announces each window with POSIX_FADV_WILLNEED, one window = one device
    read). A run whose value differs is refused. Every cold iteration
    traces the device read sizes (NFS READ RPCs on EFS, block read requests on EBS; `--no-read-size-trace` falls back
-   to mountstats / diskstats); for bufferpool arms the device reads, bytes and size classes must equal the
-   bufferpool's reads + prefetch_reads, bytes_read and reads_by_size (`device_reads_are_windows`), else the iteration
+   to mountstats / diskstats); for bufferpool arms the agent attributes every traced read to index-file data (EBS:
+   FIEMAP extents of the arm's Lucene files; EFS: READ fileid = inode) or to other reads (file-system metadata after
+   drop_caches, reported by size and count), and the data reads must be bufferpool windows: none crosses a 128 KiB
+   file block or is larger than the largest window, data bytes <= bufferpool bytes_read, 128 KiB blocks touched <=
+   bufferpool reads + prefetch_reads, data reads <= those reads + splits at file extent boundaries (XFS fragmentation;
+   a window split into 4 KiB pages fails) (`device_reads_are_windows`, rule `attributed`; common-rules.md "DECISION
+   ~22:00"; without the attribution the old strict equality applies), else the iteration
    fails verification and the run is marked invalid (`run_end.valid`, `session_end.invalid_runs`); `io_size_ok`
    (`--max-read-bytes`) applies to bufferpool arms only. The agent applies each storage's last mode again after a reboot.
    Order: Linux copies the bdi readahead into each file when the file is opened, so the arm's value is set BEFORE the

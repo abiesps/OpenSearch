@@ -28,6 +28,8 @@ import json
 import os
 import re
 import subprocess
+
+import coldpath_readattr
 import time
 
 def target_kb(mode, default_kb):
@@ -216,12 +218,17 @@ def block_trace_start():
     return {"instance": inst}
 
 
-def block_trace_stop(layers):
+def block_trace_stop(layers, index_dirs=None):
+    """
+    Size histogram of every read request issued to the data path's disks since start; with index_dirs (the arm's
+    index directories), also the attribution of each request to index-file data or other reads
+    (coldpath_readattr.attribute_block: extents, windows, fragmentation splits, metadata reads).
+    """
     inst = _instance()
     with open(f"{inst}/events/block/block_rq_issue/enable", "w") as f:
         f.write("0\n")
     devs = _disks(layers)
-    hist, n = {}, 0
+    hist, n, requests, req_dev = {}, 0, [], None
     with open(f"{inst}/trace") as f:
         for line in f:
             m = RQ.search(line)
@@ -230,8 +237,16 @@ def block_trace_stop(layers):
             b = int(m.group(6)) * 512
             hist[b] = hist.get(b, 0) + 1
             n += 1
+            requests.append((int(m.group(5)) * 512, b))
+            req_dev = f"{m.group(1)}:{m.group(2)}"
     with open(f"{inst}/trace", "w") as f:
         f.write("")
     sizes = sorted(hist)
-    return {"reads": n, "bytes_hist": {str(k): hist[k] for k in sizes}, "max_bytes": sizes[-1] if sizes else None,
-            "total_bytes": sum(k * v for k, v in hist.items()), "devices": sorted(devs), "source": "block:block_rq_issue"}
+    out = {"reads": n, "bytes_hist": {str(k): hist[k] for k in sizes}, "max_bytes": sizes[-1] if sizes else None,
+           "total_bytes": sum(k * v for k, v in hist.items()), "devices": sorted(devs), "source": "block:block_rq_issue"}
+    if index_dirs is not None:
+        if len(devs) > 1:
+            out["attribution_gap"] = f"more than one device below the data path ({sorted(devs)}): not attributed"
+        else:
+            out["attribution"] = coldpath_readattr.attribute_block(requests, index_dirs, req_dev or next(iter(devs), ""))
+    return out

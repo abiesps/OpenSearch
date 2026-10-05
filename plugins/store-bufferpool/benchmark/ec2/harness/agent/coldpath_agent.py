@@ -43,6 +43,9 @@ Endpoints (JSON in and out):
                                      read request issued to the data path's disks (EBS device read sizes)
   POST /trace/nfs/_start, _stop      tracefs nfs:nfs_initiate_read: histogram of the byte count of every READ RPC
                                      sent to EFS between start and stop (the per-read request size)
+  _stop?uuids=a,b (both traces)      also attributes every read to index-file data (EBS: FIEMAP extents of the Lucene
+                                     files; EFS: READ fileid = inode) or to other reads (metadata), with windows,
+                                     reads crossing a 128 KiB window and extent splits (coldpath_readattr.py)
   GET  /node/status                  running JVM pid and command line, last started arm
   POST /node/stop                    runs every configured stop command; waits until no JVM matches
   POST /node/restart  {"arm": "S1"}  stop as above, then the arm's start command; returns the new pid
@@ -68,6 +71,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coldpath_readahead  # noqa: E402 - installed next to this file
+import coldpath_readattr  # noqa: E402 - installed next to this file
 
 VERSION = "1"
 PAGE = os.sysconf("SC_PAGE_SIZE")
@@ -177,12 +181,17 @@ class Agent:
             f.write("1\n")
         return {"tracefs": t}
 
-    def nfs_trace_stop(self):
+    NFS_READ = re.compile(r"nfs_initiate_read: fileid=[0-9a-f]+:[0-9a-f]+:(\d+) fhandle=\S+ offset=(\d+) count=(\d+)")
+
+    def nfs_trace_stop(self, index_dirs=None):
+        """Byte-count histogram of the READ RPCs since start; with index_dirs, also their attribution to index files
+        (fileid = inode number; coldpath_readattr.attribute_nfs)."""
         t = self._tracefs()
         with open(f"{t}/events/nfs/nfs_initiate_read/enable", "w") as f:
             f.write("0\n")
         hist = {}
         n = 0
+        reads = []
         with open(f"{t}/trace") as f:
             for line in f:
                 m = re.search(r"\bcount=(\d+)", line)
@@ -190,11 +199,25 @@ class Agent:
                     c = int(m.group(1))
                     hist[c] = hist.get(c, 0) + 1
                     n += 1
+                    d = self.NFS_READ.search(line)
+                    if d:
+                        reads.append((int(d.group(1)), int(d.group(2)), int(d.group(3))))
         with open(f"{t}/trace", "w") as f:
             f.write("")
         sizes = sorted(hist)
-        return {"reads": n, "bytes_hist": {str(k): hist[k] for k in sizes}, "max_bytes": sizes[-1] if sizes else None,
-                "total_bytes": sum(k * v for k, v in hist.items())}
+        out = {"reads": n, "bytes_hist": {str(k): hist[k] for k in sizes}, "max_bytes": sizes[-1] if sizes else None,
+               "total_bytes": sum(k * v for k, v in hist.items())}
+        if index_dirs is not None:
+            if len(reads) != n:
+                out["attribution_gap"] = f"{n - len(reads)} READ events without fileid/offset"
+            else:
+                out["attribution"] = coldpath_readattr.attribute_nfs(reads, index_dirs)
+        return out
+
+    def trace_index_dirs(self, q, st):
+        """?uuids=a,b on a trace stop: the arm's index directories whose files the device reads are attributed to."""
+        uuids = set(x for x in q.get("uuids", "").split(",") if x)
+        return self.index_dirs(st["data_path"], uuids) if uuids else None
 
     def storage(self, arm):
         """The storage of an arm (?arm=NAME), else of the last started arm, else the default data_path."""
@@ -600,11 +623,11 @@ def make_handler(agent, token):
                 elif route == ("POST", "/trace/block/_start"):
                     out = coldpath_readahead.block_trace_start()
                 elif route == ("POST", "/trace/block/_stop"):
-                    out = coldpath_readahead.block_trace_stop(agent.readahead.layers(st))
+                    out = coldpath_readahead.block_trace_stop(agent.readahead.layers(st), agent.trace_index_dirs(q, st))
                 elif route == ("POST", "/trace/nfs/_start"):
                     out = agent.nfs_trace_start()
                 elif route == ("POST", "/trace/nfs/_stop"):
-                    out = agent.nfs_trace_stop()
+                    out = agent.nfs_trace_stop(agent.trace_index_dirs(q, st))
                 elif route == ("GET", "/node/status"):
                     pid = agent.jvm_pid()
                     cmd = None

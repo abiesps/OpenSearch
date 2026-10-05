@@ -13,6 +13,9 @@ Unit checks of the readahead / device-read rules (stdlib, no root, no AWS):
     any change, set / read back / ok, the last mode applied again after a reboot), the block_rq_issue trace parser
   - coldbench.device_vs_bufferpool: one device read per window passes; split reads, extra bytes or a size outside
     the bufferpool's classes fail; mountstats / diskstats fallback
+  - agent coldpath_readattr + the attributed rule: a window split at an extent boundary (XFS fragmentation) and
+    file-system metadata reads pass, a window split into 4 KiB pages, a read across a window boundary and more data
+    bytes than the bufferpool read fail; EOF clipping; NFS READs matched by inode; FIEMAP of a real file (Linux)
   selftest_readahead.py
 """
 import json
@@ -26,6 +29,7 @@ sys.path.insert(0, here)
 sys.path.insert(0, os.path.join(here, "agent"))
 import coldbench  # noqa: E402
 import coldpath_readahead as cr  # noqa: E402
+import coldpath_readattr as ra  # noqa: E402
 
 N = [0]
 
@@ -109,12 +113,93 @@ def main():
     check(coldbench.device_vs_bufferpool(ds)["ok"] is False, "diskstats fallback catches an extra read")
     old = {"bp": {"loads": 3}}
     check(coldbench.device_vs_bufferpool(old)["ok"] is None, "old binary without read counters: a gap, not a pass")
+    attribution_checks(check)
     # reads_by_size deltas (dict counters) in io_delta
     pre = {"bp": {"files": {"_0.kdd": {"reads": 1, "reads_by_size": {"131072": 1}}}}}
     post = {"bp": {"files": {"_0.kdd": {"reads": 3, "reads_by_size": {"131072": 2, "32768": 1}}}}}
     io = coldbench.io_delta(pre, post)
     check(io["bp"]["reads"] == 2 and io["bp"]["reads_by_size"] == {"131072": 1, "32768": 1}, json.dumps(io))
     print(f"SELFTEST-READAHEAD PASS: {N[0]} checks")
+
+
+K = 1024
+
+
+def _with_files(files):
+    """files: {path: (size, ino, [(logical, physical, length)])} -> patches coldpath_readattr's file lookups."""
+    class St:
+        def __init__(self, size, ino):
+            self.st_size, self.st_ino, self.st_mtime_ns = size, ino, 0
+    ra.lucene_files = lambda dirs: {p: St(v[0], v[1]) for p, v in files.items()}
+    ra._file_info = lambda p, st, extents: (st.st_size, 0, st.st_ino, files[p][2])
+    ra._partition_offset = lambda dev: 0
+
+
+def _att_io(bp, att):
+    return {"bp": bp, "block_read_sizes": {"reads": att["data_reads"] + att["other_reads"], "total_bytes": 0,
+                                           "bytes_hist": {}, "attribution": att}}
+
+
+def attribution_checks(check):
+    real = (ra.lucene_files, ra._file_info, ra._partition_offset)
+    try:
+        bp1 = {"reads": 1, "prefetch_reads": 0, "bytes_read": 128 * K, "reads_by_size": {"131072": 1}}
+        # one 128 KiB window whose file extents are not physically contiguous: two requests, one per extent
+        _with_files({"/i/_0.dvd": (512 * K, 11, [(0, 1 << 20, 64 * K), (64 * K, 5 << 20, 448 * K)])})
+        att = ra.attribute_block([(1 << 20, 64 * K), (5 << 20, 64 * K), (100 << 20, 16 * K)], ["/i"], "259:1")
+        check(att["data_reads"] == 2 and att["windows"] == 1 and att["extent_splits"] == 1 and att["other_reads"] == 1
+              and att["other_bytes"] == 16 * K and att["data_bytes"] == 128 * K, f"fragmentation split attributed {att}")
+        d = coldbench.device_vs_bufferpool(_att_io(bp1, att))
+        check(d["ok"] is True and d["rule"] == "attributed" and d["other_hist"] == {"16384": 1},
+              f"fragmentation split + metadata read pass {d}")
+        # the same window read as 32 pages of 4 KiB (readahead 0 without the read hint)
+        _with_files({"/i/_0.dvd": (512 * K, 11, [(0, 1 << 20, 512 * K)])})
+        att = ra.attribute_block([((1 << 20) + i * 4 * K, 4 * K) for i in range(32)], ["/i"], "259:1")
+        check(att["data_reads"] == 32 and att["windows"] == 1 and att["extent_splits"] == 0, f"4 KiB split {att}")
+        check(coldbench.device_vs_bufferpool(_att_io(bp1, att))["ok"] is False, "a window split into 4 KiB pages fails")
+        # a request across a 128 KiB file block (kernel readahead or a merge beyond the window)
+        att = ra.attribute_block([((1 << 20) + 64 * K, 128 * K)], ["/i"], "259:1")
+        d = coldbench.device_vs_bufferpool(_att_io(bp1, att))
+        check(att["cross_window"] == 1 and d["ok"] is False and d["attributed_checks"]["no_read_crosses_window"] is False,
+              "a read across a window boundary fails")
+        # more data bytes than the bufferpool read (speculative bytes)
+        att = ra.attribute_block([(1 << 20, 128 * K), ((1 << 20) + 128 * K, 128 * K)], ["/i"], "259:1")
+        check(coldbench.device_vs_bufferpool(_att_io(bp1, att))["ok"] is False, "extra data bytes fail")
+        # end of file: the device reads the whole last page, the bufferpool window is clipped at 70,000 bytes
+        _with_files({"/i/_1.fdt": (70000, 12, [(0, 2 << 20, 73728)])})
+        att = ra.attribute_block([(2 << 20, 73728)], ["/i"], "259:1")
+        bpe = {"reads": 1, "prefetch_reads": 0, "bytes_read": 70000, "reads_by_size": {"131072": 1}}
+        check(att["data_bytes"] == 70000 and coldbench.device_vs_bufferpool(_att_io(bpe, att))["ok"] is True,
+              f"EOF clipped {att}")
+        # two 32 KiB random windows next to each other in one 128 KiB block: two bufferpool reads, two device reads
+        _with_files({"/i/_2.fdt": (1 << 20, 13, [(0, 3 << 20, 1 << 20)])})
+        att = ra.attribute_block([(3 << 20, 32 * K), ((3 << 20) + 32 * K, 32 * K)], ["/i"], "259:1")
+        bp2 = {"reads": 2, "prefetch_reads": 0, "bytes_read": 64 * K, "reads_by_size": {"32768": 2}}
+        check(coldbench.device_vs_bufferpool(_att_io(bp2, att))["ok"] is True, "adjacent 32 KiB windows pass")
+        # NFS: READ fileid = inode; a READ of another file is "other"; count rounded up to pages, clipped at EOF
+        _with_files({"/e/_0.kdd": (200 * K + 100, 77, [])})
+        att = ra.attribute_nfs([(77, 0, 128 * K), (77, 128 * K, 76 * K), (99, 0, 4 * K)], ["/e"])
+        bpn = {"reads": 2, "prefetch_reads": 0, "bytes_read": 200 * K + 100, "reads_by_size": {"131072": 2}}
+        io = {"bp": bpn, "nfs_read_sizes": {"reads": 3, "total_bytes": 0, "bytes_hist": {}, "attribution": att}}
+        check(att["data_bytes"] == 200 * K + 100 and att["other_reads"] == 1 and coldbench.device_vs_bufferpool(io)["ok"],
+              f"NFS attribution {att}")
+    finally:
+        ra.lucene_files, ra._file_info, ra._partition_offset = real
+    # FIEMAP of a real file (Linux file systems that support it)
+    tmp = tempfile.mkdtemp()
+    try:
+        p = os.path.join(tmp, "f")
+        with open(p, "wb") as f:
+            f.write(os.urandom(256 * K))
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            ext = ra.fiemap(p)
+            check(sum(e[2] for e in ext) >= 256 * K and ext[0][0] == 0, f"fiemap {ext}")
+        except OSError as e:
+            print(f"  (fiemap not available here: {e}; checked on the data node)")
+    finally:
+        shutil.rmtree(tmp)
 
 
 if __name__ == "__main__":
