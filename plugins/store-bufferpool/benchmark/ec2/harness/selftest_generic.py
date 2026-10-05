@@ -362,6 +362,34 @@ def part_d(osbw, tmp):
     v = {"top": 60.0, "left": 0.0, "bottom": 40.0, "right": 20.0, "centroid": {"lat": 50.0, "lon": 10.0}}
     t, l, b, r = families_ext.geo_box(v, 0.01)
     check(math.isclose((t - b) * (r - l), 0.01 * 400, rel_tol=1e-9), "(d) geo box covers 1 % of the extent area")
+    # geo_shape centre: the densest geotile cell, small enough to fit in the smallest box
+    world = {"top": 84.0, "left": -180.0, "bottom": -87.0, "right": 180.0}
+    zw = families_ext.densest_tile_zoom(world)
+    check(zw == 6 and 360.0 / (1 << zw) <= math.sqrt(0.001) * 360.0 / 2 < 360.0 / (1 << (zw - 1)),
+          f"(d) densest-tile zoom for a world extent is the smallest that fits half the 0.1 % box: {zw}")
+    c = families_ext.geotile_centre("6/33/21")
+    check(math.isclose(c["lon"], 33.5 / 64 * 360 - 180) and 49.0 < c["lat"] < 52.0,
+          f"(d) geotile 6/33/21 centre is in central Europe: {c}")
+    c0 = families_ext.geotile_centre("0/0/0")
+    check(abs(c0["lat"]) < 1e-9 and abs(c0["lon"]) < 1e-9, "(d) geotile 0/0/0 centre is (0, 0)")
+
+    class TileMock:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, path, body=None, timeout=None):
+            self.calls.append(body)
+            aggs = body["aggs"]
+            if "b" in aggs:
+                return {"aggregations": {"b": {"bounds": {"top_left": {"lat": 84.0, "lon": -180.0},
+                                                         "bottom_right": {"lat": -87.0, "lon": 180.0}}}}}
+            return {"aggregations": {"t": {"buckets": [{"key": "6/32/22", "doc_count": 5}, {"key": "6/33/21", "doc_count": 7},
+                                                       {"key": "6/31/22", "doc_count": 7}]}}}
+    tm = TileMock()
+    gv = families_ext._geo_vals(tm, "i", [{"field": "shape", "type": "geo_shape"}])["shape"]
+    check(gv["centroid"] == families_ext.geotile_centre("6/31/22") and "geotile_grid" in gv["centroid_rule"]
+          and tm.calls[1]["aggs"]["t"]["geotile_grid"]["precision"] == 6,
+          f"(d) geo_shape centre = densest tile (ties: smallest key), zoom 6: {gv['centroid']}")
     ring = families_ext.octagon((t, l, b, r))
     check(len(ring) == 9 and ring[0] == ring[-1] and all(l <= x <= r and b <= y <= t for x, y in ring),
           "(d) octagon is closed and inside its box")

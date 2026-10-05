@@ -11,8 +11,9 @@ Generated query families for the generic workloads (profiles with "osb_import": 
                      the same families from the same rules minus the date ones (_generate_untimed); a profile
                      without numeric fields gets agg:range from a date_range over the time field
   geo (geo_point and geo_shape fields)
-                     extent from geo_bounds (wrap_longitude false), centre = geo_centroid (geo_point) or the centre of
-                     the bounds (geo_shape has no geo_centroid); boxes centred there covering 0.1 %, 1 %, 10 % of the
+                     extent from geo_bounds (wrap_longitude false), centre = geo_centroid (geo_point) or, for
+                     geo_shape (no geo_centroid), the centre of the most populated geotile_grid cell at the smallest
+                     zoom whose cell is at most half as wide as the smallest box; boxes centred there covering 0.1 %, 1 %, 10 % of the
                      extent area -> geo_bounding_box and geo_shape envelope (intersects; within and disjoint at 1 % on
                      geo_shape fields only: OpenSearch rejects them on geo_point);
                      geo_distance with radius 0.1 %, 1 %, 10 % of the extent diagonal; an octagon inscribed in the
@@ -196,10 +197,40 @@ def _geo_vals(client, index, geo):
             v["centroid"] = dict(r["aggregations"]["c"]["location"])
             v["centroid_rule"] = "geo_centroid"
         else:
-            v["centroid"] = {"lat": (v["top"] + v["bottom"]) / 2, "lon": (v["left"] + v["right"]) / 2}
-            v["centroid_rule"] = "centre of geo_bounds (geo_shape has no geo_centroid)"
+            # geo_shape has no geo_centroid, and the centre of the bounds of world-wide data is empty (OSM shapes:
+            # lat -1.8, lon 0.0 in the Gulf of Guinea, where the generated distance ops matched nothing): use the
+            # centre of the most populated geotile cell, the cell small enough to fit in the smallest box
+            z = densest_tile_zoom(v)
+            r = client.request("POST", f"/{index}/_search?request_cache=false",
+                               {"size": 0, "aggs": {"t": {"geotile_grid": {"field": f, "precision": z, "size": 10}}}})
+            buckets = r["aggregations"]["t"]["buckets"]
+            if not buckets:
+                continue
+            top = sorted(buckets, key=lambda b: (-b["doc_count"], b["key"]))[0]
+            v["centroid"] = geotile_centre(top["key"])
+            v["centroid_rule"] = (f"centre of the most populated geotile_grid cell at zoom {z} (key {top['key']}, "
+                                  f"{top['doc_count']} docs; ties: smallest key); zoom = smallest whose cell width is "
+                                  "at most half the width of the smallest box (geo_shape has no geo_centroid)")
         out[f] = v
     return out
+
+
+def densest_tile_zoom(v):
+    """Smallest geotile zoom whose cell width (360 / 2^z degrees) is at most half the smallest box's width."""
+    width = math.sqrt(min(frac for _, frac in AREA_FRACTIONS)) * max(v["right"] - v["left"], 1e-9)
+    z = 0
+    while z < 29 and 360.0 / (1 << z) > width / 2:
+        z += 1
+    return z
+
+
+def geotile_centre(key):
+    """Centre (lat, lon) of a geotile_grid cell "z/x/y" (Web Mercator tiles, as OpenSearch keys them)."""
+    z, x, y = (int(p) for p in key.split("/"))
+    n = 1 << z
+    lon = (x + 0.5) / n * 360.0 - 180.0
+    lat = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 0.5) / n))))
+    return {"lat": lat, "lon": lon}
 
 
 def _nested_vals(client, index, nested):
@@ -243,7 +274,7 @@ def discover(client, index, profile):
     if profile.get("geo_fields"):
         vals["geo"] = _geo_vals(client, index, profile["geo_fields"])
         vals["rules"] += ("; geo: geo_bounds (wrap_longitude false) and geo_centroid (geo_point) or the centre of "
-                          "the bounds (geo_shape)")
+                          "the most populated geotile_grid cell (geo_shape)")
     if profile.get("nested"):
         vals["nested"] = _nested_vals(client, index, profile["nested"])
         vals["rules"] += ("; nested: date min/max/p5/p40/p50/p60/p95 and keyword ranks 0 / len//10 / last of the top "
