@@ -209,7 +209,10 @@ def index_metrics(client, names):
         st = client.request("GET", f"/{n}/_stats/docs,indexing,merge,refresh,flush,store,segments")["_all"]["primaries"]
         row = client.request("GET", f"/_cat/indices/{n}?format=json&bytes=b&h=pri,rep,docs.count,pri.store.size")[0]
         segs = client.request("GET", f"/_cat/segments/{n}?format=json&h=shard,prirep,segment")
-        out[n] = {"docs": int(row["docs.count"]), "primaries": int(row["pri"]), "replicas": int(row["rep"]),
+        # _cat/indices docs.count counts Lucene documents, which include nested child documents (nested: 29.4M
+        # Lucene docs for 11.2M top-level docs); the workload's document-count is the top-level count (_count API)
+        out[n] = {"docs": client.request("GET", f"/{n}/_count")["count"], "lucene_docs": int(row["docs.count"]),
+                  "primaries": int(row["pri"]), "replicas": int(row["rep"]),
                   "pri_store_bytes": int(row["pri.store.size"]), "segments": sum(1 for s in segs if s["prirep"] in ("p", "primary")),
                   "index_time_ms": st["indexing"]["index_time_in_millis"], "index_total": st["indexing"]["index_total"],
                   "merge_total_time_ms": st["merges"]["total_time_in_millis"], "merges_total": st["merges"]["total"],
