@@ -304,14 +304,22 @@ def warm_efs_fields(it, io):
     return out
 
 
+def efs_level(count, target):
+    """True if a backend connection count is at the target level: exactly 1 for target 1; at least the target above 1
+    (efs-proxy multiplexes 5 connections; a 6th socket of the previous incarnation can stay open while it closes)."""
+    if count is None:
+        return False
+    return count == 1 if target == 1 else count >= target
+
+
 def efs_connections_ok(io, target):
-    """None if not an EFS sample or no target; else start == end == target, on the same efs-proxy process."""
+    """None if not an EFS sample or no target; else start and end at the target level, on the same efs-proxy process."""
     if not target or io.get("nfs") is None:
         return None
     e = io.get("efs_connections")
     if e is None:
         return False  # an EFS sample without the count: connection state unknown
-    return e["start"] == e["end"] == target and e["proxy_pid"][0] == e["proxy_pid"][1]
+    return efs_level(e["start"], target) and efs_level(e["end"], target) and e["proxy_pid"][0] == e["proxy_pid"][1]
 
 
 # ---------------------------------------------------------------- arms
@@ -620,9 +628,9 @@ class Iteration:
         timeout_s = EFS_PRECONDITION_TIMEOUT_S if timeout_s is None else timeout_s
         c = self.node.agent.request("GET", f"/efs/connections?{self.q}")["efs_connections"]
         n = (c or {}).get("count")
-        if n == self.efs_target:
+        if efs_level(n, self.efs_target):
             return None
-        if n is not None and n > self.efs_target:
+        if n is not None and self.efs_target == 1 and n > 1:
             raise RuntimeError(f"arm {self.arm['node']}: the EFS mount has {n} backend connections, target {self.efs_target}; "
                                "a count cannot be lowered without a remount (for 1: remount with efs_conn_ctl.sh pin-on)")
         r = self.node.agent.request("POST", f"/efs/precondition?{self.q}&target={self.efs_target}&timeout_s={timeout_s}",
@@ -1228,9 +1236,10 @@ def add_common(p):
                    "(only 0 is accepted: a cold iteration needs every index page evicted)")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
     p.add_argument("--efs-connections", type=int, default=EFS_CONNECTIONS_DEFAULT,
-                   help="EFS arms: efs-proxy backend TCP connections every sample must have at its start and end; the "
-                        "agent pre-conditions the mount (O_DIRECT reads of a scratch file) when it has fewer. 5 = the "
-                        "scaled-up state of a busy node (default); 1 = sensitivity, needs a fresh mount pinned to one "
+                   help="EFS arms: efs-proxy backend TCP connections every sample must have at its start and end (at "
+                        "least N for N > 1, exactly 1 for 1); the agent pre-conditions the mount (O_DIRECT reads of a "
+                        "scratch file) when it has fewer. 5 = the scaled-up state of a busy node (default); 1 = "
+                        "sensitivity, needs a fresh mount pinned to one "
                         "connection (storage/efs_conn_ctl.sh pin-on); 0 = record the count only (no EFS verdict)")
     p.add_argument("--bp-block-size", type=int, default=runguards.IO_DEFAULTS["block_size"],
                    help="bufferpool arms: required cache block size in bytes (from /_bufferpool/stats; else refused)")

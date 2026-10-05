@@ -155,15 +155,22 @@ def cold_protocols(data, skip):
 
 
 
+def efs_level(n):
+    """efs-proxy runs on 1 backend connection or multiplexes 5 (a 6th socket of the previous incarnation can linger):
+    level "1", "5" (5 or more), or "N" for a partial count."""
+    return "1" if n == 1 else "5" if n >= 5 else str(n)
+
+
 def efs_state(sample):
-    """EFS backend connection count of a sample: None (not EFS), "unknown" (EFS, not recorded), "N" or "N->M"."""
+    """EFS connection level of a sample: None (not EFS), "unknown" (EFS, not recorded), "1", "5", or "A->B"."""
     io = sample.get("io") or {}
     if io.get("nfs") is None:
         return None
     e = io.get("efs_connections")
-    if e is None or e.get("start") is None:
+    if e is None or e.get("start") is None or e.get("end") is None:
         return "unknown"
-    return str(e["start"]) if e["start"] == e["end"] else f"{e['start']}->{e['end']}"
+    a, b = efs_level(e["start"]), efs_level(e["end"])
+    return a if a == b else f"{a}->{b}"
 
 
 class Data:

@@ -582,6 +582,17 @@ def main():
          "--ni-boot", "100", "--out", os.path.join(tmp, "analysis-efs-5")])
     a5 = json.load(open(os.path.join(tmp, "analysis-efs-5", "analysis.json")))
     assert a5["efs_connections"]["kept_states"] == ["5"], a5["efs_connections"]
+    # a 6th socket of the previous incarnation can stay open while it closes: 6 is the scaled-up level too
+    m.efs_conns = 6
+    s10 = os.path.join(tmp, "session-efs-6")
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1", "--modes", "cold,warm",
+         "--no-results", "--out", s10, "--strict"])
+    r10 = [json.loads(l) for l in open(os.path.join(s10, "samples.jsonl"))]
+    assert all((r["checks"]["efs_connections_ok"] if r["mode"] == "cold" else r["efs_connections_ok"]) for r in r10
+               if r["type"] == "sample"), "6 backend connections is the scaled-up level"
+    run([PY, os.path.join(here, "analyze.py"), s2, s10, "--base", "S1-EFS", "--boot", "200", "--ni-boot", "100",
+         "--out", os.path.join(tmp, "analysis-efs-6")])
+    assert json.load(open(os.path.join(tmp, "analysis-efs-6", "analysis.json")))["efs_connections"]["kept_states"] == ["5"]
     # the 1-connection sensitivity needs a fresh pinned mount: a mount above the target is refused, never lowered
     m.efs_conns = 5
     p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
