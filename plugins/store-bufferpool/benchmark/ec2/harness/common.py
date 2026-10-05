@@ -19,6 +19,15 @@ class HttpError(RuntimeError):
         self.body = body
 
 
+class RequestTimeout(TimeoutError):
+    """A request got no complete response within the client timeout (the connection is closed, the request may still
+    run on the server). coldbench treats it as a discarded run, never as a latency sample."""
+
+    def __init__(self, method, path, timeout_s):
+        super().__init__(f"{method} {path[:200]}: no response within {timeout_s:.0f} s")
+        self.method, self.path, self.timeout_s = method, path, timeout_s
+
+
 class JsonClient:
     """
     One keep-alive HTTP connection to a base URL. request() returns the decoded JSON body; non-2xx raises HttpError.
@@ -69,6 +78,9 @@ class JsonClient:
                 raw = resp.read()
                 self.last_wall_s = time.perf_counter() - t0
                 break
+            except TimeoutError as e:  # socket.timeout: the request outlived the client timeout; never retried
+                self.close()
+                raise RequestTimeout(method, path, t) from e
             except (http.client.RemoteDisconnected, http.client.CannotSendRequest, BrokenPipeError,
                     ConnectionResetError, ConnectionRefusedError):
                 self.close()

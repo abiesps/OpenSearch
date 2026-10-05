@@ -54,7 +54,7 @@ import canonical_ext  # noqa: E402 - generic workloads: percolate slots, highlig
 import indices_ext  # noqa: E402 - generic workloads: multi-index targets, not-applicable arms
 import runguards  # noqa: E402 - IO configuration and other-open-indices checks at every arm start
 import segformat_check  # noqa: E402 - segment formats proven from the files (index "formats" entry)
-from common import HttpError, JsonClient, JsonlWriter, wait_until  # noqa: E402
+from common import HttpError, JsonClient, JsonlWriter, RequestTimeout, wait_until  # noqa: E402
 
 SCHEMA = 1
 FLOAT_DIGITS = 12
@@ -172,8 +172,14 @@ def execute(client, index, op):
 
 
 # ---------------------------------------------------------------- the data node
+# Client socket timeout per OpenSearch request (search, cache clear, settings). One value for every configuration of
+# a session (it is recorded with the session arguments); raise it for operations whose single execution can
+# exceed 2 h (big5 1,000 GB phrase query on Amazon EFS), so a slow request finishes instead of failing the run.
+REQUEST_TIMEOUT_DEFAULT_S = 7200.0
+
+
 class Node:
-    def __init__(self, url, agent_url, token, residency_tolerance, timeout=7200.0):
+    def __init__(self, url, agent_url, token, residency_tolerance, timeout=REQUEST_TIMEOUT_DEFAULT_S):
         self.url = url
         self.os = JsonClient(url, timeout=timeout)
         self.agent = JsonClient(agent_url, timeout=900.0, headers={"X-Coldpath-Token": token}) if agent_url else None
@@ -1013,7 +1019,10 @@ class Session:
         if self.op_caps and getattr(a, "executor", "replay") != "replay":
             sys.exit("--op-caps is implemented for the replay executor only")
         token = open(a.token_file).read().strip() if a.token_file else ""
-        self.node = Node(a.url, a.agent, token, a.residency_tolerance)
+        if getattr(a, "request_timeout", REQUEST_TIMEOUT_DEFAULT_S) <= 0:
+            sys.exit("--request-timeout must be > 0 seconds")
+        self.node = Node(a.url, a.agent, token, a.residency_tolerance,
+                         timeout=float(getattr(a, "request_timeout", REQUEST_TIMEOUT_DEFAULT_S)))
         os.makedirs(a.out, exist_ok=True)
         self.w = JsonlWriter(os.path.join(a.out, "samples.jsonl"))
         self.log_f = open(os.path.join(a.out, "session.log"), "a")
@@ -1283,6 +1292,7 @@ class Session:
         if attempt:
             run["attempt"] = attempt
         self.current_run = run
+        self.current_run_t0 = time.time()
         if indices_ext.not_applicable(arm):
             self.log(f"run {run_id}: NOT APPLICABLE: {arm['not_applicable']}")
             self.record(type="run", **run, available=False, reason=f"not applicable: {arm['not_applicable']}")
@@ -1372,20 +1382,59 @@ class Session:
         self.record(type="run_end", **run, prefetch_pool=self.node.prefetch_pool(), readahead=readahead_end,
                     nfs_xprt=self.nfs_transport(arm) if self.storage_nfs else None,
                     device_read_mismatches=mism, valid=not mism)
+        self.record_storage_incidents(run)
         if readahead_end is not None and not readahead_end["ok"]:
             raise RuntimeError(f"run {run_id}: kernel readahead changed during the run (a remount?): {readahead_end}; "
                                "this run is invalid")
 
+    def record_storage_incidents(self, run):
+        """
+        Kernel NFS stall windows ("nfs: server X not responding" until "... OK") during the run, from the agent
+        (GET /storage/incidents, agent v3). A hard NFS mount blocks every reader while it stalls, so samples inside a
+        window measure the stall: analyze.py excludes them from every verdict and reports them as sensitivity. An agent
+        without the endpoint is recorded as unavailable (the run's samples then carry no incident check).
+        """
+        if not self.node.agent:
+            return None
+        t0 = getattr(self, "current_run_t0", None) or time.time()
+        inc = self.agent_get(f"/storage/incidents?since={t0 - 5:.3f}&until={time.time() + 5:.3f}")
+        if inc is None:
+            return None
+        if inc.get("error") or not inc.get("available"):
+            self.record(type="storage_incident_check", **run, available=False, detail=inc)
+            return inc
+        self.record(type="storage_incident_check", **run, available=True, windows=len(inc.get("windows") or []))
+        if inc.get("windows"):
+            self.record(type="storage_incident", **run, windows=inc["windows"], lines=inc.get("lines", [])[:50])
+            self.log(f"  STORAGE INCIDENT during {run.get('run_id')}: {len(inc['windows'])} NFS stall window(s) "
+                     f"{[(w['server'], round(w['end'] - w['start'])) for w in inc['windows']]}; samples inside are excluded")
+        return inc
+
     def measure_run(self, rnd, lab, attempt):
-        """run_one; a node failure during the run (the JVM is gone) becomes RunDiscarded, anything else propagates."""
+        """run_one; a node failure during the run (the JVM is gone) or a request that outlived --request-timeout
+        becomes RunDiscarded (re-queued), anything else propagates."""
         try:
             self.run_one(rnd, lab, attempt)
         except (NodeStartFailed, ArmUnavailable):
             raise
+        except RequestTimeout as e:
+            # never a latency sample: cancel what still runs on the node, discard the run, re-queue it
+            run = getattr(self, "current_run", {})
+            try:
+                self.node.os.request("POST", "/_tasks/_cancel?actions=*search*", timeout=120)
+            except Exception as e2:  # noqa: BLE001 - the discard stands either way
+                self.log(f"  task cancel after the timeout failed: {e2}")
+            inc = self.record_storage_incidents(run)
+            self.record(type="run_discarded", **run, reason=f"request timeout: {e}"[:2000], request_timeout_s=e.timeout_s,
+                        storage_incident=bool(inc and inc.get("windows")),
+                        efs_connections=self.efs_connection_state(self.cfg["arms"][run.get("arm", parse_label(lab)[0])]),
+                        node_status=self.agent_get("/node/status"))
+            raise RunDiscarded(f"run {run.get('run_id')}: {e}") from e
         except Exception as e:  # noqa: BLE001 - classified below: only a node that died discards the run
             if not self.node.jvm_gone():
                 raise
             run = getattr(self, "current_run", {})
+            self.record_storage_incidents(run)
             self.record(type="run_discarded", **run, reason=f"node failed during the run: {type(e).__name__}: {e}"[:2000],
                         efs_connections=self.efs_connection_state(self.cfg["arms"][run.get("arm", parse_label(lab)[0])]),
                         node_status=self.agent_get("/node/status"))
@@ -1460,6 +1509,9 @@ def add_common(p):
     p.add_argument("--token-file")
     p.add_argument("--residency-tolerance", type=int, default=0, help="bytes of index files allowed resident after a clear "
                    "(only 0 is accepted: a cold iteration needs every index page evicted)")
+    p.add_argument("--request-timeout", type=float, default=REQUEST_TIMEOUT_DEFAULT_S,
+                   help="client socket timeout in seconds for every OpenSearch request (default 7200); the same "
+                        "value applies to every configuration of the session")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
     p.add_argument("--efs-connections", type=int, default=EFS_CONNECTIONS_DEFAULT,
                    help="EFS arms: efs-proxy backend TCP connections every sample must have at its start and end (at "

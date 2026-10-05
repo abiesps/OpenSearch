@@ -104,6 +104,19 @@ After a bufferpool arm's failure the stock store types of every stock data path 
 (`store_type_normalize` with `after`). A second failure records `run_failed` and the session continues. Errors that
 are not node failures (the JVM still runs) stop the session as before.
 
+Request timeout and storage incidents (big5-1000 host C, 2026-10-05: its Amazon EFS mount stalled, "nfs: server
+127.0.0.1 not responding", and a phrase-query request outlived the client timeout):
+- `--request-timeout S` (default 7200) is the client socket timeout of every OpenSearch request, one value for every
+  configuration of a session (recorded in the session arguments). A request that outlives it raises
+  `common.RequestTimeout`: the harness cancels the searches still running on the node (`POST _tasks/_cancel`),
+  records `run_discarded` (reason `request timeout`) and re-queues the run like a node failure. A timeout is never a
+  latency sample.
+- After every run (and with every discard) the harness asks the agent (v3, `GET /storage/incidents`) for kernel NFS
+  stall windows during the run ("nfs: server X not responding" until "nfs: server X OK", from `journalctl -k`) and
+  records `storage_incident_check` and, if there were any, `storage_incident` with the windows. analyze.py excludes
+  every sample whose request overlaps a window (1 s margin) from every comparison and verdict, and reports the count
+  as sensitivity. An agent without the endpoint is recorded as `available: false`.
+
 ## Index state per run
 Aborted sessions (common-rules "Store type left on the other data path after an aborted session"): (a) a SIGTERM or
 any error during a run triggers an exit trap that closes the configured indices on the running node and resets their

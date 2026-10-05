@@ -96,6 +96,11 @@ class Mock:
         self.preconditions = 0
         self.efs_snapshots = 0
         self.efs_drop_at = None
+        # request timeout: the next slow_searches searches answer after slow_search_s (outside the lock)
+        self.slow_searches = 0
+        self.slow_search_s = 0.0
+        # kernel NFS stall windows the agent reports (GET /storage/incidents), as (start, end) epoch pairs
+        self.nfs_stalls = []
 
     def search(self, index, body):
         key = json.dumps(body, sort_keys=True)
@@ -162,6 +167,10 @@ def make_os_handler(m):
             q = dict(urllib.parse.parse_qsl(u.query))
             p = u.path
             b = self.body()  # OpenSearch Benchmark sends GET with a body
+            if p.endswith("/_search") and m.slow_searches > 0:
+                with m.lock:
+                    m.slow_searches -= 1
+                time.sleep(m.slow_search_s)
             with m.lock:
                 if m.down:  # the JVM is gone: the connection drops without a response
                     self.close_connection = True
@@ -352,6 +361,11 @@ def make_agent_handler(m):
                                            "efs_connections": {"count": m.efs_conns, "proxy_pid": m.proxy_pid} if efs else None})
                 if u.path == "/efs/connections":
                     return self.send(200, {"efs_connections": {"count": m.efs_conns, "proxy_pid": m.proxy_pid} if efs else None})
+                if u.path == "/storage/incidents":
+                    t0, t1 = float(q["since"]), float(q["until"])
+                    w = [{"server": "127.0.0.1", "start": a0, "end": min(b0, t1), "open_end": b0 > t1}
+                         for a0, b0 in m.nfs_stalls if a0 <= t1 and b0 >= t0]
+                    return self.send(200, {"available": True, "since": t0, "until": t1, "windows": w, "lines": []})
                 if u.path == "/efs/precondition":
                     before, target = m.efs_conns, int(q["target"])
                     m.preconditions += 1
@@ -810,6 +824,50 @@ def main():
     d = _an.Data([out_c], "took_ms", "wall_ms")
     assert d.discarded == {"S1-EBS#r0"} and not any(k[2] == "S1-EBS#r0" for k in d.samples) and \
         any(k[2] == "S1-EBS#r0.a1" for k in d.samples), sorted({k[2] for k in d.samples})
+    # a request that outlives --request-timeout is never a latency sample: the run is discarded, the search is
+    # cancelled on the node, and the run is re-queued and measured again
+    m.searches, m.crash_after_searches = 0, None
+    m.slow_searches, m.slow_search_s = 1, 3.0
+    out_t = os.path.join(tmp, "session-timeout")
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common_pe, "--arm-list", "S0-EBS", "--rounds", "1",
+                        "--modes", "cold", "--cold-iters", "1", "--request-timeout", "1", "--out", out_t],
+                       capture_output=True, text=True, env=coldbench_env)
+    assert p.returncode == 0, p.stderr[-1500:]
+    recs = [json.loads(x) for x in open(os.path.join(out_t, "samples.jsonl"))]
+    disc = [r for r in recs if r["type"] == "run_discarded"]
+    assert len(disc) == 1 and disc[0]["reason"].startswith("request timeout") and disc[0]["request_timeout_s"] == 1, disc
+    assert [r["run_id"] for r in recs if r["type"] == "run_end"] == ["S0-EBS#r0.a1"], [r["type"] for r in recs]
+    assert ("os", "POST", "/_tasks/_cancel") in m.calls, "the timed-out search was not cancelled"
+    assert recs[0]["args"]["request_timeout"] == 1.0
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common_pe, "--arm-list", "S0-EBS", "--rounds", "1",
+                        "--modes", "cold", "--request-timeout", "0", "--out", os.path.join(tmp, "session-timeout0")],
+                       capture_output=True, text=True, env=coldbench_env)
+    assert p.returncode != 0 and "--request-timeout must be > 0" in p.stderr, p.stderr[-500:]
+    # a kernel NFS stall window during a run: recorded as a storage incident; analyze.py excludes the samples inside
+    # it from every verdict (sensitivity only) and keeps the others
+    now = time.time()
+    m.nfs_stalls = [(now - 3600.0, now + 3600.0)]
+    out_i, recs = session("session-incident", "S1-EBS")
+    m.nfs_stalls = []
+    inc = [r for r in recs if r["type"] == "storage_incident"]
+    assert len(inc) == 1 and inc[0]["windows"][0]["server"] == "127.0.0.1", [r["type"] for r in recs]
+    assert any(r["type"] == "storage_incident_check" and r["available"] for r in recs)
+    di = _an.Data([out_i], "took_ms", "wall_ms")
+    assert di.incidents and sum(di.incident_samples.values()) > 0 and not di.samples, (di.incident_samples, len(di.samples))
+    _, recs = session("session-no-incident", "S1-EBS")
+    assert not [r for r in recs if r["type"] == "storage_incident"]
+    assert [r["windows"] for r in recs if r["type"] == "storage_incident_check"] == [0]
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("coldpath_agent_t", os.path.join(here, "agent", "coldpath_agent.py"))
+    ag = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ag)
+    j = ("1000.000 h kernel: nfs: server 127.0.0.1 not responding, still trying\n"
+         "1010.500 h kernel: nfs: server 127.0.0.1 OK\n"
+         "1100.000 h kernel: something else\n"
+         "1200.000 h kernel: nfs: server 127.0.0.1 not responding, still trying\n")
+    r = ag.nfs_incidents(900.0, 1300.0, journal=j)
+    assert r["windows"] == [{"server": "127.0.0.1", "start": 1000.0, "end": 1010.5, "open_end": False},
+                            {"server": "127.0.0.1", "start": 1200.0, "end": 1300.0, "open_end": True}], r
     print(report[-3000:])
     print(f"\nSELFTEST PASS ({tmp})")
     if not a.keep:

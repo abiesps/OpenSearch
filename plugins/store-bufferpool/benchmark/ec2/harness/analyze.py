@@ -173,6 +173,16 @@ def efs_state(sample):
     return a if a == b else f"{a}->{b}"
 
 
+def in_incident(sample, incidents):
+    """True when the sample's request [t - duration, t] overlaps a recorded NFS stall window (1 s margin)."""
+    end = sample.get("t")
+    if end is None:
+        return False
+    dur = (sample.get("wall_ms") or sample.get("took_ms") or 0) / 1000.0
+    start = end - dur
+    return any(start <= w_end + 1.0 and end >= w_start - 1.0 for w_start, w_end, _, _ in incidents)
+
+
 class Data:
     def __init__(self, dirs, cold_metric, warm_metric, cold_skip_iters=0, keep_unknown_efs=False, efs_select=None):
         self.samples = collections.defaultdict(list)  # (mode, label, run_id, op) -> [sample]
@@ -186,6 +196,15 @@ class Data:
         self.skipped = collections.Counter()
         self.efs_counts = collections.Counter()  # (mode, label, efs state) -> samples
         self.efs_used = set()  # EFS states of the samples kept
+        # kernel NFS stall windows recorded by coldbench (storage_incident): a sample that overlaps one measured the
+        # stall of a hard mount, not the code; excluded from every verdict, counted as sensitivity
+        self.incidents = []  # (start, end, server, run_id)
+        for d in dirs:
+            for r in read_jsonl(os.path.join(d, "samples.jsonl")):
+                if r["type"] == "storage_incident":
+                    for w in r.get("windows") or []:
+                        self.incidents.append((w["start"], w["end"], w.get("server"), r.get("run_id")))
+        self.incident_samples = collections.Counter()  # (mode, label) -> samples excluded as storage incident
         for d in dirs:
             for r in read_jsonl(os.path.join(d, "samples.jsonl")):
                 t = r["type"]
@@ -205,6 +224,10 @@ class Data:
                         continue
                     if r.get("error"):
                         self.excluded[(r["mode"], r["label"], "error")] += 1
+                        continue
+                    if self.incidents and in_incident(r, self.incidents):
+                        self.excluded[(r["mode"], r["label"], "storage_incident")] += 1
+                        self.incident_samples[(r["mode"], r["label"])] += 1
                         continue
                     # EFS samples: valid only at the session's backend connection count (common-rules.md "Amazon
                     # EFS connection count is a measured variable"); cold samples carry it in checks / cold_ok
@@ -690,6 +713,13 @@ def main():
                      if "unknown" in data.efs_used else "."))
     res["efs_connections"] = {"kept_states": sorted(data.efs_used),
                               "per_label": {f"{m}|{l}|{e}": n for (m, l, e), n in data.efs_counts.items() if e is not None}}
+    res["storage_incidents"] = {"windows": [{"start": a0, "end": b0, "server": sv, "run_id": rid}
+                                            for a0, b0, sv, rid in data.incidents],
+                                "excluded_samples": {f"{m}|{l}": n for (m, l), n in data.incident_samples.items()}}
+    if data.incidents:
+        md.append(f"Storage incidents (kernel NFS stall windows, samples inside excluded from every verdict; "
+                  f"sensitivity only): {len(data.incidents)} window(s), excluded samples "
+                  + ", ".join(f"{m} {l}: {n}" for (m, l), n in sorted(data.incident_samples.items())) + ".")
     unavailable = [r for r in data.runs.values() if not r.get("available", True)]
     if unavailable:
         md.append("\n## Not available (gaps, not zero effects)")

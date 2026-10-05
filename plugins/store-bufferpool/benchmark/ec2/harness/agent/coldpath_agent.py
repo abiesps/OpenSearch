@@ -58,6 +58,9 @@ Endpoints (JSON in and out):
   _stop?uuids=a,b (both traces)      also attributes every read to index-file data (EBS: FIEMAP extents of the Lucene
                                      files; EFS: READ fileid = inode) or to other reads (metadata), with windows,
                                      reads crossing a 128 KiB window and extent splits (coldpath_readattr.py)
+  GET  /storage/incidents?since=T&until=T  kernel log lines "nfs: server X not responding" / "nfs: server X OK"
+                                     between the two epoch times (journalctl -k), as stall windows per NFS server;
+                                     samples inside a window are a storage incident (the caller excludes them)
   GET  /node/status                  running JVM pid and command line, last started arm
   POST /node/stop                    runs every configured stop command; waits until no JVM matches
   POST /node/restart  {"arm": "S1"}  stop as above, then the arm's start command; returns the new pid
@@ -87,7 +90,7 @@ import coldpath_readahead  # noqa: E402 - installed next to this file
 import coldpath_readattr  # noqa: E402 - installed next to this file
 import coldpath_efsconn  # noqa: E402 - installed next to this file
 
-VERSION = "2"
+VERSION = "3"
 PAGE = os.sysconf("SC_PAGE_SIZE")
 MADV_PAGEOUT = 21
 SYS_PIDFD_OPEN = 434  # same number on x86_64 and aarch64 (generic syscall table)
@@ -660,6 +663,43 @@ class Agent:
         return {"arm": arm, "pid": pid, "stop": stopped, "start": started}
 
 
+NFS_INCIDENT_RE = re.compile(r"nfs: server (\S+) (not responding|OK)")
+
+
+def nfs_incidents(since, until, journal=None):
+    """
+    Kernel NFS client stall messages between two epoch times: every "nfs: server X not responding" opens a window for
+    server X, the next "nfs: server X OK" closes it; a window still open at `until` ends at `until` (open_end=True).
+    journal: kernel log text in `journalctl -k -o short-unix` form (tests); default runs journalctl. A hard NFS mount
+    blocks every reader while it lasts, so the latency of anything inside a window measures the stall, not the code.
+    """
+    if journal is None:
+        try:
+            journal = subprocess.run(["journalctl", "-k", "-o", "short-unix", "--no-pager", "--since", f"@{since:.3f}",
+                                      "--until", f"@{until:.3f}"], capture_output=True, text=True, timeout=60).stdout
+        except (OSError, subprocess.SubprocessError) as e:
+            return {"available": False, "error": f"{type(e).__name__}: {e}", "since": since, "until": until}
+    lines, windows, open_w = [], [], {}
+    for line in journal.splitlines():
+        m = NFS_INCIDENT_RE.search(line)
+        if not m:
+            continue
+        try:
+            t = float(line.split()[0])
+        except (ValueError, IndexError):
+            continue
+        server, what = m.group(1), m.group(2)
+        lines.append({"t": t, "server": server, "msg": line[line.find("nfs: "):][:200]})
+        if what == "not responding":
+            open_w.setdefault(server, t)
+        elif server in open_w:
+            windows.append({"server": server, "start": open_w.pop(server), "end": t, "open_end": False})
+    for server, t0 in open_w.items():
+        windows.append({"server": server, "start": t0, "end": until, "open_end": True})
+    return {"available": True, "since": since, "until": until, "windows": sorted(windows, key=lambda w: w["start"]),
+            "lines": lines}
+
+
 def make_handler(agent, token):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -734,6 +774,9 @@ def make_handler(agent, token):
                     out = agent.nfs_trace_start()
                 elif route == ("POST", "/trace/nfs/_stop"):
                     out = agent.nfs_trace_stop(agent.trace_index_dirs(q, st))
+                elif route == ("GET", "/storage/incidents"):
+                    now = time.time()
+                    out = nfs_incidents(float(q.get("since", now - 3600)), float(q.get("until", now)))
                 elif route == ("GET", "/node/status"):
                     pid = agent.jvm_pid()
                     cmd = None
