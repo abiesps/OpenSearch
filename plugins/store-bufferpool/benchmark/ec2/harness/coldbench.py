@@ -506,19 +506,43 @@ def search_cache_bytes(node):
             "query_cache_entries": qc.get("cache_size"), "request_cache_bytes": rc.get("memory_size_in_bytes")}
 
 
-def clear_search_caches(node, rounds=3):
+# POST /_cache/clear only MARKS fielddata entries (global ordinals included) of the index; IndicesFieldDataCache drops
+# them in its periodic sweep, every indices.cache.cleanup_interval (default 1m, IndicesService.CacheCleaner). Every
+# arm's node therefore runs with indices.cache.cleanup_interval: 1s (S0 and POC alike, a node setting both binaries
+# have), and the clear waits up to CACHE_CLEAR_WAIT_S for the sweep. With the default interval the wait times out and
+# the iteration fails search_caches_empty (pmc: global ordinals of `name` stayed 1.7-11 MB after the clear).
+CACHE_CLEAR_WAIT_S = 5.0
+
+
+def node_settings(node):
+    """The running node's own settings, flat (GET /_nodes/_local/settings)."""
+    r = node.os.request("GET", "/_nodes/_local/settings?flat_settings=true")
+    return next(iter(r["nodes"].values())).get("settings", {})
+
+
+def clear_search_caches(node, rounds=3, wait_s=None):
     """
-    POST /_cache/clear (query, fielddata, request) and read the node's cache stats back; repeated (at most `rounds`)
-    until fielddata, query cache and request cache report 0. `empty` is False when a stat stays above 0 or is missing.
+    POST /_cache/clear (query, fielddata, request) and read the node's cache stats back until fielddata, query cache
+    and request cache report 0: the clear is re-posted every second (at least `rounds` times) for at most `wait_s`
+    seconds (default CACHE_CLEAR_WAIT_S), because the node drops marked fielddata only in its periodic sweep.
+    `empty` is False when a stat stays above 0 or is missing; `wait_ms` is the time until empty (or the timeout).
     """
+    wait_s = CACHE_CLEAR_WAIT_S if wait_s is None else wait_s
     out = {"rounds": 0}
-    for i in range(rounds):
-        node.os.request("POST", "/_cache/clear?query=true&fielddata=true&request=true")
+    t0 = time.monotonic()
+    last_post = None
+    while True:
+        now = time.monotonic()
+        if last_post is None or now - last_post >= 1.0 or out["rounds"] < rounds:
+            node.os.request("POST", "/_cache/clear?query=true&fielddata=true&request=true")
+            out["rounds"] += 1
+            last_post = time.monotonic()
         st = search_cache_bytes(node)
-        out.update(st, rounds=i + 1)
-        if all(v == 0 for v in st.values()):
+        out.update(st)
+        if all(v == 0 for v in st.values()) or time.monotonic() - t0 >= wait_s:
             break
         time.sleep(0.05)
+    out["wait_ms"] = round((time.monotonic() - t0) * 1e3, 1)
     out["empty"] = all(out.get(k) == 0 for k in ("fielddata_bytes", "query_cache_bytes", "query_cache_entries",
                                                   "request_cache_bytes"))
     return out
@@ -1023,12 +1047,16 @@ class Session:
             self.record(type="run", **run, available=False, reason=str(e), indices=indices)
             return
         io_config = runguards.check_io_config(arm_name, state["bp"], runguards.want_io(a)) if arm.get("bufferpool") else None
+        cache_cleanup = None
+        if any(m in a.modes.split(",") for m in ("cold", "ccold")):
+            cache_cleanup = runguards.check_cache_cleanup(arm_name, node_settings(self.node))
         index = self.cfg["indices"][arm["index"]]["name"]
         uuids = indices_ext.uuids(indices[arm["index"]])
         self.read_trace_kind = read_size_trace(a, arm, self.node, self.storage_nfs)
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
                     cold_protocol="jit-warm" if a.jit_warmup else "jit-cold",
                     readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
+                    cache_cleanup=cache_cleanup,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
                     args=vars(a), op_caps=self.op_caps)
         it = Iteration(self.node, arm, uuids, a.residency_every)

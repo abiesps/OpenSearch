@@ -17,6 +17,7 @@ broken clear is caught by the cold verification. Python >= 3.8, stdlib only.
 """
 import argparse
 import json
+import time
 import os
 import random
 import shutil
@@ -76,6 +77,11 @@ class Mock:
         self.fielddata = 0
         self.fielddata_at_clear = []
         self.broken_cache_clear = False
+        # like IndicesFieldDataCache: _cache/clear only marks fielddata; the periodic sweep (every
+        # indices.cache.cleanup_interval) drops it, here sweep_delay_s after the clear
+        self.sweep_delay_s = 0.3
+        self.fd_marked_at = None
+        self.node_settings = {"indices.cache.cleanup_interval": "1s"}
         self.events = []  # ("search", body key) / ("cache_clear",) in call order
 
     def search(self, index, body):
@@ -160,7 +166,11 @@ def make_os_handler(m):
                     return self.send(200, {"status": "green"})
                 if p.startswith("/_cat/plugins"):
                     return self.send(200, [{"component": "store-bufferpool"}] if bp else [])
+                if p.startswith("/_nodes/_local/settings"):
+                    return self.send(200, {"nodes": {"n1": {"settings": dict(m.node_settings)}}})
                 if p.startswith("/_nodes/_local/stats/indices/"):
+                    if m.fd_marked_at is not None and time.monotonic() - m.fd_marked_at >= m.sweep_delay_s:
+                        m.fielddata, m.fd_marked_at = 0, None
                     return self.send(200, {"nodes": {"n1": {"indices": {
                         "fielddata": {"memory_size_in_bytes": m.fielddata},
                         "query_cache": {"memory_size_in_bytes": 0, "cache_size": 0},
@@ -212,8 +222,8 @@ def make_os_handler(m):
                 if p == "/_cache/clear":
                     m.fielddata_at_clear.append(m.fielddata)
                     m.events.append(("cache_clear",))
-                    if q.get("fielddata") == "true" and not m.broken_cache_clear:
-                        m.fielddata = 0
+                    if q.get("fielddata") == "true" and not m.broken_cache_clear and m.fd_marked_at is None:
+                        m.fd_marked_at = time.monotonic()
                     return self.send(200, {"_shards": {"failed": 0}})
                 if p.startswith("/_bufferpool/"):
                     if not bp:
@@ -490,6 +500,10 @@ def main():
     assert colds and all(r["clear"]["caches"]["empty"] and r["checks"]["search_caches_empty"]
                          and r["clear"]["caches"]["fielddata_bytes"] == 0 for r in colds), "search caches not empty"
     assert max(m.fielddata_at_clear) > 0, "the warm-up and the aggregations built fielddata that the clear dropped"
+    # the clear only marks fielddata; the harness waits for the node's periodic sweep (0.3 s in the mock)
+    assert any(r["clear"]["caches"]["wait_ms"] >= 250 for r in colds), "the clear did not wait for the fielddata sweep"
+    assert all(r["cache_cleanup"]["ok"] for r in runs if r["type"] == "run" and r.get("available")
+               and r["args"]["modes"] != "warm"), "cache cleanup interval not recorded"
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run" and r.get("available")), "readahead not verified"
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run_end"), "readahead not re-checked at run end"
     # set before the index is opened: each file keeps the readahead it was opened with (selftest_order.py: the order)
@@ -597,6 +611,13 @@ def main():
                         "--modes", "cold", "--out", s6, "--strict"], capture_output=True, text=True)
     assert p.returncode != 0 and "search_caches_empty': False" in p.stderr, (p.stdout[-2000:], p.stderr[-2000:])
     m.broken_cache_clear = False
+    # the node's default cache cleanup interval (1m) leaves marked fielddata cached: the run is refused
+    m.node_settings = {}
+    s6b = os.path.join(tmp, "session-cleanup-default")
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
+                        "--modes", "cold", "--out", s6b, "--strict"], capture_output=True, text=True)
+    assert p.returncode != 0 and "indices.cache.cleanup_interval is the default 1m" in p.stderr, (p.stdout[-2000:], p.stderr[-2000:])
+    m.node_settings = {"indices.cache.cleanup_interval": "1s"}
     # the old protocol stays selectable and is recorded
     s7 = os.path.join(tmp, "session-jitcold")
     run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1", "--modes", "cold",

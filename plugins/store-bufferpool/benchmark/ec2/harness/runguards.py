@@ -48,6 +48,35 @@ def check_io_config(arm_name, stats, want):
     return rec
 
 
+CACHE_CLEANUP_MAX_S = 1.0
+
+
+def _seconds(v):
+    """'1s' / '500ms' / '1m' -> seconds; None when not parseable."""
+    import re
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*", str(v))
+    if not m:
+        return None
+    return float(m.group(1)) * {"ms": 1e-3, "s": 1, "m": 60, "h": 3600, None: 1e-3}[m.group(2)]
+
+
+def check_cache_cleanup(arm_name, node_settings):
+    """
+    node_settings: the node's own settings (GET /_nodes/_local/settings, flat). POST /_cache/clear only marks fielddata
+    and global ordinals; the node drops them every indices.cache.cleanup_interval (default 1m). A cold iteration needs
+    them gone, so every arm's node must run with an interval of at most CACHE_CLEANUP_MAX_S. Returns the record; raises
+    otherwise (the run is refused, never measured).
+    """
+    v = node_settings.get("indices.cache.cleanup_interval")
+    s = _seconds(v) if v is not None else None
+    rec = {"indices.cache.cleanup_interval": v, "ok": s is not None and s <= CACHE_CLEANUP_MAX_S}
+    if not rec["ok"]:
+        raise RuntimeError(f"arm {arm_name}: indices.cache.cleanup_interval is {v or 'the default 1m'}; set it to 1s in "
+                           "every arm's opensearch.yml (marked fielddata and global ordinals are dropped only by that "
+                           "periodic sweep, so a cold iteration would find them cached); not measuring")
+    return rec
+
+
 def poc_only(idx):
     """An [indices] entry in a format the stock binary cannot read (split BKD), or marked "poc_only": true."""
     return bool(idx.get("poc_only")) or "split" in str(idx.get("format", "")).lower()
