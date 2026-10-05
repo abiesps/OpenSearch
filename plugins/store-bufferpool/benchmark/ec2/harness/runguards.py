@@ -48,6 +48,37 @@ def check_io_config(arm_name, stats, want):
     return rec
 
 
+def poc_only(idx):
+    """An [indices] entry in a format the stock binary cannot read (split BKD), or marked "poc_only": true."""
+    return bool(idx.get("poc_only")) or "split" in str(idx.get("format", "")).lower()
+
+
+def check_format_isolation(cfg, storages):
+    """
+    A closed index stays allocated: the stock binary cannot start on a data path that holds an index in a format it
+    cannot read (shard copy "stale or corrupt": Could not load codec 'Lucene104SplitPoints', cluster red; probe on the
+    big5-100 data node). So every node whose arms open a POC-only index must have a data path that no stock arm's node
+    uses. storages: the agent's /health "storages" (agent arm -> data_path). Raises before any run; returns the record.
+    """
+    path = {name: (s or {}).get("data_path") for name, s in (storages or {}).items()}
+    stock_paths = {path.get(a["node"]) for a in cfg["arms"].values()
+                   if not a.get("bufferpool") and not indices_ext.not_applicable(a) and "node" in a}
+    rec = {"poc_only_indices": [], "ok": True}
+    for key, idx in cfg["indices"].items():
+        if not poc_only(idx):
+            continue
+        nodes = sorted({a["node"] for a in cfg["arms"].values() if key in a.get("open", []) and "node" in a})
+        rec["poc_only_indices"].append({"key": key, "nodes": nodes, "data_paths": [path.get(n) for n in nodes]})
+        for n in nodes:
+            if path.get(n) is None:
+                raise RuntimeError(f"indices[{key}] ({idx.get('format')}): agent arm {n} has no data path in the agent config")
+            if path[n] in stock_paths:
+                raise RuntimeError(f"indices[{key}] ({idx.get('format')}) is opened by node {n} whose data path {path[n]} "
+                                   "is also a stock arm's data path: the stock binary cannot start next to it (closed "
+                                   "indices stay allocated); give the POC-only index its own agent arm and data path")
+    return rec
+
+
 def other_policy(cfg):
     p = cfg.get("other_indices", "record")
     if p not in OTHER_POLICIES:

@@ -53,6 +53,12 @@ class Mock:
         self.sort_opt = {"bkd_prefetch": False}
         self.indices = {"big5": {"status": "open", "uuid": "u-stock", "store_type": "bufferpoolfs"},
                         "big5_split": {"status": "open", "uuid": "u-split", "store_type": "bufferpoolfs"}}
+        # strict_store (selftest.py): like real nodes, a stock node is red next to a closed bufferpoolfs index and
+        # rejects its store-type update; an index with "nodes" exists only on those agent arms' data paths
+        self.strict_store = False
+        # agent arm -> data path (agent /health storages)
+        self.data_paths = {"S0-EBS": "/data/ebs/opensearch", "S0-EFS": "/mnt/efs/opensearch", "POC-EBS": "/data/ebs/opensearch",
+                           "POC-EFS": "/mnt/efs/opensearch", "POC-B-EFS": "/mnt/efs/opensearch-b"}
         self.cluster = {}
         self.read_bytes = 0
         self.disk_reads = 0
@@ -131,12 +137,17 @@ def make_os_handler(m):
             with m.lock:
                 m.calls.append(("os", method, p))
                 bp = m.binary.startswith("POC")
+                visible = ({n: i for n, i in m.indices.items() if m.binary in i.get("nodes", {m.binary})}
+                           if m.strict_store else m.indices)
                 if p == "/":
                     return self.send(200, {"name": "n1", "cluster_name": "mock", "binary": m.binary, "version": {
                         "distribution": "opensearch", "number": "3.3.0", "build_type": "tar", "build_hash": "mock",
                         "build_date": "2026-01-01T00:00:00Z", "build_snapshot": False, "lucene_version": "10.3.0",
                         "minimum_wire_compatibility_version": "2.19.0", "minimum_index_compatibility_version": "2.0.0"}})
                 if p.startswith("/_cluster/health"):
+                    # a closed index stays allocated: the stock binary fails its shard on an unknown store type
+                    if m.strict_store and not bp and any(i["store_type"] == "bufferpoolfs" for i in visible.values()):
+                        return self.send(408, {"status": "red", "timed_out": True})
                     return self.send(200, {"status": "green"})
                 if p.startswith("/_cat/plugins"):
                     return self.send(200, [{"component": "store-bufferpool"}] if bp else [])
@@ -173,10 +184,12 @@ def make_os_handler(m):
                                 m.cluster[k] = v
                     return self.send(200, {"persistent": dict(m.cluster), "transient": {}})
                 if p == "/_cat/indices":
-                    return self.send(200, [{"index": n, "status": i["status"]} for n, i in dict.items(m.indices)
+                    return self.send(200, [{"index": n, "status": i["status"]} for n, i in dict.items(visible)
                                            if "open" not in q.get("expand_wildcards", "open") or i["status"] == "open"])
                 if p.startswith("/_cat/indices/"):
                     name = p.split("/")[3]
+                    if name not in visible:
+                        return self.send(404, {"error": "index_not_found_exception"})
                     i = m.indices[name]
                     return self.send(200, [{"index": name, "status": i["status"], "uuid": i["uuid"], "docs.count": "1000",
                                             "pri": "2", "rep": "0", "pri.store.size": "1000000", "store.size": "1000000"}])
@@ -204,10 +217,12 @@ def make_os_handler(m):
                     return self.send(200, {"took": 1, "hits": {"hits": []}, "_shards": {"failed": 0}})
                 parts = p.strip("/").split("/")
                 name = parts[0]
-                if name in m.indices:
+                if name in visible:
                     i = m.indices[name]
                     if len(parts) == 1 or parts[1] == "_settings":
                         if method == "PUT":
+                            if m.strict_store and not bp and i["store_type"] == "bufferpoolfs":
+                                return self.send(400, {"error": "Unknown store type [bufferpoolfs]"})
                             i["store_type"] = b["index.store.type"]
                             return self.send(200, {"acknowledged": True})
                         return self.send(200, {name: {"settings": {"index": {"store": {"type": i["store_type"]}}}}})
@@ -269,6 +284,8 @@ def make_agent_handler(m):
             efs = q.get("arm", m.binary).endswith("EFS")
             with m.lock:
                 m.calls.append(("agent", method, u.path, q.get("mode"), b.get("arm")))
+                if u.path == "/health":
+                    return self.send(200, {"version": "1", "storages": {k: {"data_path": v} for k, v in m.data_paths.items()}})
                 if u.path == "/snapshot":
                     disk = None if efs else {"device": "nvme1n1", "reads": m.disk_reads, "sectors_read": m.read_bytes // 512,
                                              "read_ms": m.disk_reads, "weighted_io_ms": m.disk_reads, "in_flight": 0}
@@ -355,6 +372,8 @@ def main():
     tmp = a.keep or tempfile.mkdtemp(prefix="coldbench-selftest-")
     os.makedirs(tmp, exist_ok=True)
     m = Mock()
+    m.strict_store = True
+    m.indices["big5_split"]["nodes"] = {"POC-B-EFS"}  # the split index has its own data path (format isolation)
     _, os_url = serve(make_os_handler(m))
     _, agent_url = serve(make_agent_handler(m))
     token = os.path.join(tmp, "token")
@@ -371,18 +390,18 @@ def main():
     json.dump(small, open(ops, "w"))
     arms = {
         "indices": {"stock": {"name": "big5", "segments_per_shard": 1, "shards": 2},
-                    "split": {"name": "big5_split", "segments_per_shard": 1}},
+                    "split": {"name": "big5_split", "segments_per_shard": 1, "format": "split BKD"}},
         "base_switches": [{"method": "POST", "path": "/_bufferpool/sort_opt?bkd_prefetch=false", "verify": {"bkd_prefetch": "false"}}],
         "outcome": {"reference": "S0-EBS", "targets": ["S2-X-EFS", "S1-EFS"], "aa": "S0-EBS@a,S0-EBS@b", "delta_min": 0.05},
         "arms": {
             "S0-EBS": {"node": "S0-EBS", "bufferpool": False, "index": "stock", "open": ["stock"], "store_types": {"stock": "hybridfs"}},
-            "S1-EFS": {"node": "POC-EFS", "bufferpool": True, "index": "stock", "open": ["stock", "split"],
-                       "store_types": {"stock": "bufferpoolfs", "split": "bufferpoolfs"},
+            "S1-EFS": {"node": "POC-EFS", "bufferpool": True, "index": "stock", "open": ["stock"],
+                       "store_types": {"stock": "bufferpoolfs"},
                        "cluster_settings": {"search.concurrent_segment_search.mode": "none"}},
-            "S2-X-EFS": {"node": "POC-EFS", "bufferpool": True, "index": "split", "open": ["stock", "split"],
-                         "store_types": {"stock": "bufferpoolfs", "split": "bufferpoolfs"},
+            "S2-X-EFS": {"node": "POC-B-EFS", "bufferpool": True, "index": "split", "open": ["split"],
+                         "store_types": {"split": "bufferpoolfs"},
                          "switches": [{"method": "POST", "path": "/_bufferpool/sort_opt?bkd_prefetch=true", "verify": {"bkd_prefetch": "true"}}]},
-            "S2-NA-EFS": {"node": "POC-EFS", "bufferpool": True, "index": "stock", "open": ["stock", "split"],
+            "S2-NA-EFS": {"node": "POC-EFS", "bufferpool": True, "index": "stock", "open": ["stock"],
                           "switches": [{"method": "POST", "path": "/_bufferpool/sort_opt?not_in_binary=1"}]},
         }}
     arms_f = os.path.join(tmp, "arms.json")
@@ -446,6 +465,19 @@ def main():
     assert [r for r in recs5 if r["type"] == "session_end"][0]["invalid_runs"] == ["S1-EFS#r0"]
     m.split_reads = False
 
+    # a POC arm leaves the stock index closed with the stock arms' store type, so the next stock arm starts green
+    assert m.indices["big5"]["store_type"] in ("hybridfs", "bufferpoolfs")
+    log2 = open(os.path.join(s2, "session.log")).read()
+    assert "big5: store type bufferpoolfs -> hybridfs" in log2, "store type not reset before a stock arm"
+    # a split (POC-only) index on a stock arm's data path is refused before any run
+    bad = json.loads(json.dumps(arms))
+    bad["arms"]["S2-X-EFS"]["node"] = "POC-EBS"  # the data path of the stock arm S0-EBS
+    bad_f = os.path.join(tmp, "arms-bad.json")
+    json.dump(bad, open(bad_f, "w"))
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *[bad_f if x == arms_f else x for x in common],
+                        "--arm-list", "S2-X-EFS", "--rounds", "1", "--out", os.path.join(tmp, "session-iso")],
+                       capture_output=True, text=True)
+    assert p.returncode != 0 and "also a stock arm's data path" in p.stderr, (p.stdout[-1500:], p.stderr[-1500:])
     eq = res["equality"]
     assert eq["across"] and all(e["equal"] for e in eq["across"]), eq
     assert not res["amdahl"], res["amdahl"]

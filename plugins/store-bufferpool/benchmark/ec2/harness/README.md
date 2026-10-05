@@ -59,7 +59,15 @@ every EFS arm.
 
 ## Index state per run
 Every index is closed before a node stops. On start the harness sets the arm's `index.store.type` on the closed index
-and opens what the arm needs, so a stock node never opens a bufferpoolfs or split-format index. Before measuring it
+and opens what the arm needs, so a stock node never opens a bufferpoolfs or split-format index.
+A closed index stays allocated, so the stock binary cannot even START next to a closed index it cannot read (probe on
+the big5-100 data node, `br-big5-100/closed-index-probe.txt`): (1) store type `bufferpoolfs` -> shard fails with
+"Unknown store type", cluster red, and the stock node also rejects the store-type update; (2) split BKD format ->
+"Could not load codec 'Lucene104SplitPoints'", no valid shard copy, red. Therefore (1) when a node with the bufferpool
+plugin closes the indices, it sets every index that a stock arm opens back to the stock arms' store type (logged);
+(2) an index whose `format` contains "split" (or `"poc_only": true`) must be opened only by agent arms whose data path
+no stock arm's node uses (e.g. agent arms `POC-B-EBS` / `POC-B-EFS` with their own `data_path`); the session is refused
+before any run otherwise (`runguards.check_format_isolation`, recorded as `format_isolation` in the session record). Before measuring it
 verifies store type, docs, primaries, segments per shard (exact), primary store bytes (and `min_store_bytes`), and the
 agent's `du`, and records them in the run record. Single-shard >= 30 GB runs use the same arms with
 `--indices indices.single-shard.example.json` (and the 1-segment variant file).

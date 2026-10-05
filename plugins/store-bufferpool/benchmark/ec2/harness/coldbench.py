@@ -315,13 +315,35 @@ def index_state(node, name):
     return {"status": r["status"], "uuid": r["uuid"], "store_type": st}
 
 
+def stock_store_types(cfg):
+    """Index name -> store type of the stock (non-bufferpool) arms that open it. Indices no stock arm opens: absent."""
+    out = {}
+    for a in cfg["arms"].values():
+        if a.get("bufferpool") or indices_ext.not_applicable(a):
+            continue
+        for key in a.get("open", []):
+            t = a.get("store_types", {}).get(key)
+            if not t:
+                continue
+            for m in indices_ext.members(cfg["indices"][key]):
+                if out.setdefault(m["name"], t) != t:
+                    raise ValueError(f"index {m['name']}: stock arms use two store types ({out[m['name']]}, {t})")
+    return out
+
+
 def close_indices(node, cfg, log):
     """
     On the RUNNING node, before it stops: close every configured index it has open. Every node therefore starts with
     all benchmark indices closed, and open_indices sets the store type the next arm needs before it opens them, so a
     stock node never opens a bufferpoolfs or split-format index (S0 and POC share a data path per storage). Closing
     and opening is the same for every arm, and the cold clear after it removes what the open read.
+    A closed index stays allocated, so the stock binary cannot start next to a closed index whose store type it does
+    not know (shard fails with "Unknown store type [bufferpoolfs]", cluster red, and the stock node rejects the
+    store-type update too; probe on the big5-100 data node, br-big5-100/closed-index-probe.txt). So a node that knows
+    the bufferpool store type gives every closed index that a stock arm opens the stock arms' store type back here.
     """
+    stock = stock_store_types(cfg)
+    reset_ok = None
     for name in indices_ext.physical_names(cfg["indices"]):
         try:
             st = index_state(node, name)
@@ -330,6 +352,16 @@ def close_indices(node, cfg, log):
         if st["status"] == "open":
             node.os.request("POST", f"/{name}/_close?wait_for_active_shards=0")
             log(f"  closed {name}")
+        want = stock.get(name)
+        if want and st["store_type"] != want:
+            if reset_ok is None:
+                reset_ok = any(p.get("component") == "store-bufferpool"
+                               for p in node.os.request("GET", "/_cat/plugins?format=json"))
+            if not reset_ok:
+                raise RuntimeError(f"{name}: closed with store type {st['store_type']} on a node without the bufferpool "
+                                   f"plugin; start a POC arm to set it back to {want}")
+            node.os.request("PUT", f"/{name}/_settings", {"index.store.type": want})
+            log(f"  {name}: store type {st['store_type']} -> {want} (closed; the stock binary can start next to it)")
 
 
 def open_indices(node, cfg, arm, log):
@@ -651,6 +683,10 @@ class Session:
         self.device_mismatches = {}  # run_id -> cold iterations whose device reads were not bufferpool windows
         self.current_arm = None
         runguards.other_policy(self.cfg)  # a bad other_indices value stops the session before any run
+        stock_store_types(self.cfg)  # one stock store type per index, else stop before any run
+        # a POC-only (split BKD) index must not share a data path with a stock arm's node, else stop before any run
+        self.isolation = (runguards.check_format_isolation(self.cfg, self.node.agent.request("GET", "/health").get("storages"))
+                          if self.node.agent else None)
         self.other_indices = None
 
     def log(self, msg):
@@ -894,7 +930,8 @@ class Session:
                 sys.exit(f"unknown arm {lab}; arms file has {sorted(self.cfg['arms'])}")
         sched = schedule(labels, self.a.rounds, self.a.order, self.a.seed)
         self.record(type="session", ops=[o["name"] for o in self.ops], reference_op=self.ref, schedule=sched,
-                    args=vars(self.a), ops_file=os.path.abspath(self.a.ops), arms_file=self.cfg)
+                    args=vars(self.a), ops_file=os.path.abspath(self.a.ops), arms_file=self.cfg,
+                    format_isolation=self.isolation)
         self.log(f"session: {len(self.ops)} ops, schedule {[l for _, l in sched]}")
         for rnd, lab in sched:
             self.run_one(rnd, lab)
