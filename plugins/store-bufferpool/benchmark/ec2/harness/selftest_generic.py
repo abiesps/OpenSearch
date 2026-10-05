@@ -318,6 +318,29 @@ def part_d(osbw, tmp):
     import families_ext
     import queries
 
+    # fallbacks of generated ops that would match nothing (pmc): empty 1h window at the middle, disjoint top terms
+    class AnchorMock:
+        def __init__(self, count):
+            self.count, self.calls = count, []
+
+        def request(self, method, path, body=None, timeout=None):
+            self.calls.append((path, body))
+            if path.endswith("/_count"):
+                return {"count": self.count}
+            gte = "gte" in json.dumps(body)
+            return {"hits": {"hits": [{"sort": [5000.0 if gte else 4000.0]}]}}
+    check(queries.time_anchor(AnchorMock(3), "i", "ts", 0, 8000) is None, "(d) time anchor: populated 1h window kept")
+    a = queries.time_anchor(AnchorMock(0), "i", "ts", 0, 8000)
+    check(a and a["anchor_ms"] == 5000.0 and a["anchor_rule"], "(d) time anchor: empty 1h window -> first doc at or after the middle")
+    ga = queries.generate({"corpus": "x", "time_field": "ts", "keyword_fields": ["k"], "numeric_fields": [], "text_fields": []},
+                          {"time": {"min_ms": 0, "max_ms": 8000, "anchor_ms": 5000.0},
+                           "keyword": {"k": {"cardinality": 5, "high": "a", "mid": "b", "low": "c", "five": ["a"]}},
+                           "numeric": {}, "text": {}})
+    r1h = [o for o in ga if o["name"] == "gen:range_ts_1h"][0]["body"]["query"]["range"]["ts"]
+    check(r1h["gte"] == 5000 - 1800000 and r1h["lt"] == 5000 + 1800000, "(d) time anchor: windows centred on the anchor")
+    check(queries.and2_pair(["a", "b", "c"], [{"a", "b"}, {"c"}]) is None, "(d) and2: co-occurring top pair kept")
+    check(queries.and2_pair(["bmc", "plos", "one", "x"], [{"bmc"}, {"plos", "one"}, {"plos", "one", "x"}, {"bmc", "x"}])
+          == ["plos", "one"], "(d) and2: disjoint top pair -> the most co-occurring pair of the top 10")
     vals = profile_values()
     for c in GENERIC:
         vf = os.path.join(tmp, f"values-{c}.json")
@@ -357,10 +380,12 @@ def part_d(osbw, tmp):
     v1 = queries.discover(m1, "i", prof)
     v2 = families_ext.discover(m2, "i", prof)
     check(v1 == v2 and m1.calls == m2.calls, "(d) families_ext.discover == queries.discover on a timed profile")
-    check(len(m2.counts) == 1 and "must_not_field" not in v2, "(d) must_not field kept when it leaves docs")
+    # m2.counts also holds queries.time_anchor's 1h-window count (no bool query); count only the must_not checks
+    check(len([c for c in m2.counts if "bool" in c.get("query", {})]) == 1 and "must_not_field" not in v2,
+          "(d) must_not field kept when it leaves docs")
     # a must_not term that excludes every doc of the filter: the next keyword field by cardinality is used
     prof3 = dict(prof, keyword_fields=["a", "b", "c"])
-    m4 = MockSearch(lambda body: 0 if "b" in json.dumps(body["query"]["bool"]["must_not"]) else 3)
+    m4 = MockSearch(lambda body: 0 if "bool" in body["query"] and "b" in json.dumps(body["query"]["bool"]["must_not"]) else 3)
     v4 = families_ext.discover(m4, "i", prof3)
     check(v4.get("must_not_field", {}).get("field") == "c", f"(d) must_not falls back to the next field: {v4.get('must_not_field')}")
     ops4 = queries.generate(prof3, v4)

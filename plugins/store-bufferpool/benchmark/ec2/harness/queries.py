@@ -192,6 +192,48 @@ def indexed_ranked(docfreq, indexed):
     return [w for w, _ in sorted(docfreq.items(), key=lambda kv: (-kv[1], kv[0])) if w in indexed]
 
 
+ANCHOR_RULE = ("time windows are centred on the middle of [min,max]; when the 1h window there holds no document "
+               "(timestamps with day or coarser resolution, or a gap in the data), they are centred on the first "
+               "document timestamp at or after the middle (the last one before it if there is none)")
+AND2_RULE = ("match AND of the two most frequent terms; when no sampled document holds both (terms of disjoint "
+             "values, such as two journal names), the pair of the 10 most frequent terms that the most sampled "
+             "documents hold together, ties by term rank")
+
+
+def time_anchor(client, index, tf, tmin, tmax):
+    """
+    {"anchor_ms": t, "anchor_rule": ...} when the 1h window around the middle of the time span holds no document,
+    else None (the windows stay centred on the middle). pmc: publication dates at day resolution, so a 1h window
+    centred between two days matched nothing.
+    """
+    mid = (tmin + tmax) / 2
+    q = {"range": {tf: {"gte": int(mid - 1800e3), "lt": int(mid + 1800e3), "format": "epoch_millis"}}}
+    if client.request("POST", f"/{index}/_count", {"query": q})["count"] > 0:
+        return None
+    for cmp, order in (("gte", "asc"), ("lte", "desc")):
+        r = client.request("POST", f"/{index}/_search?request_cache=false",
+                           {"size": 1, "_source": False, "query": {"range": {tf: {cmp: int(mid), "format": "epoch_millis"}}},
+                            "sort": [{tf: {"order": order, "format": "epoch_millis"}}]})
+        hits = r["hits"]["hits"]
+        if hits:
+            return {"anchor_ms": float(hits[0]["sort"][0]), "anchor_rule": ANCHOR_RULE}
+    return None
+
+
+def and2_pair(ranked, docsets):
+    """The AND pair for match_and2 when the two most frequent terms never occur together in the sample, else None."""
+    def together(a, b):
+        return sum(1 for s in docsets if a in s and b in s)
+    if together(ranked[0], ranked[1]) > 0:
+        return None
+    top = ranked[:10]
+    best = max(((together(a, b), -i, -j, a, b) for i, a in enumerate(top) for j, b in enumerate(top) if i < j),
+               default=None)
+    if best is None or best[0] == 0:
+        return None
+    return [best[3], best[4]]
+
+
 def discover(client, index, profile):
     """Values for the generated ops, from the data, with fixed rank/percentile rules (recorded in the output)."""
     vals = {"rules": "time: middle of [min,max]; keyword: terms by count, ranks 0 / len//10 / last of top 1000; "
@@ -202,6 +244,9 @@ def discover(client, index, profile):
                        {"size": 0, "aggs": {"min": {"min": {"field": tf}}, "max": {"max": {"field": tf}}}})
     tmin, tmax = r["aggregations"]["min"]["value"], r["aggregations"]["max"]["value"]
     vals["time"] = {"min_ms": tmin, "max_ms": tmax}
+    anchor = time_anchor(client, index, tf, tmin, tmax)
+    if anchor is not None:
+        vals["time"].update(anchor)
     vals["keyword"] = {}
     for f in profile["keyword_fields"]:
         r = client.request("POST", f"/{index}/_search?request_cache=false",
@@ -227,7 +272,7 @@ def discover(client, index, profile):
         r = client.request("POST", f"/{index}/_search?request_cache=false",
                            {"size": 200, "_source": [f], "query": {"function_score": {"query": {"exists": {"field": f}},
                             "random_score": {"seed": 42, "field": "_seq_no"}}}})
-        docfreq, bigrams, indexed = collections.Counter(), collections.Counter(), set()
+        docfreq, bigrams, indexed, docsets = collections.Counter(), collections.Counter(), set(), []
         for h in r["hits"]["hits"]:
             t = _get(h.get("_source", {}), f)
             if isinstance(t, list):
@@ -238,12 +283,16 @@ def discover(client, index, profile):
             bg, tk = analyze(client, h.get("_index") or index, f, t)
             bigrams.update(bg)
             indexed |= tk
+            docsets.append(tk)
         ranked = indexed_ranked(docfreq, indexed)
         if len(ranked) < 4:
             continue
         bg = sorted(bigrams.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
         vals["text"][f] = {"terms": [ranked[0], ranked[1], ranked[2]], "mid": ranked[len(ranked) // 4],
                            "phrase": " ".join(bg)}
+        and2 = and2_pair(ranked, docsets)
+        if and2 is not None:
+            vals["text"][f]["and2"], vals["text"][f]["and2_rule"] = and2, AND2_RULE
     return vals
 
 
@@ -251,7 +300,8 @@ def discover(client, index, profile):
 def generate(profile, vals):
     tf = profile["time_field"]
     tmin, tmax = vals["time"]["min_ms"], vals["time"]["max_ms"]
-    mid = (tmin + tmax) / 2
+    # time_anchor (discover) moves the centre only where the 1h window at the middle is empty
+    mid = vals["time"].get("anchor_ms", (tmin + tmax) / 2)
     win = {"1h": 3600e3, "1d": 86400e3, "7d": 7 * 86400e3}
     # epoch_millis works whatever date format the mapping declares
     rng = {k: {"gte": int(mid - w / 2), "lt": int(mid + w / 2), "format": "epoch_millis"} for k, w in win.items()}
@@ -282,7 +332,8 @@ def generate(profile, vals):
         add(f"match_{f}_high", {"text:match"}, {"query": {"match": {f: t["terms"][0]}}})
         add(f"match_{f}_mid", {"text:match"}, {"query": {"match": {f: t["mid"]}}})
         add(f"match_or3_{f}", {"text:match"}, {"query": {"match": {f: " ".join(t["terms"])}}})
-        add(f"match_and2_{f}", {"text:match"}, {"query": {"match": {f: {"query": " ".join(t["terms"][:2]), "operator": "and"}}}})
+        and2 = t.get("and2", t["terms"][:2])  # and2_pair (discover) only where the top two never co-occur
+        add(f"match_and2_{f}", {"text:match"}, {"query": {"match": {f: {"query": " ".join(and2), "operator": "and"}}}})
         add(f"phrase_{f}", {"text:phrase"}, {"query": {"match_phrase": {f: t["phrase"]}}})
         add(f"query_string_{f}", {"text:query_string"},
             {"query": {"query_string": {"query": f"{f}:({t['terms'][0]} AND {t['mid']}) OR {f}:{t['terms'][1]}"}}})
