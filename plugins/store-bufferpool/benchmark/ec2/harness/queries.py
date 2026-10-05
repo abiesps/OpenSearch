@@ -269,7 +269,9 @@ def generate(profile, vals):
             {"query": {"query_string": {"query": f"{f}:({t['terms'][0]} AND {t['mid']}) OR {f}:{t['terms'][1]}"}}})
     if texts:
         f0 = texts[0]
-        mm_fields = texts if len(texts) > 1 else texts + [hi_card]
+        # a profile may name the fields (http_logs: its one text field and its keyword sub-field; the highest
+        # cardinality keyword-like field there is an ip field, which rejects a text query)
+        mm_fields = profile.get("multi_match_fields") or (texts if len(texts) > 1 else texts + [hi_card])
         add("multi_match", {"text:multi_match"},
             {"query": {"multi_match": {"query": " ".join(vals["text"][f0]["terms"][:2]), "fields": mm_fields}}})
     # bool
@@ -406,7 +408,8 @@ def cmd_check(a):
         try:
             res = coldbench.execute(client, a.index, op)
             total = res["canonical"].get("total")
-            hits = total[0] if total else None
+            # track_total_hits=false responses carry no total: count the returned hits instead
+            hits = total[0] if total else len(res["canonical"].get("hits") or [])
             nb = res["canonical"].get("aggs_size")
             flag = "" if (hits or nb) else "  ZERO"
             bad += bool(flag)

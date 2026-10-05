@@ -565,6 +565,11 @@
    "request.raw",
    "clientip"
   ],
+  "multi_match_fields": [
+   "request",
+   "request.raw"
+  ],
+  "multi_match_fields_note": "http_logs has one text field; the default (text fields + the highest-cardinality keyword field) picks clientip, an ip field, and multi_match of a text query on it fails with HTTP 400",
   "note": "fields by ROLE only; values are discovered from the data by queries.py discover (fixed rank/percentile rules). The mapping has geoip.country_name / geoip.city_name keywords, but no document of the OSB http_logs corpus fills them (cardinality 0 on all 247,249,096 docs), so they cannot drive term or aggregation ops. The keyword role is held by request.raw (keyword, about 60,600 values) and clientip (ip, about 1.15 million values): an ip field keeps sorted-set doc values like a keyword (terms, cardinality, composite, sort), while its term query runs on points.",
   "numeric_fields": [
    "status",
