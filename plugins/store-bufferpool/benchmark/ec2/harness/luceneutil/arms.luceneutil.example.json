@@ -408,7 +408,8 @@
   "budget_scope": "prefetch",
   "queue_size": 1024,
   "queue_policy": "fifo",
-  "task_per_window": false
+  "task_per_window": false,
+  "expect_read_hint": "willneed"
  },
  "env": {
   "_note": "set from gates/baseline-ready.md (jemalloc LD_PRELOAD and MALLOC_CONF), identical for every JVM"

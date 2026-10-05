@@ -12,7 +12,8 @@
 #   - the plugin jar and its bundled dependencies, UNCHANGED, from the plugin directory of the given OpenSearch
 #     distribution (the same plugin build as the OpenSearch configurations);
 #   - the OpenSearch library jars the plugin's directory classes load (opensearch-common, opensearch-secure-sm,
-#     log4j-api, log4j-core, jna) from the same distribution's lib/;
+#     opensearch-agent-policy (secure_sm.AccessController, used to link libc for the read hints), log4j-api,
+#     log4j-core, jna, HdrHistogram) from the same distribution's lib/;
 #   - org.opensearch.common.io.Channels* class files extracted unchanged from the distribution's server jar (the whole
 #     server jar is not put on the classpath: its codec SPI files would add OpenSearch codecs to luceneutil's Lucene);
 #   - the coldpath shim (bufferpool/LuceneutilBufferPool.java) compiled against that plugin jar.
@@ -34,7 +35,7 @@ W=$(mktemp -d)
 pick() { ls "$DIST"/lib/$1 2>/dev/null | head -1; }
 JARS=("$PLUGIN"/store-bufferpool-*.jar)
 for j in "$PLUGIN"/*.jar; do case "$(basename "$j")" in store-bufferpool-*) ;; *) JARS+=("$j");; esac; done
-for pat in 'opensearch-common-*.jar' 'opensearch-secure-sm-*.jar' 'log4j-api-*.jar' 'log4j-core-*.jar' 'jna-[0-9]*.jar' 'HdrHistogram-*.jar'; do
+for pat in 'opensearch-common-*.jar' 'opensearch-secure-sm-*.jar' 'log4j-api-*.jar' 'log4j-core-*.jar' 'jna-[0-9]*.jar' 'HdrHistogram-*.jar' 'opensearch-agent-policy-*.jar'; do
   j=$(pick "$pat"); test -n "$j" || { echo "no $pat in $DIST/lib"; exit 1; }; JARS+=("$j")
 done
 SERVER=$(pick 'opensearch-[0-9]*.jar'); test -n "$SERVER"

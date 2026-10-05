@@ -107,6 +107,9 @@ def convert(session_dir, out_dir, reference=None):
         bad = {k: v for k, v in sent.items() if readbacks.get(k, {}).get("readback") != v}
         if available and bad:
             available, reason = False, f"switch read-back missing or different: {bad}"
+        if available and (m.get("readahead") or {}).get("changed"):
+            # the storage's kernel readahead changed while the JVM ran: files opened later read with another value
+            available, reason = False, f"kernel readahead changed during the run: {m['readahead'].get('post')}"
         w.write({"schema": SCHEMA, "type": "run", **run, "available": available, "reason": reason,
                  "switch_readbacks": readbacks, "manifest": m, "winddown_ms": res["winddown_ms"],
                  "elapsed_ms": res["elapsed_ms"], "avg_cpu_cores": res["avg_cpu_cores"]})

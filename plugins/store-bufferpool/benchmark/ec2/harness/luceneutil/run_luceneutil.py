@@ -336,7 +336,13 @@ def run_one(label, it, seed, remeasure=False):
     # same run (label, iteration, seed) is queued again, at most JVM_RETRIES more times (common-rules "Node-start retry
     # and run re-queue"); the agent snapshots also carry the NFS client transport line (xprt: connect count) per run
     failures = []
+    ra_mode = st.get("read_ahead_mode", "default")
     for attempt in range(JVM_RETRIES + 1):
+        # kernel readahead of this storage, set and read back right before the JVM opens the index (an efs-proxy
+        # restart or a remount can put the as-mounted value back; Linux copies it into each file at open)
+        ra_pre = agent(st, "POST", f"/readahead/mode?arm={st['agent_arm']}&mode={ra_mode}")
+        if not ra_pre.get("ok"):
+            raise SystemExit(f"{label} iteration {it}: readahead is not {ra_mode} after setting it: {ra_pre}")
         snap_pre = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
         t0 = time.time()
         epoch0 = t0
@@ -349,6 +355,15 @@ def run_one(label, it, seed, remeasure=False):
                 mon.stop()
             if mon.killed:
                 raise RuntimeError(f"JVM passed {mon.limit}% of host memory ({mon.peak}): run discarded")
+            if c.directory == "BufferPoolDirectory":
+                # the cache this JVM built must have the configured read hint: "auto" silently becomes "none" when
+                # libc cannot be linked (a classpath gap), which would change every storage read
+                line = next((x for x in open(log + ".stdout", errors="replace") if x.startswith("COLDPATH bufferpool ")), None)
+                got = json.loads(line[len("COLDPATH bufferpool "):]) if line else {}
+                want = (S.get("bufferpool") or {}).get("expect_read_hint", "willneed")
+                if got.get("read_hint") != want:
+                    raise SystemExit(f"{label} iteration {it}: bufferpool read hint {got.get('read_hint')!r}, expected {want!r}: "
+                                     f"configuration error, stopping")
         except RuntimeError as e:
             lf = os.path.join(constants.LOGS_DIR, f"{S['id']}.{c.name}.{it}")
             kept = []
@@ -378,6 +393,10 @@ def run_one(label, it, seed, remeasure=False):
         except Exception as e:  # an agent without the route: recorded as unknown, never as no stall
             incidents = {"available": False, "error": str(e)[:300]}
     stalled = bool(incidents and incidents.get("windows"))
+    # readahead after the run: a value that changed while the JVM ran means files opened later (segment readers,
+    # the reopened taxonomy) used another readahead: the run is re-measured
+    ra_post = agent(st, "GET", f"/readahead?arm={st['agent_arm']}&mode={ra_mode}")
+    ra_changed = not ra_post.get("ok")
     # an efs-proxy restart drops the mount to 1 connection until 300 MiB/s returns: such samples are not a reason to
     # stop; they are excluded from the reference verdict by the analysis and the label gets a re-measure JVM run at the end
     efs_invalid = 0
@@ -388,7 +407,7 @@ def run_one(label, it, seed, remeasure=False):
                     efs_invalid += 1
         elif not efs_ok(snap_pre.get("efs_connections"), snap_post.get("efs_connections"), efs_target):
             efs_invalid = 1
-    if stalled:
+    if stalled or ra_changed:
         efs_invalid = max(efs_invalid, 1)
     if strict:
         # every task must have started with the index files out of the page cache (mincore residency after the
@@ -406,7 +425,8 @@ def run_one(label, it, seed, remeasure=False):
                                "efs_precondition": efs_pre, "jvm_snapshots": {"pre": snap_pre, "post": snap_post},
                                "efs_invalid_samples": efs_invalid, "remeasure": remeasure,
                                "failed_attempts": failures, "epoch_start": epoch0, "epoch_end": epoch0 + wall,
-                               "storage_incidents": incidents, "memory_peak": mon.peak, "directory": c.directory}) + "\n")
+                               "storage_incidents": incidents, "memory_peak": mon.peak, "directory": c.directory,
+                               "readahead": {"mode": ra_mode, "pre": ra_pre, "post": ra_post, "changed": ra_changed}}) + "\n")
     manifest.flush()
     return efs_invalid
 
