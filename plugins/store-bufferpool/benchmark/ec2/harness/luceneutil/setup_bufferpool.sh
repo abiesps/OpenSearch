@@ -16,9 +16,11 @@
 #   - org.opensearch.common.io.Channels* class files extracted unchanged from the distribution's server jar (the whole
 #     server jar is not put on the classpath: its codec SPI files would add OpenSearch codecs to luceneutil's Lucene);
 #   - the coldpath shim (bufferpool/LuceneutilBufferPool.java) compiled against that plugin jar.
-# HdrHistogram: luceneutil's own lib/HdrHistogram.jar stays (one copy on the classpath); the shim smoke checks the
-# plugin's histogram classes load from it. Every jar is recorded with its sha256 in <BASE>/bufferpool-classpath.txt.
-# Never deletes anything except the coldpath-bp-*.jar files this script wrote into luceneutil/lib before.
+# HdrHistogram: luceneutil's own lib/HdrHistogram.jar is an old build without ConcurrentHistogram, which the plugin's
+# latency histograms need, so the distribution's HdrHistogram jar replaces it for EVERY arm (luceneutil's copy is
+# renamed to HdrHistogram.jar.luceneutil, off the classpath; luceneutil uses only Histogram, present in both). Every jar
+# is recorded with its sha256 in <BASE>/bufferpool-classpath.txt. Deletes only the coldpath-bp-*.jar files this script
+# wrote into luceneutil/lib before.
 #
 #   setup_bufferpool.sh BASE OPENSEARCH_DIST_DIR
 #   e.g. setup_bufferpool.sh /data/ebs/lu /opt/opensearch-baseline
@@ -32,7 +34,7 @@ W=$(mktemp -d)
 pick() { ls "$DIST"/lib/$1 2>/dev/null | head -1; }
 JARS=("$PLUGIN"/store-bufferpool-*.jar)
 for j in "$PLUGIN"/*.jar; do case "$(basename "$j")" in store-bufferpool-*) ;; *) JARS+=("$j");; esac; done
-for pat in 'opensearch-common-*.jar' 'opensearch-secure-sm-*.jar' 'log4j-api-*.jar' 'log4j-core-*.jar' 'jna-[0-9]*.jar'; do
+for pat in 'opensearch-common-*.jar' 'opensearch-secure-sm-*.jar' 'log4j-api-*.jar' 'log4j-core-*.jar' 'jna-[0-9]*.jar' 'HdrHistogram-*.jar'; do
   j=$(pick "$pat"); test -n "$j" || { echo "no $pat in $DIST/lib"; exit 1; }; JARS+=("$j")
 done
 SERVER=$(pick 'opensearch-[0-9]*.jar'); test -n "$SERVER"
@@ -52,6 +54,7 @@ REC="$BASE/bufferpool-classpath.txt"
 for c in lucene-stock lucene-poc; do
   L="$BASE/$c/luceneutil/lib"
   rm -f "$L"/coldpath-bp-*.jar
+  if [ -f "$L/HdrHistogram.jar" ]; then mv "$L/HdrHistogram.jar" "$L/HdrHistogram.jar.luceneutil"; fi
   for j in "${JARS[@]}"; do cp "$j" "$L/coldpath-bp-$(basename "$j")"; done
   cp "$W/coldpath-bp-server-channels.jar" "$W/coldpath-bp-shim.jar" "$L/"
   echo "$c: $(ls "$L" | tr '\n' ' ')" >> "$REC"
