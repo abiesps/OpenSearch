@@ -256,6 +256,16 @@ class Agent:
         return best
 
     # ---- JVM ----
+    @staticmethod
+    def is_node_jvm(raw_cmdline, match):
+        """
+        True for a Java process that runs the node's main class: argv[0] is a java executable and one argument
+        contains `match`. A shell, grep, pgrep or SSM script whose command line only mentions the class name is not a
+        JVM (g-clickbench: a `pgrep -f <class>` from a host monitor made /cache/drop fail with "more than one JVM").
+        """
+        argv = [a.decode("utf-8", "replace") for a in raw_cmdline.split(b"\0") if a]
+        return bool(argv) and os.path.basename(argv[0]) == "java" and any(match in a for a in argv[1:])
+
     def jvm_pids(self):
         pids = []
         for name in os.listdir("/proc"):
@@ -263,10 +273,10 @@ class Agent:
                 continue
             try:
                 with open(f"/proc/{name}/cmdline", "rb") as f:
-                    cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+                    raw = f.read()
             except OSError:
                 continue
-            if self.jvm_match in cmd and "coldpath_agent" not in cmd:
+            if self.is_node_jvm(raw, self.jvm_match):
                 pids.append(int(name))
         return sorted(pids)
 
