@@ -8,7 +8,8 @@
 """
 Checks of the agent's node-JVM matcher (stdlib, no AWS): only a java process whose arguments name the main class is
 the node JVM; shells, pgrep, grep and SSM scripts that mention the class name are not (they made /cache/drop fail with
-"more than one JVM matches" on the g-clickbench data node). Also runs the matcher over this host's /proc.
+"more than one JVM matches" on the g-clickbench data node); with two matching JVMs the running arm unit's MainPID
+names the node (pick_jvm_pid). Also runs the matcher over this host's /proc.
   selftest_agentjvm.py
 """
 import os
@@ -51,6 +52,18 @@ def main():
     check(not Agent.is_node_jvm(yes[2], m), "luceneutil JVM matched as OpenSearch")
     for c in no:
         check(not Agent.is_node_jvm(c, m), f"non-JVM matched: {c!r}")
+    # two matching java processes: the running arm unit's MainPID names the node; without it, an error
+    P = Agent.pick_jvm_pid
+    check(P([4100], {}, m) == 4100 and P([], {}, m) is None, "one or no JVM")
+    check(P([4100, 4500], {"opensearch-s0-ebs": 4500}, m) == 4500, "the unit MainPID names the node")
+    check(P([4100], {"opensearch-s0-ebs": 7777}, m) == 4100, "a MainPID that is not a node JVM falls back to the scan")
+    for args, needle in ((([4100, 4500], {}), "more than one JVM matches"),
+                         (([4100, 4500], {"a": 4100, "b": 4500}), "more than one arm unit")):
+        try:
+            P(*args, m)
+            check(False, f"no error for {args}")
+        except RuntimeError as e:
+            check(needle in str(e), f"error text for {args}: {e}")
     # this host: the matcher never selects this python process, even with the class name in its argv
     if os.path.isdir("/proc/self"):
         with open("/proc/self/cmdline", "rb") as f:

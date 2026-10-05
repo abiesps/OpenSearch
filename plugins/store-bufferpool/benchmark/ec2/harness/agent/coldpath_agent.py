@@ -280,11 +280,40 @@ class Agent:
                 pids.append(int(name))
         return sorted(pids)
 
+    def unit_main_pids(self):
+        """{unit: MainPID} of the configured arm units that run (start argv 'systemctl start <unit>')."""
+        out = {}
+        for arm in self.cfg.get("arms", {}).values():
+            argv = arm.get("start") or []
+            if len(argv) != 3 or os.path.basename(argv[0]) != "systemctl" or argv[1] != "start" or argv[2] in out:
+                continue
+            try:
+                p = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", argv[2]], capture_output=True,
+                                   text=True, timeout=10)
+                out[argv[2]] = int(p.stdout.strip() or 0)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                continue
+        return {u: pid for u, pid in out.items() if pid > 0}
+
+    @staticmethod
+    def pick_jvm_pid(pids, unit_pids, match):
+        """
+        The node JVM among the matching java processes `pids`: the MainPID of the one running arm unit when it is one
+        of them (the unit names the node, so a second java process with the class in its arguments, e.g. a JVM left
+        from a stop, cannot be taken for it); otherwise the one matching process. Ambiguity is an error, never a guess.
+        """
+        units = {u: pid for u, pid in unit_pids.items() if pid in pids}
+        if len(units) == 1:
+            return next(iter(units.values()))
+        if len(units) > 1:
+            raise RuntimeError(f"more than one arm unit runs a JVM matching [{match}]: {units}")
+        if len(pids) > 1:
+            raise RuntimeError(f"more than one JVM matches [{match}]: {pids}")
+        return pids[0] if pids else None
+
     def jvm_pid(self):
         pids = self.jvm_pids()
-        if len(pids) > 1:
-            raise RuntimeError(f"more than one JVM matches [{self.jvm_match}]: {pids}")
-        return pids[0] if pids else None
+        return self.pick_jvm_pid(pids, self.unit_main_pids() if len(pids) > 1 else {}, self.jvm_match)
 
     def node_memory(self):
         """Resident and anonymous memory of the node JVM against host memory, and its MALLOC_ARENA_MAX (environ)."""
