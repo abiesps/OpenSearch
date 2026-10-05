@@ -190,8 +190,26 @@ class Node:
             self.os.close()
             return False
 
+    def jvm_gone(self):
+        """True when the agent sees no node JVM (it exited while starting or while measuring); False when it does or
+        there is no agent to ask."""
+        if not self.agent:
+            return False
+        try:
+            return self.agent.request("GET", "/node/status").get("pid") is None
+        except Exception:  # noqa: BLE001 - an agent that does not answer says nothing about the node
+            return False
+
     def wait_green(self, timeout_s=900):
-        wait_until(self.up, timeout_s, 1.0, "OpenSearch HTTP")
+        deadline = time.monotonic() + timeout_s
+        while not self.up():
+            # a node that exited (EFS: NoSuchFileException in the cluster-state commit) never comes up: fail at once
+            # instead of after timeout_s, so start_arm can retry it
+            if self.jvm_gone():
+                raise NodeDown("the node JVM exited before its HTTP port answered")
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"timed out after {timeout_s}s waiting for OpenSearch HTTP")
+            time.sleep(1.0)
         self.os.request("GET", f"/_cluster/health?wait_for_status=green&wait_for_no_relocating_shards=true"
                                f"&wait_for_no_initializing_shards=true&timeout={timeout_s}s", timeout=timeout_s + 30)
 
@@ -345,6 +363,26 @@ def efs_connections_ok(io, target):
 # ---------------------------------------------------------------- arms
 class ArmUnavailable(RuntimeError):
     pass
+
+
+class NodeDown(RuntimeError):
+    """The node JVM is not running (it exited while starting or during a run)."""
+
+
+class NodeStartFailed(RuntimeError):
+    """A node start failed after NODE_START_RETRIES retries; the run is re-queued at the end of the session."""
+
+
+class RunDiscarded(RuntimeError):
+    """The node failed during a measured run; the run's samples are discarded and the run is re-queued."""
+
+
+# Node start on EFS can fail with NoSuchFileException in the cluster-state commit (common-rules.md, "Node start can fail
+# on Amazon EFS ..."): a start that fails before any measured iteration is retried after NODE_START_RETRY_WAIT_S.
+NODE_START_RETRIES = 2
+NODE_START_RETRY_WAIT_S = float(os.environ.get("COLDBENCH_NODE_START_RETRY_WAIT_S", "10"))  # env: self-test only
+# a run that could not start, or whose node failed while measuring, is re-queued once at the end of the session
+RUN_REQUEUES = 1
 
 
 def load_arms(path, indices_override=None):
@@ -1039,13 +1077,43 @@ class Session:
             raise RuntimeError("--restart needs --agent")
         if n.up():
             close_indices(n, self.cfg, self.log)
-        if self.a.restart:
-            res = n.agent.request("POST", "/node/restart", {"arm": arm["node"]})
-            self.log(f"  node restarted as {arm['node']} pid {res['pid']}")
-        n.wait_green()
+        for attempt in range(NODE_START_RETRIES + 1):
+            try:
+                if self.a.restart:
+                    res = n.agent.request("POST", "/node/restart", {"arm": arm["node"]})
+                    self.log(f"  node restarted as {arm['node']} pid {res['pid']}")
+                n.wait_green()
+                break
+            except Exception as e:  # noqa: BLE001 - a start that fails before any measured iteration is retried
+                rec = {"node": arm["node"], "attempt": attempt + 1, "of": NODE_START_RETRIES,
+                       "exception": f"{type(e).__name__}: {e}"[:2000], "jvm_gone": n.jvm_gone(),
+                       "efs_connections": self.efs_connection_state(arm), "node_status": self.agent_get("/node/status")}
+                if attempt == NODE_START_RETRIES or not self.a.restart:
+                    self.record(type="node_start_failed", **getattr(self, "current_run", {}), **rec)
+                    raise NodeStartFailed(f"node {arm['node']} did not start after {NODE_START_RETRIES} retries: "
+                                          f"{rec['exception']}") from e
+                self.record(type="node_start_retry", **getattr(self, "current_run", {}), **rec)
+                self.log(f"  node start of {arm['node']} failed ({rec['exception'][:200]}); retry {attempt + 1} of "
+                         f"{NODE_START_RETRIES} in {NODE_START_RETRY_WAIT_S:.0f} s")
+                time.sleep(NODE_START_RETRY_WAIT_S)
         self.other_indices = runguards.enforce_other_indices(n.os, self.cfg, self.log)
         open_indices(n, self.cfg, arm, self.log)
         return verify_indices(n, self.cfg, arm, arm["node"])
+
+    def agent_get(self, path):
+        if not self.node.agent:
+            return None
+        try:
+            return self.node.agent.request("GET", path)
+        except Exception as e:  # noqa: BLE001 - recorded, never fatal
+            return {"error": f"{type(e).__name__}: {e}"[:300]}
+
+    def efs_connection_state(self, arm):
+        """The EFS backend connection count and efs-proxy pid of the arm's data path (agent v2), None on EBS."""
+        st = (self.agent_get("/health") or {}).get("storages", {}).get(arm["node"]) or {}
+        if not st.get("nfs"):
+            return None
+        return self.agent_get(f"/efs/connections?arm={urllib.parse.quote(arm['node'])}")
 
     def cold_sample(self, it, run, op, index, i, mode="cold"):
         pre_state = it.clear()
@@ -1111,7 +1179,7 @@ class Session:
 
     def concurrent_cold(self, it, run, index, ops):
         a = self.a
-        rng = random.Random(_seed(a.seed, run["run_id"], "ccold"))
+        rng = random.Random(_seed(a.seed, run["run_id"].split(".a")[0], "ccold"))
         for b in range(a.concurrent_batches):
             batch = [rng.choice(ops) for _ in range(a.clients)]
             pre_state = it.clear()
@@ -1152,7 +1220,7 @@ class Session:
 
         def worker(k):
             c = JsonClient(self.node.url)
-            rng = random.Random(_seed(a.seed, run["run_id"], "cwarm", k))
+            rng = random.Random(_seed(a.seed, run["run_id"].split(".a")[0], "cwarm", k))
             i = 0
             try:
                 while time.monotonic() < stop_at:
@@ -1175,12 +1243,18 @@ class Session:
         self.record(type="batch", mode="cwarm", **run, clients=a.clients, prefetch_pool=self.node.prefetch_pool(),
                     jvm=self.node.os.request("GET", "/_nodes/_local/stats/jvm?filter_path=nodes.*.jvm.mem"))
 
-    def run_one(self, rnd, label):
+    def run_one(self, rnd, label, attempt=0):
         a = self.a
         arm_name, label = parse_label(label)
         arm = self.cfg["arms"][arm_name]
-        run_id = f"{label}#r{rnd}"
+        # a re-queued run gets its own run id (the discarded attempt's samples never merge with it) and the same seeds
+        # (op orders) as the first attempt
+        seed_id = f"{label}#r{rnd}"
+        run_id = seed_id + (f".a{attempt}" if attempt else "")
         run = {"arm": arm_name, "label": label, "round": rnd, "run_id": run_id}
+        if attempt:
+            run["attempt"] = attempt
+        self.current_run = run
         if indices_ext.not_applicable(arm):
             self.log(f"run {run_id}: NOT APPLICABLE: {arm['not_applicable']}")
             self.record(type="run", **run, available=False, reason=f"not applicable: {arm['not_applicable']}")
@@ -1228,25 +1302,25 @@ class Session:
                     args=vars(a), op_caps=self.op_caps)
         modes = a.modes.split(",")
         if a.jit_warmup and any(m in modes for m in ("cold", "ccold")):
-            jit_warmup(self, run, index, self.ops, _seed(a.seed, run_id, "jit"))
+            jit_warmup(self, run, index, self.ops, _seed(a.seed, seed_id, "jit"))
         if a.executor == "osb":
             import osb_cold
             osb_ops = [o for o in self.ops if o.get("type", "search") in osb_cold.OSB_TYPE]
             if "cold" in modes:
-                osb_cold.run_block(self, it, run, index, "cold", op_order(osb_ops, self.ref, _seed(a.seed, run_id, "cold")),
+                osb_cold.run_block(self, it, run, index, "cold", op_order(osb_ops, self.ref, _seed(a.seed, seed_id, "cold")),
                                    a.cold_iters)
             if "warm" in modes:
-                osb_cold.run_block(self, it, run, index, "warm", op_order(osb_ops, self.ref, _seed(a.seed, run_id, "warm")),
+                osb_cold.run_block(self, it, run, index, "warm", op_order(osb_ops, self.ref, _seed(a.seed, seed_id, "warm")),
                                    a.warm_iters, a.warm_warmup)
             modes = [m for m in modes if m not in ("cold", "warm")]
         if "cold" in modes:
-            for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, run_id, "cold"))):
+            for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, seed_id, "cold"))):
                 for i in range(iters(a, self.op_caps, op)[0]):
                     r = self.cold_sample(it, {**run, "pos": pos}, op, index, i)
                     if i == 0:
                         self.log(f"  cold {op['name']:<56} took {r['took_ms']:8.1f} ms ok={r['cold_ok']}")
         if "warm" in modes:
-            for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, run_id, "warm"))):
+            for pos, op in enumerate(op_order(self.ops, self.ref, _seed(a.seed, seed_id, "warm"))):
                 _, n_warmup, n_measure = iters(a, self.op_caps, op)
                 for i in range(n_warmup):
                     self.warm_sample(it, run, op, index, i, "warmup")
@@ -1273,8 +1347,46 @@ class Session:
             raise RuntimeError(f"run {run_id}: kernel readahead changed during the run (a remount?): {readahead_end}; "
                                "this run is invalid")
 
+    def measure_run(self, rnd, lab, attempt):
+        """run_one; a node failure during the run (the JVM is gone) becomes RunDiscarded, anything else propagates."""
+        try:
+            self.run_one(rnd, lab, attempt)
+        except (NodeStartFailed, ArmUnavailable):
+            raise
+        except Exception as e:  # noqa: BLE001 - classified below: only a node that died discards the run
+            if not self.node.jvm_gone():
+                raise
+            run = getattr(self, "current_run", {})
+            self.record(type="run_discarded", **run, reason=f"node failed during the run: {type(e).__name__}: {e}"[:2000],
+                        efs_connections=self.efs_connection_state(self.cfg["arms"][run.get("arm", parse_label(lab)[0])]),
+                        node_status=self.agent_get("/node/status"))
+            raise RunDiscarded(f"run {run.get('run_id')}: node failed during the run ({type(e).__name__}: {e})") from e
+
+    def run_schedule(self, sched):
+        """The schedule in order; a run whose node did not start (NodeStartFailed) or failed while measuring
+        (RunDiscarded) is re-queued at the end of the session, RUN_REQUEUES times at most, under a new run id."""
+        queue = [(rnd, lab, 0) for rnd, lab in sched]
+        while queue:
+            rnd, lab, attempt = queue.pop(0)
+            try:
+                self.measure_run(rnd, lab, attempt)
+            except (NodeStartFailed, RunDiscarded) as e:
+                run = {"label": parse_label(lab)[1], "round": rnd, "run_id": f"{parse_label(lab)[1]}#r{rnd}"}
+                if attempt < RUN_REQUEUES:
+                    self.record(type="run_requeued", **run, attempt=attempt, reason=str(e)[:2000])
+                    self.log(f"  {e}; re-queued at the end of the session")
+                    queue.append((rnd, lab, attempt + 1))
+                else:
+                    self.record(type="run_failed", **run, attempt=attempt, reason=str(e)[:2000])
+                    self.log(f"  {e}; re-queued {RUN_REQUEUES} time(s) already: run FAILED, the session continues")
+                if self.cfg["arms"][parse_label(lab)[0]].get("bufferpool") and getattr(self.a, "normalize_store_types", True):
+                    # a POC node that died leaves its path's stock indices in bufferpoolfs: reset before a stock start
+                    self.record(type="store_type_normalize", after=run["run_id"],
+                                paths=self.normalize_stock_paths(self.session_labels))
+
     def run(self):
         labels = self.a.arm_list.split(",")
+        self.session_labels = labels
         for lab in labels:
             if parse_label(lab)[0] not in self.cfg["arms"]:
                 sys.exit(f"unknown arm {lab}; arms file has {sorted(self.cfg['arms'])}")
@@ -1287,8 +1399,7 @@ class Session:
         if getattr(self.a, "normalize_store_types", True):
             self.record(type="store_type_normalize", paths=self.normalize_stock_paths(labels))
         try:
-            for rnd, lab in sched:
-                self.run_one(rnd, lab)
+            self.run_schedule(sched)
         except BaseException as e:
             # exit trap (KeyboardInterrupt, SIGTERM via cmd_run's handler, any error): the running node may be a POC
             # arm with the stock indices of its data path in store type bufferpoolfs; reset them while it runs, so the

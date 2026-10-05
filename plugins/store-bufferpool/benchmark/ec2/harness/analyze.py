@@ -227,6 +227,21 @@ class Data:
                     self.results[(r["label"], r["op"])][r["run_id"]] = r["canonical"]
                 elif t == "batch":
                     self.batches.append(r)
+        # runs discarded by coldbench (the node failed during the run; re-queued under a new run id): none of their
+        # samples or results count
+        self.discarded = set()
+        for d in dirs:
+            for r in read_jsonl(os.path.join(d, "samples.jsonl")):
+                if r["type"] == "run_discarded":
+                    self.discarded.add(r["run_id"])
+        if self.discarded:
+            for k in [k for k in self.samples if k[2] in self.discarded]:
+                self.excluded[(k[0], k[1], "run_discarded")] += len(self.samples.pop(k))
+            for k in self.results:
+                for rid in self.discarded & set(self.results[k]):
+                    del self.results[k][rid]
+            for rid in self.discarded & set(self.runs):
+                del self.runs[rid]
         self.ref = self.sessions[0]["reference_op"] if self.sessions else None
         self.families = {}
         for s in self.sessions:

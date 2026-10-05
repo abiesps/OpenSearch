@@ -57,6 +57,12 @@ class Mock:
         # strict_store (selftest.py): like real nodes, a stock node is red next to a closed bufferpoolfs index and
         # rejects its store-type update; an index with "nodes" exists only on those agent arms' data paths
         self.strict_store = False
+        # node failures (common-rules "Node start can fail on Amazon EFS ..."): fail_starts {agent arm: n} makes the
+        # next n starts of that arm exit at once; crash_after_searches makes the node exit after that many searches
+        self.fail_starts = {}
+        self.down = False
+        self.crash_after_searches = None
+        self.searches = 0
         # agent arm -> data path (agent /health storages)
         self.data_paths = {"S0-EBS": "/data/ebs/opensearch", "S0-EFS": "/mnt/efs/opensearch", "POC-EBS": "/data/ebs/opensearch",
                            "POC-EFS": "/mnt/efs/opensearch", "POC-B-EFS": "/mnt/efs/opensearch-b"}
@@ -157,6 +163,15 @@ def make_os_handler(m):
             p = u.path
             b = self.body()  # OpenSearch Benchmark sends GET with a body
             with m.lock:
+                if m.down:  # the JVM is gone: the connection drops without a response
+                    self.close_connection = True
+                    return
+                if p.endswith("/_search") and m.crash_after_searches is not None:
+                    m.searches += 1
+                    if m.searches > m.crash_after_searches:
+                        m.crash_after_searches, m.down = None, True
+                        self.close_connection = True
+                        return
                 m.calls.append(("os", method, p))
                 bp = m.binary.startswith("POC")
                 visible = ({n: i for n, i in m.indices.items() if m.binary in i.get("nodes", {m.binary})}
@@ -386,10 +401,13 @@ def make_agent_handler(m):
                 if u.path == "/host":
                     return self.send(200, {"uname": "mock", "device": "nvme1n1"})
                 if u.path == "/node/status":
-                    return self.send(200, {"pid": m.pid, "last_arm": m.binary})
+                    return self.send(200, {"pid": None if m.down else m.pid, "last_arm": m.binary})
                 if u.path == "/node/restart":
                     m.binary = b["arm"]
                     m.pid += 1
+                    m.down = m.fail_starts.get(m.binary, 0) > 0
+                    if m.down:
+                        m.fail_starts[m.binary] -= 1
                     m.cached.clear()
                     m.sort_opt = {"bkd_prefetch": False}
                     return self.send(200, {"arm": m.binary, "pid": m.pid})
@@ -746,6 +764,50 @@ def main():
          "--ni-boot", "100", "--out", os.path.join(tmp, "analysis-skip")])
     a7 = json.load(open(os.path.join(tmp, "analysis-skip", "analysis.json")))
     assert a7["cold_protocol"] == "jit-cold/skip-iter1" and a7["cold_skipped"]["S1-EFS"] == len(small["ops"]) + 1, a7["cold_skipped"]
+    # node start retries and re-queued runs (common-rules "Node start can fail on Amazon EFS with NoSuchFileException
+    # in the cluster-state commit"): the wait between retries is shortened for the test
+    coldbench_env = {**os.environ, "COLDBENCH_NODE_START_RETRY_WAIT_S": "0.2"}
+    for i in m.indices.values():
+        i["status"] = "close"
+    m.indices["big5"]["store_type"], m.binary, m.down = "hybridfs", "S0-EBS", False
+
+    def session(name, arm_list, rounds=1):
+        out = os.path.join(tmp, name)
+        p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common_pe, "--arm-list", arm_list, "--rounds",
+                            str(rounds), "--modes", "cold", "--cold-iters", "1", "--out", out], capture_output=True,
+                           text=True, env=coldbench_env)
+        assert p.returncode == 0, p.stderr[-1500:]
+        return out, [json.loads(x) for x in open(os.path.join(out, "samples.jsonl"))]
+    m.fail_starts = {"S0-EBS": 1}  # one failed start: retried, the run is measured as usual
+    _, recs = session("session-start-retry", "S0-EBS")
+    retries = [r for r in recs if r["type"] == "node_start_retry"]
+    assert len(retries) == 1 and retries[0]["jvm_gone"] and retries[0]["node"] == "S0-EBS", retries
+    assert [r["run_id"] for r in recs if r["type"] == "run_end"] == ["S0-EBS#r0"], [r["type"] for r in recs]
+    m.fail_starts = {"S0-EBS": 3}  # three failed starts: 2 retries fail, the run is re-queued and measured at the end
+    _, recs = session("session-start-requeue", "S0-EBS,S1-EBS")
+    assert sum(r["type"] == "node_start_retry" for r in recs) == 2 and any(r["type"] == "node_start_failed" for r in recs)
+    assert [r["run_id"] for r in recs if r["type"] == "run_requeued"] == ["S0-EBS#r0"]
+    assert [r["run_id"] for r in recs if r["type"] == "run_end"] == ["S1-EBS#r0", "S0-EBS#r0.a1"], \
+        [(r["type"], r.get("run_id")) for r in recs]
+    order = lambda rid: [r["op"] for r in recs if r.get("run_id") == rid and r.get("mode") == "cold"]  # noqa: E731
+    m.fail_starts = {}
+    # the node dies in the middle of the first run's cold block (after the JIT warm-up of every op and 3 cold
+    # iterations): discarded, re-queued, measured again
+    m.searches, m.crash_after_searches = 0, len(small["ops"]) + 1 + 3
+    out_c, recs = session("session-crash", "S1-EBS")
+    disc = [r for r in recs if r["type"] == "run_discarded"]
+    assert len(disc) == 1 and disc[0]["run_id"] == "S1-EBS#r0", [r["type"] for r in recs]
+    assert [r["run_id"] for r in recs if r["type"] == "run_end"] == ["S1-EBS#r0.a1"]
+    first = order("S1-EBS#r0")
+    again = order("S1-EBS#r0.a1")
+    assert first and len(again) > len(first) and again[:len(first)] == first, (first, again)  # same op order
+    assert any(r["type"] == "store_type_normalize" and r.get("after") == "S1-EBS#r0" for r in recs), "no store-type reset"
+    assert m.indices["big5"]["store_type"] == "hybridfs", m.indices["big5"]
+    sys.path.insert(0, here)
+    import analyze as _an
+    d = _an.Data([out_c], "took_ms", "wall_ms")
+    assert d.discarded == {"S1-EBS#r0"} and not any(k[2] == "S1-EBS#r0" for k in d.samples) and \
+        any(k[2] == "S1-EBS#r0.a1" for k in d.samples), sorted({k[2] for k in d.samples})
     print(report[-3000:])
     print(f"\nSELFTEST PASS ({tmp})")
     if not a.keep:

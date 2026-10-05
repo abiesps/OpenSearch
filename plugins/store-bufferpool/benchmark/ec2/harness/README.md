@@ -93,6 +93,17 @@ cold block of every JVM run, every op runs once, unmeasured (record `jit_warmup`
 EFS server-side caching cannot be cleared from the client; it is part of the storage (as in AOSS) and is the same for
 every EFS arm.
 
+## Node failures (common-rules "Node start can fail on Amazon EFS with NoSuchFileException in the cluster-state commit")
+A node start that fails before any measured iteration (the JVM exits, or its HTTP port never answers) is retried
+`NODE_START_RETRIES` (2) times after 10 s; each retry is recorded as `node_start_retry` with the exception, whether the
+JVM was gone, the agent's node status and the EFS backend connection count and efs-proxy pid of the arm's mount. After
+the last retry the run stops (`node_start_failed`) and is re-queued at the end of the session (`run_requeued`, once).
+A node that dies during a measured run discards that run (`run_discarded`; analyze.py drops its samples and results)
+and re-queues it. A re-queued run gets the run id `<label>#r<round>.a<attempt>` and the op orders of the first attempt.
+After a bufferpool arm's failure the stock store types of every stock data path are reset again
+(`store_type_normalize` with `after`). A second failure records `run_failed` and the session continues. Errors that
+are not node failures (the JVM still runs) stop the session as before.
+
 ## Index state per run
 Aborted sessions (common-rules "Store type left on the other data path after an aborted session"): (a) a SIGTERM or
 any error during a run triggers an exit trap that closes the configured indices on the running node and resets their
