@@ -397,7 +397,7 @@ def stock_store_types(cfg):
     return out
 
 
-def close_indices(node, cfg, log):
+def close_indices(node, cfg, log, reset=True):
     """
     On the RUNNING node, before it stops: close every configured index it has open. Every node therefore starts with
     all benchmark indices closed, and open_indices sets the store type the next arm needs before it opens them, so a
@@ -420,7 +420,7 @@ def close_indices(node, cfg, log):
             log(f"  closed {name}")
         want = stock.get(name)
         # no index.store.type = the node default (fs, hybridfs on Linux), which the stock binary reads
-        if want and st["store_type"] is not None and st["store_type"] != want:
+        if reset and want and st["store_type"] is not None and st["store_type"] != want:
             if reset_ok is None:
                 reset_ok = any(p.get("component") == "store-bufferpool"
                                for p in node.os.request("GET", "/_cat/plugins?format=json"))
@@ -976,6 +976,58 @@ class Session:
     def record(self, **kw):
         self.w.write({"schema": SCHEMA, "t": time.time(), **kw})
 
+    def normalize_stock_paths(self, labels):
+        """
+        Pre-start check (common-rules "Store type left on the other data path after an aborted session"). A session
+        killed while a POC arm ran leaves the stock indices of THAT data path in store type bufferpoolfs; close_indices
+        resets them only on the node that is running, so the other storage's path can stay dirty, and the next stock
+        start there is red ("Unknown store type", shards past their allocation retries). Before the first run, for
+        every data path that a scheduled stock arm uses, start a POC arm of the arms file on the same path, read
+        index.store.type of the stock indices, reset any foreign value to the stock arms' store type, retry failed
+        allocations, wait for green, and close. Returns one record per path.
+        """
+        n = self.node
+        if not (n.agent and self.a.restart):
+            return []
+        paths = {k: (v or {}).get("data_path") for k, v in (n.agent.request("GET", "/health").get("storages") or {}).items()}
+        stock_nodes = sorted({self.cfg["arms"][parse_label(lab)[0]]["node"] for lab in labels
+                              if not self.cfg["arms"][parse_label(lab)[0]].get("bufferpool")
+                              and not indices_ext.not_applicable(self.cfg["arms"][parse_label(lab)[0]])})
+        poc_nodes = sorted({a["node"] for a in self.cfg["arms"].values()
+                            if a.get("bufferpool") and not indices_ext.not_applicable(a) and "node" in a})
+        stock = stock_store_types(self.cfg)
+        out = []
+        for sn in stock_nodes:
+            path = paths.get(sn)
+            poc = next((pn for pn in poc_nodes if path and paths.get(pn) == path), None)
+            rec = {"stock_node": sn, "data_path": path, "poc_node": poc, "reset": []}
+            if poc is None:
+                rec["skipped"] = "no bufferpool arm of the arms file shares this data path"
+                self.log(f"  store types on {path}: not checked ({rec['skipped']})")
+                out.append(rec)
+                continue
+            if n.up():
+                # only close here: the running node may be a stock node, which cannot reset a store type; the POC
+                # arm started next resets them
+                close_indices(n, self.cfg, self.log, reset=False)
+            n.agent.request("POST", "/node/restart", {"arm": poc})
+            wait_until(n.up, 900, 1.0, "OpenSearch HTTP")
+            for name, want in sorted(stock.items()):
+                try:
+                    st = index_state(n, name)
+                except RuntimeError:
+                    continue
+                if st["store_type"] is not None and st["store_type"] != want:
+                    rec["reset"].append({"index": name, "from": st["store_type"], "to": want})
+            close_indices(n, self.cfg, self.log)  # closes what is open and resets every foreign store type
+            status, _ = n.os.raw("POST", "/_cluster/reroute?retry_failed=true")
+            rec["reroute_retry_failed"] = status
+            n.wait_green()
+            self.log(f"  store types on {path} (checked by {poc}): "
+                     + (", ".join(f"{r['index']} {r['from']} -> {r['to']}" for r in rec["reset"]) or "all stock"))
+            out.append(rec)
+        return out
+
     def start_arm(self, arm_name, arm):
         """
         Call after set_readahead: every index file is opened here, after the arm's readahead is set (Linux copies the
@@ -1232,8 +1284,22 @@ class Session:
                     format_isolation=self.isolation, op_caps=self.op_caps,
                     op_caps_file=os.path.abspath(self.a.op_caps) if getattr(self.a, "op_caps", None) else None)
         self.log(f"session: {len(self.ops)} ops, schedule {[l for _, l in sched]}")
-        for rnd, lab in sched:
-            self.run_one(rnd, lab)
+        if getattr(self.a, "normalize_store_types", True):
+            self.record(type="store_type_normalize", paths=self.normalize_stock_paths(labels))
+        try:
+            for rnd, lab in sched:
+                self.run_one(rnd, lab)
+        except BaseException as e:
+            # exit trap (KeyboardInterrupt, SIGTERM via cmd_run's handler, any error): the running node may be a POC
+            # arm with the stock indices of its data path in store type bufferpoolfs; reset them while it runs, so the
+            # next stock start on that path is not red. SIGKILL cannot be trapped: normalize_stock_paths covers it.
+            self.log(f"session aborted ({type(e).__name__}: {e}); resetting store types on the running node")
+            try:
+                if self.node.up():
+                    close_indices(self.node, self.cfg, self.log)
+            except Exception as e2:  # noqa: BLE001 - keep the original error
+                self.log(f"  store-type reset on abort failed: {e2}")
+            raise
         if self.node.up():
             # leave the node with every configured index closed and in the stock store type, so a later stock start
             # (another session, another indices file, a manual start) is not red next to a closed bufferpoolfs index
@@ -1277,6 +1343,11 @@ def cmd_run(a):
         sys.exit("--read-ahead-kb is no longer used: the harness sets kernel readahead per arm (stock arms keep the "
                  "as-mounted default, bufferpool arms run with 0) and verifies it before and after every run "
                  "(common-rules.md, kernel readahead)")
+    import signal
+
+    def _term(signum, frame):  # noqa: ARG001 - a kill (pkill, systemd stop) runs the session's exit trap
+        raise SystemExit(128 + signum)
+    signal.signal(signal.SIGTERM, _term)
     Session(a).run()
 
 
@@ -1329,6 +1400,8 @@ def main():
     r.add_argument("--arm-list", required=True, help="comma list of arm labels; ARM@x labels repeat an arm (A/A)")
     r.add_argument("--rounds", type=int, default=5, help="JVM runs per arm label")
     r.add_argument("--order", choices=["abba", "random"], default="abba")
+    r.add_argument("--no-normalize-store-types", dest="normalize_store_types", action="store_false",
+                   help="skip the pre-start store-type check of the stock arms' data paths (one POC start per path)")
     r.add_argument("--round-offset", type=int, default=0, help="number of the first round: continue a session in a new "
                    "invocation and output directory (same seed) with the same round orders and distinct run ids")
     r.add_argument("--modes", default="cold,warm", help="cold,warm,ccold,cwarm")

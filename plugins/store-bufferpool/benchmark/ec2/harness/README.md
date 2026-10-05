@@ -92,6 +92,12 @@ EFS server-side caching cannot be cleared from the client; it is part of the sto
 every EFS arm.
 
 ## Index state per run
+Aborted sessions (common-rules "Store type left on the other data path after an aborted session"): (a) a SIGTERM or
+any error during a run triggers an exit trap that closes the configured indices on the running node and resets their
+store type when that node has the bufferpool plugin; (b) a SIGKILL cannot be trapped, so before the first run every
+session starts, for each data path a scheduled stock arm uses, a POC arm of the arms file on the same path, resets
+foreign store types of the stock indices, retries failed allocations (`_cluster/reroute?retry_failed=true`) and waits
+for green (record `store_type_normalize`; `--no-normalize-store-types` skips it).
 Every index is closed before a node stops. On start the harness sets the arm's `index.store.type` on the closed index
 and opens what the arm needs, so a stock node never opens a bufferpoolfs or split-format index.
 A closed index stays allocated, so the stock binary cannot even START next to a closed index it cannot read (probe on

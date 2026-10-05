@@ -488,6 +488,42 @@ def main():
     run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S0-EBS", "--rounds", "1", "--modes", "cold",
          "--cold-iters", "1", "--no-results", "--out", os.path.join(tmp, "session-unset"), "--strict"])
     assert m.indices["big5"]["store_type"] == "hybridfs", m.indices["big5"]
+    # store type left on a stock data path by a session killed while a POC arm ran (SIGKILL: no exit trap). The
+    # pre-start check starts the POC arm of the same path, resets the store type, then the stock arm starts green;
+    # without the check the stock arm cannot start (red, and a stock node cannot reset the store type)
+    arms_pe = {**arms, "arms": {"S0-EBS": arms["arms"]["S0-EBS"],
+                                "S1-EBS": {"node": "POC-EBS", "bufferpool": True, "index": "stock", "open": ["stock"],
+                                           "store_types": {"stock": "bufferpoolfs"}}}}
+    arms_pe_f = os.path.join(tmp, "arms-pe.json")
+    json.dump(arms_pe, open(arms_pe_f, "w"))
+    common_pe = [c if c != arms_f else arms_pe_f for c in common]
+    one_s0 = ["--arm-list", "S0-EBS", "--rounds", "1", "--modes", "cold", "--cold-iters", "1", "--no-results", "--strict"]
+    m.indices["big5"]["store_type"], m.binary = "bufferpoolfs", "S0-EBS"
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common_pe, *one_s0, "--no-normalize-store-types",
+                        "--out", os.path.join(tmp, "session-dirty-nocheck")], capture_output=True, text=True)
+    assert p.returncode != 0 and m.indices["big5"]["store_type"] == "bufferpoolfs", (p.returncode, p.stderr[-800:])
+    m.calls.clear()
+    run([PY, os.path.join(here, "coldbench.py"), "run", *common_pe, *one_s0, "--out", os.path.join(tmp, "session-dirty")])
+    restarts = [c[4] for c in m.calls if c[:3] == ("agent", "POST", "/node/restart")]
+    assert restarts[:2] == ["POC-EBS", "S0-EBS"], restarts
+    norm = [json.loads(x) for x in open(os.path.join(tmp, "session-dirty", "samples.jsonl"))
+            if '"store_type_normalize"' in x][0]
+    assert norm["paths"][0]["poc_node"] == "POC-EBS" and norm["paths"][0]["reset"] == [
+        {"index": "big5", "from": "bufferpoolfs", "to": "hybridfs"}], norm
+    assert m.indices["big5"]["store_type"] == "hybridfs", m.indices["big5"]
+    # exit trap: SIGTERM while a POC arm runs resets the store type on the running node before the process exits
+    m.indices["big5"]["store_type"], m.binary = "hybridfs", "POC-EBS"
+    proc = subprocess.Popen([PY, os.path.join(here, "coldbench.py"), "run", *common_pe, "--arm-list", "S1-EBS", "--rounds",
+                             "3", "--modes", "cold,warm", "--no-normalize-store-types",
+                             "--out", os.path.join(tmp, "session-term")], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    t0 = time.monotonic()
+    while not (m.indices["big5"]["status"] == "open" and m.indices["big5"]["store_type"] == "bufferpoolfs"):
+        assert time.monotonic() - t0 < 60 and proc.poll() is None, "S1-EBS did not open big5 as bufferpoolfs"
+        time.sleep(0.05)
+    proc.terminate()
+    err = proc.communicate(timeout=60)[1]
+    assert proc.returncode != 0 and "session aborted" in open(os.path.join(tmp, "session-term", "session.log")).read(), err[-800:]
+    assert m.indices["big5"]["status"] == "close" and m.indices["big5"]["store_type"] == "hybridfs", m.indices["big5"]
     out = os.path.join(tmp, "analysis")
     report = run([PY, os.path.join(here, "analyze.py"), s1, s2, "--base", "S1-EFS", "--compare", "S1-EFS@b,S2-X-EFS,S0-EBS",
                   "--aa", "S1-EFS@a,S1-EFS@b", "--ni-ref", "S0-EBS,S0-EBS@a,S0-EBS@b", "--ni-aa", "S0-EBS@a,S0-EBS@b",
