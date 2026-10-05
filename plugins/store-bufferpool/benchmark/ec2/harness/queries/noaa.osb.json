@@ -1,0 +1,2144 @@
+{
+ "corpus": "noaa",
+ "families": [
+  "agg:date_histogram",
+  "agg:histogram",
+  "agg:range",
+  "agg:significant_terms",
+  "agg:stats",
+  "agg:terms",
+  "agg:top_hits",
+  "agg:top_metrics",
+  "bkd:range_other",
+  "bool:must",
+  "bool:should",
+  "geo:agg",
+  "geo:bbox",
+  "keyword:term",
+  "keyword:terms",
+  "sort:numeric_asc",
+  "sort:numeric_desc"
+ ],
+ "families_not_applicable": {
+  "text:match": "no text field: every string field of the noaa mapping is keyword",
+  "text:multi_match": "no text field: every string field of the noaa mapping is keyword",
+  "text:phrase": "no text field: every string field of the noaa mapping is keyword",
+  "text:query_string": "no text field: every string field of the noaa mapping is keyword"
+ },
+ "missing_families": [
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:composite",
+  "agg:cardinality",
+  "scroll",
+  "geo:distance",
+  "geo:polygon",
+  "geo:shape"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "range": {
+      "TRANGE": {
+       "gte": 0,
+       "lte": 30
+      }
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other"
+   ],
+   "name": "osb:range_field_big_range",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "range": {
+      "TRANGE": {
+       "gte": -20,
+       "lte": -10
+      }
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other"
+   ],
+   "name": "osb:range_field_small_range",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "term": {
+         "station.country_code": "JA"
+        }
+       },
+       {
+        "range": {
+         "TRANGE": {
+          "gte": 0,
+          "lte": 30
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other",
+    "bool:must",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_conjunction_big_range_small_term_query",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "term": {
+         "station.country_code": "JA"
+        }
+       },
+       {
+        "range": {
+         "TRANGE": {
+          "gte": -20,
+          "lte": -10
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other",
+    "bool:must",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_conjunction_small_range_small_term_query",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "term": {
+         "station.country_code": "US"
+        }
+       },
+       {
+        "range": {
+         "TRANGE": {
+          "gte": -20,
+          "lte": -10
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other",
+    "bool:must",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_conjunction_small_range_big_term_query",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "term": {
+         "station.country_code": "US"
+        }
+       },
+       {
+        "range": {
+         "TRANGE": {
+          "gte": 0,
+          "lte": 30
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other",
+    "bool:must",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_conjunction_big_range_big_term_query",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "should": [
+       {
+        "term": {
+         "station.country_code": "JA"
+        }
+       },
+       {
+        "range": {
+         "TRANGE": {
+          "gte": -20,
+          "lte": -10
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other",
+    "bool:should",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_disjunction_small_range_small_term_query",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "should": [
+       {
+        "term": {
+         "station.country_code": "JA"
+        }
+       },
+       {
+        "range": {
+         "TRANGE": {
+          "gte": 0,
+          "lte": 30
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_other",
+    "bool:should",
+    "keyword:term"
+   ],
+   "name": "osb:range_field_disjunction_big_range_small_term_query",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "max_temp": {
+      "max": {
+       "field": "TMAX"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "bkd:range_other"
+   ],
+   "name": "osb:max_temp",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "last_temp": {
+      "top_hits": {
+       "docvalue_fields": [
+        "TMAX"
+       ],
+       "size": 1,
+       "sort": {
+        "date": "desc"
+       },
+       "stored_fields": "_none_"
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:top_hits",
+    "bkd:range_other"
+   ],
+   "name": "osb:last_max_temp_top_hits",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "last_temp": {
+      "top_metrics": {
+       "metrics": {
+        "field": "TMAX"
+       },
+       "sort": {
+        "date": "desc"
+       }
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:top_metrics",
+    "bkd:range_other"
+   ],
+   "name": "osb:last_max_temp_top_metrics",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "max_temp": {
+        "max": {
+         "field": "TMAX"
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:max_temp_per_station_10",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_hits": {
+         "docvalue_fields": [
+          "TMAX"
+         ],
+         "size": 1,
+         "sort": {
+          "date": "desc"
+         },
+         "stored_fields": "_none_"
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_hits",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_hits_10",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": {
+          "field": "TMAX"
+         },
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_metrics_10",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": [
+          {
+           "field": "TMIN"
+          },
+          {
+           "field": "TMAX"
+          }
+         ],
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_min_and_max_temp_per_station_top_metrics_10",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": {
+          "field": "TMAX"
+         },
+         "size": 5,
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_five_max_temp_per_station_top_metrics_10",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "max_temp": {
+        "max": {
+         "field": "TMAX"
+        }
+       }
+      },
+      "terms": {
+       "collect_mode": "depth_first",
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:max_temp_per_station_10_depth_first",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_hits": {
+         "docvalue_fields": [
+          "TMAX"
+         ],
+         "size": 1,
+         "sort": {
+          "date": "desc"
+         },
+         "stored_fields": "_none_"
+        }
+       }
+      },
+      "terms": {
+       "collect_mode": "depth_first",
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_hits",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_hits_10_depth_first",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": {
+          "field": "TMAX"
+         },
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "collect_mode": "depth_first",
+       "field": "station.id",
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_metrics_10_depth_first",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": {
+          "field": "TMAX"
+         },
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "order": {
+        "last_temp.TMAX": "desc"
+       },
+       "size": 10
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_metrics_10_sort_by",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "max_temp": {
+        "max": {
+         "field": "TMAX"
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 5000
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:max_temp_per_station_5000",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_hits": {
+         "docvalue_fields": [
+          "TMAX"
+         ],
+         "size": 1,
+         "sort": {
+          "date": "desc"
+         },
+         "stored_fields": "_none_"
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 5000
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_hits",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_hits_5000",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_hits": {
+         "size": 1,
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 5000
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_hits",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_hits_5000_via_source",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": {
+          "field": "TMAX"
+         },
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 5000
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_max_temp_per_station_top_metrics_5000",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": [
+          {
+           "field": "TMIN"
+          },
+          {
+           "field": "TMAX"
+          }
+         ],
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 5000
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_min_and_max_temp_per_station_top_metrics_5000",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": {
+          "field": "TMAX"
+         },
+         "size": 5,
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 5000
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_five_max_temp_per_station_top_metrics_5000",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "last_temp": {
+        "top_metrics": {
+         "metrics": [
+          {
+           "field": "station.country_code"
+          }
+         ],
+         "sort": {
+          "date": "desc"
+         }
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 5000
+      }
+     }
+    },
+    "query": {
+     "range": {
+      "station.elevation": {
+       "gt": 1000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "agg:top_metrics",
+    "bkd:range_other",
+    "keyword:terms"
+   ],
+   "name": "osb:last_country_code_per_station_top_metrics_5000",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "terms": {
+       "field": "station.id",
+       "size": 500
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:keyword-terms",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "country": {
+      "terms": {
+       "field": "station.country",
+       "size": 200
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:keyword-terms-low-cardinality",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "tmin": {
+        "min": {
+         "field": "TMIN"
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 500
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:keyword-terms-min",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "country": {
+      "aggs": {
+       "tmin": {
+        "min": {
+         "field": "TMIN"
+        }
+       }
+      },
+      "terms": {
+       "field": "station.country",
+       "size": 200
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:keyword-terms-low-cardinality-min",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "station": {
+      "aggs": {
+       "date": {
+        "aggs": {
+         "max": {
+          "max": {
+           "field": "TMAX"
+          }
+         }
+        },
+        "terms": {
+         "field": "date",
+         "size": 1
+        }
+       }
+      },
+      "terms": {
+       "field": "station.id",
+       "size": 500
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:keyword-terms-numeric-terms",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "tavg": {
+        "terms": {
+         "field": "TAVG"
+        }
+       }
+      },
+      "terms": {
+       "field": "TMAX",
+       "size": 100
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:numeric-terms-numeric-terms",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "date_histogram": {
+       "field": "date",
+       "fixed_interval": "2000d"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram"
+   ],
+   "name": "osb:date-histo-entire-range",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "tavg": {
+        "terms": {
+         "field": "TAVG"
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:date-histo-numeric-terms",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "country": {
+        "terms": {
+         "execution_hint": "map",
+         "field": "station.country"
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:date-histo-string-terms-via-map",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "country": {
+        "terms": {
+         "execution_hint": "global_ordinals",
+         "field": "station.country"
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:date-histo-string-terms-via-global-ords",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "country": {
+        "terms": {
+         "field": "station.country"
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:date-histo-string-terms-via-default-strategy",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "country": {
+        "significant_terms": {
+         "execution_hint": "map",
+         "field": "station.country"
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:significant_terms"
+   ],
+   "name": "osb:date-histo-string-significant-terms-via-map",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "country": {
+        "significant_terms": {
+         "execution_hint": "global_ordinals",
+         "field": "station.country"
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:significant_terms"
+   ],
+   "name": "osb:date-histo-string-significant-terms-via-global-ords",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "country": {
+        "significant_terms": {
+         "field": "station.country"
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:significant_terms"
+   ],
+   "name": "osb:date-histo-string-significant-terms-via-default-strategy",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "tavg": {
+        "histogram": {
+         "field": "TAVG",
+         "interval": 10
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:histogram"
+   ],
+   "name": "osb:date-histo-histo",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "location": {
+        "geohash_grid": {
+         "field": "station.location",
+         "precision": 2
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "query": {
+     "geo_bounding_box": {
+      "station.location": {
+       "bottom_right": "9",
+       "top_left": "c"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "geo:agg",
+    "geo:bbox"
+   ],
+   "name": "osb:date-histo-geohash-grid",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "date": {
+      "aggs": {
+       "location": {
+        "geotile_grid": {
+         "field": "station.location",
+         "precision": 2
+        }
+       }
+      },
+      "date_histogram": {
+       "calendar_interval": "1w",
+       "field": "date"
+      }
+     }
+    },
+    "query": {
+     "geo_bounding_box": {
+      "station.location": {
+       "bottom_right": "9",
+       "top_left": "c"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "geo:agg",
+    "geo:bbox"
+   ],
+   "name": "osb:date-histo-geotile-grid",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "range": {
+       "field": "TMAX",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 0
+        },
+        {
+         "from": 0,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 20
+        },
+        {
+         "from": 20,
+         "to": 30
+        },
+        {
+         "from": 30
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:range"
+   ],
+   "name": "osb:range-aggregation",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "significant_terms": {
+         "field": "date"
+        }
+       }
+      },
+      "range": {
+       "field": "TMAX",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 0
+        },
+        {
+         "from": 0,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 20
+        },
+        {
+         "from": 20,
+         "to": 30
+        },
+        {
+         "from": 30
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:range",
+    "agg:significant_terms"
+   ],
+   "name": "osb:range-numeric-significant-terms",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "date_histogram": {
+         "calendar_interval": "1w",
+         "field": "date"
+        }
+       }
+      },
+      "range": {
+       "field": "TMAX",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 0
+        },
+        {
+         "from": 0,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 20
+        },
+        {
+         "from": 20,
+         "to": 30
+        },
+        {
+         "from": 30
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:range"
+   ],
+   "name": "osb:range-date-histo",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "aggs": {
+         "tavg": {
+          "avg": {
+           "field": "TAVG"
+          }
+         },
+         "tmax": {
+          "max": {
+           "field": "TMAX"
+          }
+         },
+         "tmin": {
+          "min": {
+           "field": "TMIN"
+          }
+         }
+        },
+        "date_histogram": {
+         "calendar_interval": "1w",
+         "field": "date"
+        }
+       }
+      },
+      "range": {
+       "field": "TMAX",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 0
+        },
+        {
+         "from": 0,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 20
+        },
+        {
+         "from": 20,
+         "to": 30
+        },
+        {
+         "from": 30
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:range",
+    "agg:stats"
+   ],
+   "name": "osb:range-date-histo-with-metrics",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "auto_date_histogram": {
+         "buckets": 20,
+         "field": "date"
+        }
+       }
+      },
+      "range": {
+       "field": "TMAX",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 0
+        },
+        {
+         "from": 0,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 20
+        },
+        {
+         "from": 20,
+         "to": 30
+        },
+        {
+         "from": 30
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:range"
+   ],
+   "name": "osb:range-auto-date-histo",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "aggs": {
+         "tavg": {
+          "avg": {
+           "field": "TAVG"
+          }
+         },
+         "tmax": {
+          "max": {
+           "field": "TMAX"
+          }
+         },
+         "tmin": {
+          "min": {
+           "field": "TMIN"
+          }
+         }
+        },
+        "auto_date_histogram": {
+         "buckets": 20,
+         "field": "date"
+        }
+       }
+      },
+      "range": {
+       "field": "TMAX",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 0
+        },
+        {
+         "from": 0,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 20
+        },
+        {
+         "from": 20,
+         "to": 30
+        },
+        {
+         "from": 30
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:range",
+    "agg:stats"
+   ],
+   "name": "osb:range-auto-date-histo-with-metrics",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "tmax": {
+      "aggs": {
+       "date": {
+        "auto_date_histogram": {
+         "buckets": 20,
+         "field": "date",
+         "time_zone": "America/New_York"
+        }
+       }
+      },
+      "range": {
+       "field": "TMAX",
+       "ranges": [
+        {
+         "to": -10
+        },
+        {
+         "from": -10,
+         "to": 0
+        },
+        {
+         "from": 0,
+         "to": 10
+        },
+        {
+         "from": 10,
+         "to": 20
+        },
+        {
+         "from": 20,
+         "to": 30
+        },
+        {
+         "from": 30
+        }
+       ]
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "agg:range"
+   ],
+   "name": "osb:range-auto-date-histo-with-time-zone",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "AWND": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:asc_sort_awnd",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "AWND": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:desc_sort_awnd",
+   "params": {},
+   "source": "osb:noaa/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_import": {
+  "body_edits": {},
+  "ingest_ops": [
+   {
+    "bulk-size": 5000,
+    "ingest-percentage": 100,
+    "name": "index",
+    "operation-type": "bulk"
+   }
+  ],
+  "measured": [
+   "osb:range_field_big_range",
+   "osb:range_field_small_range",
+   "osb:range_field_conjunction_big_range_small_term_query",
+   "osb:range_field_conjunction_small_range_small_term_query",
+   "osb:range_field_conjunction_small_range_big_term_query",
+   "osb:range_field_conjunction_big_range_big_term_query",
+   "osb:range_field_disjunction_small_range_small_term_query",
+   "osb:range_field_disjunction_big_range_small_term_query",
+   "osb:max_temp",
+   "osb:last_max_temp_top_hits",
+   "osb:last_max_temp_top_metrics",
+   "osb:max_temp_per_station_10",
+   "osb:last_max_temp_per_station_top_hits_10",
+   "osb:last_max_temp_per_station_top_metrics_10",
+   "osb:last_min_and_max_temp_per_station_top_metrics_10",
+   "osb:last_five_max_temp_per_station_top_metrics_10",
+   "osb:max_temp_per_station_10_depth_first",
+   "osb:last_max_temp_per_station_top_hits_10_depth_first",
+   "osb:last_max_temp_per_station_top_metrics_10_depth_first",
+   "osb:last_max_temp_per_station_top_metrics_10_sort_by",
+   "osb:max_temp_per_station_5000",
+   "osb:last_max_temp_per_station_top_hits_5000",
+   "osb:last_max_temp_per_station_top_hits_5000_via_source",
+   "osb:last_max_temp_per_station_top_metrics_5000",
+   "osb:last_min_and_max_temp_per_station_top_metrics_5000",
+   "osb:last_five_max_temp_per_station_top_metrics_5000",
+   "osb:last_country_code_per_station_top_metrics_5000",
+   "osb:keyword-terms",
+   "osb:keyword-terms-low-cardinality",
+   "osb:keyword-terms-min",
+   "osb:keyword-terms-low-cardinality-min",
+   "osb:keyword-terms-numeric-terms",
+   "osb:numeric-terms-numeric-terms",
+   "osb:date-histo-entire-range",
+   "osb:date-histo-numeric-terms",
+   "osb:date-histo-string-terms-via-map",
+   "osb:date-histo-string-terms-via-global-ords",
+   "osb:date-histo-string-terms-via-default-strategy",
+   "osb:date-histo-string-significant-terms-via-map",
+   "osb:date-histo-string-significant-terms-via-global-ords",
+   "osb:date-histo-string-significant-terms-via-default-strategy",
+   "osb:date-histo-histo",
+   "osb:date-histo-geohash-grid",
+   "osb:date-histo-geotile-grid",
+   "osb:range-aggregation",
+   "osb:range-numeric-significant-terms",
+   "osb:range-date-histo",
+   "osb:range-date-histo-with-metrics",
+   "osb:range-auto-date-histo",
+   "osb:range-auto-date-histo-with-metrics",
+   "osb:range-auto-date-histo-with-time-zone",
+   "osb:asc_sort_awnd",
+   "osb:desc_sort_awnd"
+  ],
+  "not_measured": [],
+  "ops_files": [
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {},
+  "workload_dir": "noaa",
+  "workload_py_sha256": null
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "noaa",
+  "date_fields": [],
+  "families_not_applicable": {
+   "text:match": "no text field: every string field of the noaa mapping is keyword",
+   "text:multi_match": "no text field: every string field of the noaa mapping is keyword",
+   "text:phrase": "no text field: every string field of the noaa mapping is keyword",
+   "text:query_string": "no text field: every string field of the noaa mapping is keyword"
+  },
+  "geo_fields": [
+   {
+    "field": "station.location",
+    "type": "geo_point"
+   }
+  ],
+  "indices": [
+   {
+    "document_count": 33659481,
+    "name": "weather-data-2016",
+    "workload_default_shards": 1
+   }
+  ],
+  "keyword_fields": [
+   "station.id",
+   "station.country_code",
+   "station.state",
+   "SNOW",
+   "SNWD"
+  ],
+  "nested": [],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [
+   "TMAX",
+   "TMIN",
+   "PRCP",
+   "AWND",
+   "TAVG"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/*.json"
+   ],
+   "params": {},
+   "workload": "noaa"
+  },
+  "osb_import": "ext",
+  "percolate": false,
+  "reference_op": "gen:range_date_1d",
+  "single_shard": {
+   "note": "9.7 GB raw; record the measured store size",
+   "rule": "no"
+  },
+  "split_bkd": {
+   "applicable": true,
+   "fields": [
+    "date"
+   ]
+  },
+  "text_fields": [],
+  "time_field": "date"
+ },
+ "reference_op": "gen:range_date_1d",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll",
+  "geo:bbox",
+  "geo:distance",
+  "geo:polygon",
+  "geo:shape",
+  "geo:agg"
+ ],
+ "values": null
+}

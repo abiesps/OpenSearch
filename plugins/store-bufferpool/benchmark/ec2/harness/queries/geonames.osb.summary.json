@@ -1,0 +1,1232 @@
+{
+ "corpus": "geonames",
+ "families": [
+  "agg:stats",
+  "agg:terms",
+  "bool:filter",
+  "bool:must",
+  "bool:must_not",
+  "keyword:term",
+  "keyword:terms",
+  "scroll",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:search_after",
+  "text:match",
+  "text:phrase"
+ ],
+ "families_not_applicable": {
+  "agg:date_histogram": "no date field in the geonames mapping",
+  "bkd:range_date": "no date field in the geonames mapping",
+  "sort:date_asc": "no date field in the geonames mapping",
+  "sort:date_desc": "no date field in the geonames mapping"
+ },
+ "missing_families": [
+  "text:query_string",
+  "text:multi_match",
+  "bool:should",
+  "bkd:range_numeric",
+  "sort:keyword",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "geo:bbox",
+  "geo:distance",
+  "geo:polygon",
+  "geo:shape",
+  "geo:agg"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [],
+   "name": "osb:match-all",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "term": {
+      "country_code.raw": "AT"
+     }
+    }
+   },
+   "families": [
+    "keyword:term"
+   ],
+   "name": "osb:term",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_phrase": {
+      "name": "Sankt Georgen"
+     }
+    }
+   },
+   "families": [
+    "text:phrase"
+   ],
+   "name": "osb:phrase",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "country_population": {
+      "aggs": {
+       "sum_population": {
+        "sum": {
+         "field": "population"
+        }
+       }
+      },
+      "terms": {
+       "field": "country_code.raw"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:country_agg_uncached",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "country_population": {
+      "aggs": {
+       "sum_population": {
+        "sum": {
+         "field": "population"
+        }
+       }
+      },
+      "terms": {
+       "field": "country_code.raw"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:country_agg_cached",
+   "notes": [
+    "workload sets cache: true; measured with request_cache=false like every op (cold protocol), so it is the same request as its uncached twin"
+   ],
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [
+    "scroll"
+   ],
+   "name": "osb:scroll",
+   "page_size": 1000,
+   "pages": 25,
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "scroll"
+  },
+  {
+   "body": {
+    "query": {
+     "function_score": {
+      "functions": [
+       {
+        "script_score": {
+         "script": {
+          "lang": "expression",
+          "source": "abs(ln(abs(doc['population']) + 1) + doc['location'].lon + doc['location'].lat) * _score"
+         }
+        }
+       }
+      ],
+      "query": {
+       "match_all": {}
+      }
+     }
+    }
+   },
+   "families": [],
+   "name": "osb:expression",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "function_score": {
+      "functions": [
+       {
+        "script_score": {
+         "script": {
+          "lang": "painless",
+          "source": "Math.abs(Math.log(Math.abs((int)((List)doc.population).get(0)) + 1) + (double)(doc.location.lon) * (double)(doc.location.lat))/_score"
+         }
+        }
+       }
+      ],
+      "query": {
+       "match_all": {}
+      }
+     }
+    }
+   },
+   "families": [],
+   "name": "osb:painless_static",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "function_score": {
+      "functions": [
+       {
+        "script_score": {
+         "script": {
+          "lang": "painless",
+          "source": "Math.abs(Math.log(Math.abs(doc['population'].value) + 1) + doc['location'].lon * doc['location'].lat)/_score"
+         }
+        }
+       }
+      ],
+      "query": {
+       "match_all": {}
+      }
+     }
+    }
+   },
+   "families": [],
+   "name": "osb:painless_dynamic",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "function_score": {
+      "gauss": {
+       "location": {
+        "decay": 0.1,
+        "offset": "0km",
+        "origin": "52.37, 4.8951",
+        "scale": "500km"
+       }
+      },
+      "query": {
+       "match_all": {}
+      }
+     }
+    }
+   },
+   "families": [],
+   "name": "osb:decay_geo_gauss_function_score",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "script_score": {
+      "query": {
+       "match_all": {}
+      },
+      "script": {
+       "params": {
+        "decay": 0.1,
+        "offset": "0km",
+        "origin": "52.37, 4.8951",
+        "scale": "500km"
+       },
+       "source": "decayGeoGauss(params.origin, params.scale, params.offset, params.decay, doc['location'].value)"
+      }
+     }
+    }
+   },
+   "families": [],
+   "name": "osb:decay_geo_gauss_script_score",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "function_score": {
+      "field_value_factor": {
+       "factor": 1.2,
+       "field": "population",
+       "modifier": "log2p"
+      },
+      "query": {
+       "match_all": {}
+      }
+     }
+    }
+   },
+   "families": [],
+   "name": "osb:field_value_function_score",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "script_score": {
+      "query": {
+       "match_all": {}
+      },
+      "script": {
+       "source": "Math.log10(doc['population'].value * 1.2 + 2)"
+      }
+     }
+    }
+   },
+   "families": [],
+   "name": "osb:field_value_script_score",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779495,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "dc790c9e6e182193e636ab65c9178baef4b822e42780be71050845c1acc3ce68"
+    }
+   },
+   "families": [
+    "keyword:terms"
+   ],
+   "name": "osb:large_terms#1",
+   "param_source": {
+    "class": "PureTermsQueryParamSource",
+    "draw": 1,
+    "instance": 1,
+    "name": "pure-terms-query-source",
+    "op_name": "large_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779495,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "76c39da5536a0d6f3c8ff05d16e1506e98abdd4d1035600e116cb63d69a6726c"
+    }
+   },
+   "families": [
+    "keyword:terms"
+   ],
+   "name": "osb:large_terms#2",
+   "param_source": {
+    "class": "PureTermsQueryParamSource",
+    "draw": 2,
+    "instance": 2,
+    "name": "pure-terms-query-source",
+    "op_name": "large_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779495,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "8cdd853e4b403953057f8d7af19d3fe82b2ade13fb1071d1a01a47d86ef58396"
+    }
+   },
+   "families": [
+    "keyword:terms"
+   ],
+   "name": "osb:large_terms#3",
+   "param_source": {
+    "class": "PureTermsQueryParamSource",
+    "draw": 3,
+    "instance": 3,
+    "name": "pure-terms-query-source",
+    "op_name": "large_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779495,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "0f8dc372244992f7bae509a7d802f59dccd96d4abd19317a9ec4af85fe1c750b"
+    }
+   },
+   "families": [
+    "keyword:terms"
+   ],
+   "name": "osb:large_terms#4",
+   "param_source": {
+    "class": "PureTermsQueryParamSource",
+    "draw": 4,
+    "instance": 4,
+    "name": "pure-terms-query-source",
+    "op_name": "large_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779495,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "18605f5c616c92c8b3dc571e66d42fbda9d2d584d98541d18c36255e8c7bde9a"
+    }
+   },
+   "families": [
+    "keyword:terms"
+   ],
+   "name": "osb:large_terms#5",
+   "param_source": {
+    "class": "PureTermsQueryParamSource",
+    "draw": 5,
+    "instance": 5,
+    "name": "pure-terms-query-source",
+    "op_name": "large_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779569,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "e0cf4045c0886a608d54e21c066e0bc94bc422f5cf15da4931338d208aec8f4d"
+    }
+   },
+   "families": [
+    "bool:filter",
+    "bool:must",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_filtered_terms#1",
+   "param_source": {
+    "class": "FilteredTermsQueryParamSource",
+    "draw": 1,
+    "instance": 1,
+    "name": "filtered-terms-query-source",
+    "op_name": "large_filtered_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779569,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "2555ff858fff78da4480a52912cbb93aee0b0acc20e10364f3c30e50daadaf16"
+    }
+   },
+   "families": [
+    "bool:filter",
+    "bool:must",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_filtered_terms#2",
+   "param_source": {
+    "class": "FilteredTermsQueryParamSource",
+    "draw": 2,
+    "instance": 2,
+    "name": "filtered-terms-query-source",
+    "op_name": "large_filtered_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779569,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "20893b4fe06d1cd8dd9245b0fa63becacd923510d3abce2eee4a116e47682731"
+    }
+   },
+   "families": [
+    "bool:filter",
+    "bool:must",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_filtered_terms#3",
+   "param_source": {
+    "class": "FilteredTermsQueryParamSource",
+    "draw": 3,
+    "instance": 3,
+    "name": "filtered-terms-query-source",
+    "op_name": "large_filtered_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779569,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "7f00127378c90ef888b1e7d63cd746bffa16153120637595b205e11b02c91ee6"
+    }
+   },
+   "families": [
+    "bool:filter",
+    "bool:must",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_filtered_terms#4",
+   "param_source": {
+    "class": "FilteredTermsQueryParamSource",
+    "draw": 4,
+    "instance": 4,
+    "name": "filtered-terms-query-source",
+    "op_name": "large_filtered_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779569,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "829dcf61b34e039d3dbc17dc9730443a694c0b9b83674803bf1a53f504774e5c"
+    }
+   },
+   "families": [
+    "bool:filter",
+    "bool:must",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_filtered_terms#5",
+   "param_source": {
+    "class": "FilteredTermsQueryParamSource",
+    "draw": 5,
+    "instance": 5,
+    "name": "filtered-terms-query-source",
+    "op_name": "large_filtered_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779571,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "d4f754a8a0362f4e1b00a765b44d0988b04c787a19593e15d921bb0df816f6fe"
+    }
+   },
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_prohibited_terms#1",
+   "param_source": {
+    "class": "ProhibitedTermsQueryParamSource",
+    "draw": 1,
+    "instance": 1,
+    "name": "prohibited-terms-query-source",
+    "op_name": "large_prohibited_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779571,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "bced6f0009d9cd03499c57f9e04dc4c76d4a410a7e8a0614d770f62a21e5b72a"
+    }
+   },
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_prohibited_terms#2",
+   "param_source": {
+    "class": "ProhibitedTermsQueryParamSource",
+    "draw": 2,
+    "instance": 2,
+    "name": "prohibited-terms-query-source",
+    "op_name": "large_prohibited_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779571,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "610fb625d7a7701e4c43ccf988b5b787fa5aed0d763b486a565d633112bb36eb"
+    }
+   },
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_prohibited_terms#3",
+   "param_source": {
+    "class": "ProhibitedTermsQueryParamSource",
+    "draw": 3,
+    "instance": 3,
+    "name": "prohibited-terms-query-source",
+    "op_name": "large_prohibited_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779571,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "1d3d75e559362594b3c47af49d0c96183082c385b02bcfc38e6a8ab516815267"
+    }
+   },
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_prohibited_terms#4",
+   "param_source": {
+    "class": "ProhibitedTermsQueryParamSource",
+    "draw": 4,
+    "instance": 4,
+    "name": "prohibited-terms-query-source",
+    "op_name": "large_prohibited_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_summary": {
+     "bytes": 779571,
+     "list_lengths": [
+      45587
+     ],
+     "sha256": "4634a9385306cae45ac4f89e3ddb292e48cf600336d784651a949c66f3592b15"
+    }
+   },
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:terms",
+    "text:match"
+   ],
+   "name": "osb:large_prohibited_terms#5",
+   "param_source": {
+    "class": "ProhibitedTermsQueryParamSource",
+    "draw": 5,
+    "instance": 5,
+    "name": "prohibited-terms-query-source",
+    "op_name": "large_prohibited_terms",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "population": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:desc_sort_population",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "population": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:asc_sort_population",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "search_after": [
+     1000000
+    ],
+    "sort": [
+     {
+      "population": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc",
+    "sort:search_after"
+   ],
+   "name": "osb:asc_sort_with_after_population",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "geonameid": "desc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_desc"
+   ],
+   "name": "osb:desc_sort_geonameid",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "search_after": [
+     5000000
+    ],
+    "sort": [
+     {
+      "geonameid": "desc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:numeric_desc",
+    "sort:search_after"
+   ],
+   "name": "osb:desc_sort_with_after_geonameid",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "sort": [
+     {
+      "geonameid": "asc"
+     }
+    ]
+   },
+   "families": [
+    "sort:numeric_asc"
+   ],
+   "name": "osb:asc_sort_geonameid",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    },
+    "search_after": [
+     5000000
+    ],
+    "sort": [
+     {
+      "geonameid": "asc"
+     }
+    ],
+    "track_total_hits": false
+   },
+   "families": [
+    "sort:numeric_asc",
+    "sort:search_after"
+   ],
+   "name": "osb:asc_sort_with_after_geonameid",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "sig": {
+      "significant_text": {
+       "field": "alternatenames"
+      }
+     }
+    },
+    "query": {
+     "match": {
+      "alternatenames": "street"
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:significant_text_selective",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "s": {
+      "aggs": {
+       "sig": {
+        "significant_text": {
+         "field": "alternatenames"
+        }
+       }
+      },
+      "sampler": {
+       "shard_size": 100
+      }
+     }
+    },
+    "query": {
+     "match": {
+      "alternatenames": "street"
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:significant_text_sampled_selective",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "sig": {
+      "significant_text": {
+       "field": "alternatenames"
+      }
+     }
+    },
+    "query": {
+     "match": {
+      "timezone": "America"
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:significant_text_unselective",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "s": {
+      "aggs": {
+       "sig": {
+        "significant_text": {
+         "field": "alternatenames"
+        }
+       }
+      },
+      "sampler": {
+       "shard_size": 100
+      }
+     }
+    },
+    "query": {
+     "match": {
+      "timezone": "America"
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:significant_text_sampled_unselective",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "geonameids": {
+      "terms": {
+       "field": "geonameid",
+       "size": 50000
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:numeric-term-cardinality-agg-high",
+   "params": {},
+   "source": "osb:geonames/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_import": {
+  "body_edits": {},
+  "ingest_ops": [
+   {
+    "bulk-size": 5000,
+    "ingest-percentage": 100,
+    "name": "index-append",
+    "operation-type": "bulk"
+   },
+   {
+    "bulk-size": 5000,
+    "conflict-probability": 25,
+    "conflicts": "random",
+    "ingest-percentage": 100,
+    "name": "index-update",
+    "on-conflict": "index",
+    "operation-type": "bulk",
+    "recency": 0
+   }
+  ],
+  "measured": [
+   "osb:match-all",
+   "osb:term",
+   "osb:phrase",
+   "osb:country_agg_uncached",
+   "osb:country_agg_cached",
+   "osb:scroll",
+   "osb:expression",
+   "osb:painless_static",
+   "osb:painless_dynamic",
+   "osb:decay_geo_gauss_function_score",
+   "osb:decay_geo_gauss_script_score",
+   "osb:field_value_function_score",
+   "osb:field_value_script_score",
+   "osb:large_terms#1",
+   "osb:large_terms#2",
+   "osb:large_terms#3",
+   "osb:large_terms#4",
+   "osb:large_terms#5",
+   "osb:large_filtered_terms#1",
+   "osb:large_filtered_terms#2",
+   "osb:large_filtered_terms#3",
+   "osb:large_filtered_terms#4",
+   "osb:large_filtered_terms#5",
+   "osb:large_prohibited_terms#1",
+   "osb:large_prohibited_terms#2",
+   "osb:large_prohibited_terms#3",
+   "osb:large_prohibited_terms#4",
+   "osb:large_prohibited_terms#5",
+   "osb:desc_sort_population",
+   "osb:asc_sort_population",
+   "osb:asc_sort_with_after_population",
+   "osb:desc_sort_geonameid",
+   "osb:desc_sort_with_after_geonameid",
+   "osb:asc_sort_geonameid",
+   "osb:asc_sort_with_after_geonameid",
+   "osb:significant_text_selective",
+   "osb:significant_text_sampled_selective",
+   "osb:significant_text_unselective",
+   "osb:significant_text_sampled_unselective",
+   "osb:numeric-term-cardinality-agg-high"
+  ],
+  "not_measured": [],
+  "ops_files": [
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {
+   "large_filtered_terms": {
+    "class": "FilteredTermsQueryParamSource",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "filtered-terms-query-source",
+    "seed": 4
+   },
+   "large_prohibited_terms": {
+    "class": "ProhibitedTermsQueryParamSource",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "prohibited-terms-query-source",
+    "seed": 4
+   },
+   "large_terms": {
+    "class": "PureTermsQueryParamSource",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "pure-terms-query-source",
+    "seed": 4
+   }
+  },
+  "workload_dir": "geonames",
+  "workload_py_sha256": "e6feacd209a7e9e4e659234b24213fb3b305b55e6558b2566444aeeb37073f85"
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "geonames",
+  "date_fields": [],
+  "families_not_applicable": {
+   "agg:date_histogram": "no date field in the geonames mapping",
+   "bkd:range_date": "no date field in the geonames mapping",
+   "sort:date_asc": "no date field in the geonames mapping",
+   "sort:date_desc": "no date field in the geonames mapping"
+  },
+  "geo_fields": [
+   {
+    "field": "location",
+    "type": "geo_point"
+   }
+  ],
+  "indices": [
+   {
+    "document_count": 11396503,
+    "name": "geonames",
+    "workload_default_shards": 5
+   }
+  ],
+  "keyword_fields": [
+   "country_code.raw",
+   "feature_class.raw",
+   "feature_code.raw",
+   "admin1_code.raw",
+   "timezone.raw"
+  ],
+  "nested": [],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [
+   "population",
+   "elevation",
+   "geonameid"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/*.json"
+   ],
+   "param_source_seed": 4,
+   "param_source_seed_note": "geonames' workload.py does not seed random; the harness seeds it with 4 before constructing each param source",
+   "params": {},
+   "workload": "geonames"
+  },
+  "osb_import": "ext",
+  "percolate": false,
+  "reference_op": "gen:term_country_code.raw_mid",
+  "single_shard": {
+   "note": "3.5 GB raw; record the measured store size",
+   "rule": "no"
+  },
+  "split_bkd": {
+   "applicable": false,
+   "reason": "no date field (location is a 2-D geo_point; the split format is for 1-D points)"
+  },
+  "text_fields": [
+   "name",
+   "asciiname",
+   "alternatenames"
+  ]
+ },
+ "reference_op": "gen:term_country_code.raw_mid",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll",
+  "geo:bbox",
+  "geo:distance",
+  "geo:polygon",
+  "geo:shape",
+  "geo:agg"
+ ],
+ "values": null
+}

@@ -1,0 +1,50 @@
+{
+  "corpus": "so",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "time_field": "creationDate",
+  "date_fields": [],
+  "keyword_fields": [
+    "tags",
+    "type",
+    "user"
+  ],
+  "numeric_fields": [],
+  "text_fields": [
+    "title",
+    "body"
+  ],
+  "geo_fields": [],
+  "nested": [],
+  "percolate": false,
+  "osb": {
+    "workload": "so",
+    "ops_files": [
+      "operations/*.json"
+    ],
+    "params": {}
+  },
+  "families_not_applicable": {
+    "bkd:range_numeric": "no numeric field in the so mapping",
+    "sort:numeric_asc": "no numeric field in the so mapping",
+    "sort:numeric_desc": "no numeric field in the so mapping"
+  },
+  "reference_op": "gen:range_creationDate_1d",
+  "indices": [
+    {
+      "name": "so",
+      "document_count": 36062278,
+      "workload_default_shards": 5
+    }
+  ],
+  "split_bkd": {
+    "applicable": true,
+    "fields": [
+      "creationDate"
+    ]
+  },
+  "single_shard": {
+    "rule": "conditional",
+    "note": "build when the measured force-merged store of the full corpus is >= 30 GB; else record not eligible with the size; never pad or duplicate data"
+  }
+}

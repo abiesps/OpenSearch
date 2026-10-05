@@ -1,0 +1,155 @@
+{
+ "corpus": "eventdata",
+ "families": [],
+ "families_not_applicable": {},
+ "missing_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll",
+  "geo:bbox",
+  "geo:distance",
+  "geo:polygon",
+  "geo:shape",
+  "geo:agg"
+ ],
+ "ops": [],
+ "osb_import": {
+  "body_edits": {},
+  "ingest_ops": [
+   {
+    "bulk-size": 5000,
+    "ingest-percentage": 100,
+    "name": "index-append",
+    "operation-type": "bulk"
+   }
+  ],
+  "measured": [],
+  "not_measured": [],
+  "ops_files": [
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {},
+  "workload_dir": "eventdata",
+  "workload_py_sha256": null
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "eventdata",
+  "date_fields": [],
+  "families_not_applicable": {},
+  "geo_fields": [
+   {
+    "field": "geoip.location",
+    "type": "geo_point"
+   }
+  ],
+  "indices": [
+   {
+    "document_count": 20000000,
+    "name": "eventdata",
+    "workload_default_shards": 5
+   }
+  ],
+  "keyword_fields": [
+   "agent",
+   "verb",
+   "httpversion",
+   "tags",
+   "geoip.country_name",
+   "useragent.name",
+   "useragent.os"
+  ],
+  "nested": [],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [
+   "bytes",
+   "response"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/*.json"
+   ],
+   "params": {},
+   "workload": "eventdata"
+  },
+  "osb_import": "ext",
+  "percolate": false,
+  "reference_op": "gen:range_@timestamp_1d",
+  "single_shard": {
+   "note": "16.4 GB raw; record the measured store size",
+   "rule": "no"
+  },
+  "split_bkd": {
+   "applicable": true,
+   "fields": [
+    "@timestamp"
+   ]
+  },
+  "text_fields": [
+   "request",
+   "referrer"
+  ],
+  "text_fields_excluded": {
+   "message": "mapped with index: false (not searchable)"
+  },
+  "time_field": "@timestamp"
+ },
+ "reference_op": "gen:range_@timestamp_1d",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll",
+  "geo:bbox",
+  "geo:distance",
+  "geo:polygon",
+  "geo:shape",
+  "geo:agg"
+ ],
+ "values": null
+}

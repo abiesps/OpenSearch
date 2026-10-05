@@ -1,0 +1,335 @@
+{
+ "corpus": "percolator",
+ "families": [
+  "bool:filter",
+  "highlight",
+  "percolate"
+ ],
+ "families_not_applicable": {
+  "agg:cardinality": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "agg:composite": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "agg:date_histogram": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "agg:range": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "agg:significant_terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "agg:terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "bkd:range_date": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "bkd:range_numeric": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "bool:filter": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "bool:must": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "bool:must_not": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "bool:should": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "keyword:term": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "keyword:terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "sort:date_asc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "sort:date_desc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "sort:keyword": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "sort:numeric_asc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "sort:numeric_desc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "sort:search_after": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "text:match": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "text:multi_match": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "text:phrase": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+  "text:query_string": "the index holds stored percolator queries; the workload's percolate ops are its search ops"
+ },
+ "missing_families": [
+  "scroll"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "percolate": {
+      "document": {
+       "body": "president bush"
+      },
+      "field": "query"
+     }
+    }
+   },
+   "families": [
+    "percolate"
+   ],
+   "name": "osb:percolator_with_content_president_bush",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "percolate": {
+      "document": {
+       "body": "saddam hussein"
+      },
+      "field": "query"
+     }
+    }
+   },
+   "families": [
+    "percolate"
+   ],
+   "name": "osb:percolator_with_content_saddam_hussein",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "percolate": {
+      "document": {
+       "body": "hurricane katrina"
+      },
+      "field": "query"
+     }
+    }
+   },
+   "families": [
+    "percolate"
+   ],
+   "name": "osb:percolator_with_content_hurricane_katrina",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "percolate": {
+      "document": {
+       "body": "google"
+      },
+      "field": "query"
+     }
+    }
+   },
+   "families": [
+    "percolate"
+   ],
+   "name": "osb:percolator_with_content_google",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "constant_score": {
+      "filter": {
+       "percolate": {
+        "document": {
+         "body": "google"
+        },
+        "field": "query"
+       }
+      }
+     }
+    }
+   },
+   "families": [
+    "bool:filter",
+    "percolate"
+   ],
+   "name": "osb:percolator_no_score_with_content_google",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "highlight": {
+     "fields": {
+      "body": {}
+     }
+    },
+    "query": {
+     "percolate": {
+      "document": {
+       "body": "Israeli prime minister Ariel Sharon suffers a massive stroke; he is replaced by acting prime minister Ehud Olmert"
+      },
+      "field": "query"
+     }
+    }
+   },
+   "families": [
+    "highlight",
+    "percolate"
+   ],
+   "name": "osb:percolator_with_highlighting",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "percolate": {
+      "document": {
+       "body": "ignore me"
+      },
+      "field": "query"
+     }
+    }
+   },
+   "families": [
+    "percolate"
+   ],
+   "name": "osb:percolator_with_content_ignore_me",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "constant_score": {
+      "filter": {
+       "percolate": {
+        "document": {
+         "body": "ignore me"
+        },
+        "field": "query"
+       }
+      }
+     }
+    }
+   },
+   "families": [
+    "bool:filter",
+    "percolate"
+   ],
+   "name": "osb:percolator_no_score_with_content_ignore_me",
+   "params": {},
+   "source": "osb:percolator/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_import": {
+  "body_edits": {},
+  "ingest_ops": [
+   {
+    "bulk-size": 5000,
+    "ingest-percentage": 100,
+    "name": "index",
+    "operation-type": "bulk"
+   }
+  ],
+  "measured": [
+   "osb:percolator_with_content_president_bush",
+   "osb:percolator_with_content_saddam_hussein",
+   "osb:percolator_with_content_hurricane_katrina",
+   "osb:percolator_with_content_google",
+   "osb:percolator_no_score_with_content_google",
+   "osb:percolator_with_highlighting",
+   "osb:percolator_with_content_ignore_me",
+   "osb:percolator_no_score_with_content_ignore_me"
+  ],
+  "not_measured": [],
+  "ops_files": [
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {},
+  "workload_dir": "percolator",
+  "workload_py_sha256": null
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "percolator",
+  "corpus_base_urls": {
+   "percolator": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/percolator"
+  },
+  "date_fields": [],
+  "families_not_applicable": {
+   "agg:cardinality": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "agg:composite": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "agg:date_histogram": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "agg:range": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "agg:significant_terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "agg:terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "bkd:range_date": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "bkd:range_numeric": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "bool:filter": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "bool:must": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "bool:must_not": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "bool:should": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "keyword:term": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "keyword:terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "sort:date_asc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "sort:date_desc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "sort:keyword": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "sort:numeric_asc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "sort:numeric_desc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "sort:search_after": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "text:match": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "text:multi_match": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "text:phrase": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+   "text:query_string": "the index holds stored percolator queries; the workload's percolate ops are its search ops"
+  },
+  "geo_fields": [],
+  "indices": [
+   {
+    "document_count": 2000000,
+    "name": "queries",
+    "workload_default_shards": 5
+   }
+  ],
+  "keyword_fields": [],
+  "nested": [],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [],
+  "osb": {
+   "ops_files": [
+    "operations/*.json"
+   ],
+   "params": {},
+   "workload": "percolator"
+  },
+  "osb_import": "ext",
+  "percolate": true,
+  "reference_op": "osb:percolator_with_content_google",
+  "single_shard": {
+   "note": "0.1 GB raw; record the measured store size",
+   "rule": "no"
+  },
+  "split_bkd": {
+   "applicable": false,
+   "reason": "no date field"
+  },
+  "text_fields": [],
+  "text_fields_excluded": {
+   "body": "the stored-queries index has no documents with a body; body is the field of the percolated document"
+  }
+ },
+ "reference_op": "osb:percolator_with_content_google",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll",
+  "percolate"
+ ],
+ "values": null
+}

@@ -1,0 +1,61 @@
+{
+  "corpus": "noaa",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "time_field": "date",
+  "date_fields": [],
+  "keyword_fields": [
+    "station.id",
+    "station.country_code",
+    "station.state",
+    "SNOW",
+    "SNWD"
+  ],
+  "numeric_fields": [
+    "TMAX",
+    "TMIN",
+    "PRCP",
+    "AWND",
+    "TAVG"
+  ],
+  "text_fields": [],
+  "geo_fields": [
+    {
+      "field": "station.location",
+      "type": "geo_point"
+    }
+  ],
+  "nested": [],
+  "percolate": false,
+  "osb": {
+    "workload": "noaa",
+    "ops_files": [
+      "operations/*.json"
+    ],
+    "params": {}
+  },
+  "families_not_applicable": {
+    "text:match": "no text field: every string field of the noaa mapping is keyword",
+    "text:phrase": "no text field: every string field of the noaa mapping is keyword",
+    "text:query_string": "no text field: every string field of the noaa mapping is keyword",
+    "text:multi_match": "no text field: every string field of the noaa mapping is keyword"
+  },
+  "reference_op": "gen:range_date_1d",
+  "indices": [
+    {
+      "name": "weather-data-2016",
+      "document_count": 33659481,
+      "workload_default_shards": 1
+    }
+  ],
+  "split_bkd": {
+    "applicable": true,
+    "fields": [
+      "date"
+    ]
+  },
+  "single_shard": {
+    "rule": "no",
+    "note": "9.7 GB raw; record the measured store size"
+  }
+}

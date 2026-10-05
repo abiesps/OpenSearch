@@ -1,0 +1,1312 @@
+{
+ "corpus": "nested",
+ "families": [
+  "agg:date_histogram",
+  "bkd:range_date",
+  "bool:must",
+  "nested:agg",
+  "nested:inner_hits",
+  "nested:query",
+  "nested:sort",
+  "sort:date_desc",
+  "text:match"
+ ],
+ "families_not_applicable": {},
+ "missing_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "ruby-on-rails"
+        }
+       },
+       {
+        "nested": {
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-09T15:13:45.728Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries#1",
+   "param_source": {
+    "class": "NestedQueryParamSource",
+    "draw": 1,
+    "instance": 1,
+    "name": "nested-query-source",
+    "op_name": "randomized-nested-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "python"
+        }
+       },
+       {
+        "nested": {
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T09:13:29.263Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries#2",
+   "param_source": {
+    "class": "NestedQueryParamSource",
+    "draw": 2,
+    "instance": 2,
+    "name": "nested-query-source",
+    "op_name": "randomized-nested-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "wpf"
+        }
+       },
+       {
+        "nested": {
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-09T02:15:44.330Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries#3",
+   "param_source": {
+    "class": "NestedQueryParamSource",
+    "draw": 3,
+    "instance": 3,
+    "name": "nested-query-source",
+    "op_name": "randomized-nested-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "jquery"
+        }
+       },
+       {
+        "nested": {
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T15:02:52.091Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries#4",
+   "param_source": {
+    "class": "NestedQueryParamSource",
+    "draw": 4,
+    "instance": 4,
+    "name": "nested-query-source",
+    "op_name": "randomized-nested-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "c#"
+        }
+       },
+       {
+        "nested": {
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T09:13:29.263Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries#5",
+   "param_source": {
+    "class": "NestedQueryParamSource",
+    "draw": 5,
+    "instance": 5,
+    "name": "nested-query-source",
+    "op_name": "randomized-nested-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "ruby-on-rails"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 3
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-09T15:13:45.728Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default#1",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 1,
+    "instance": 1,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "python"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 3
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T09:13:29.263Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default#2",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 2,
+    "instance": 2,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "wpf"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 3
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-09T02:15:44.330Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default#3",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 3,
+    "instance": 3,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "jquery"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 3
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T15:02:52.091Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default#4",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 4,
+    "instance": 4,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "c#"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 3
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T09:13:29.263Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default#5",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 5,
+    "instance": 5,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "ruby-on-rails"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 100
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-09T15:13:45.728Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 100
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default_big_size#1",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 1,
+    "instance": 1,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default_big_size",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "python"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 100
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T09:13:29.263Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 100
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default_big_size#2",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 2,
+    "instance": 2,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default_big_size",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "wpf"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 100
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-09T02:15:44.330Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 100
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default_big_size#3",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 3,
+    "instance": 3,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default_big_size",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "jquery"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 100
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T15:02:52.091Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 100
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default_big_size#4",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 4,
+    "instance": 4,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default_big_size",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "match": {
+         "tag": "c#"
+        }
+       },
+       {
+        "nested": {
+         "inner_hits": {
+          "size": 100
+         },
+         "path": "answers",
+         "query": {
+          "range": {
+           "answers.date": {
+            "lte": "2012-04-08T09:13:29.263Z"
+           }
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 100
+   },
+   "families": [
+    "bkd:range_date",
+    "bool:must",
+    "nested:inner_hits",
+    "nested:query",
+    "text:match"
+   ],
+   "name": "osb:randomized-nested-queries-with-inner-hits_default_big_size#5",
+   "param_source": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draw": 5,
+    "instance": 5,
+    "name": "nested-query-source-with-inner-hits",
+    "op_name": "randomized-nested-queries-with-inner-hits_default_big_size",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "ruby-on-rails"
+     }
+    }
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:randomized-term-queries#1",
+   "param_source": {
+    "class": "TermQueryParamSource",
+    "draw": 1,
+    "instance": 1,
+    "name": "term-query-source",
+    "op_name": "randomized-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "arrays"
+     }
+    }
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:randomized-term-queries#2",
+   "param_source": {
+    "class": "TermQueryParamSource",
+    "draw": 2,
+    "instance": 2,
+    "name": "term-query-source",
+    "op_name": "randomized-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "python"
+     }
+    }
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:randomized-term-queries#3",
+   "param_source": {
+    "class": "TermQueryParamSource",
+    "draw": 3,
+    "instance": 3,
+    "name": "term-query-source",
+    "op_name": "randomized-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "regex"
+     }
+    }
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:randomized-term-queries#4",
+   "param_source": {
+    "class": "TermQueryParamSource",
+    "draw": 4,
+    "instance": 4,
+    "name": "term-query-source",
+    "op_name": "randomized-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "wpf"
+     }
+    }
+   },
+   "families": [
+    "text:match"
+   ],
+   "name": "osb:randomized-term-queries#5",
+   "param_source": {
+    "class": "TermQueryParamSource",
+    "draw": 5,
+    "instance": 5,
+    "name": "term-query-source",
+    "op_name": "randomized-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "ruby-on-rails"
+     }
+    },
+    "sort": [
+     {
+      "answers.date": {
+       "mode": "max",
+       "nested": {
+        "path": "answers"
+       },
+       "order": "desc"
+      }
+     }
+    ]
+   },
+   "families": [
+    "nested:sort",
+    "sort:date_desc",
+    "text:match"
+   ],
+   "name": "osb:randomized-sorted-term-queries#1",
+   "param_source": {
+    "class": "SortedTermQueryParamSource",
+    "draw": 1,
+    "instance": 1,
+    "name": "sorted-term-query-source",
+    "op_name": "randomized-sorted-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "arrays"
+     }
+    },
+    "sort": [
+     {
+      "answers.date": {
+       "mode": "max",
+       "nested": {
+        "path": "answers"
+       },
+       "order": "desc"
+      }
+     }
+    ]
+   },
+   "families": [
+    "nested:sort",
+    "sort:date_desc",
+    "text:match"
+   ],
+   "name": "osb:randomized-sorted-term-queries#2",
+   "param_source": {
+    "class": "SortedTermQueryParamSource",
+    "draw": 2,
+    "instance": 2,
+    "name": "sorted-term-query-source",
+    "op_name": "randomized-sorted-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "python"
+     }
+    },
+    "sort": [
+     {
+      "answers.date": {
+       "mode": "max",
+       "nested": {
+        "path": "answers"
+       },
+       "order": "desc"
+      }
+     }
+    ]
+   },
+   "families": [
+    "nested:sort",
+    "sort:date_desc",
+    "text:match"
+   ],
+   "name": "osb:randomized-sorted-term-queries#3",
+   "param_source": {
+    "class": "SortedTermQueryParamSource",
+    "draw": 3,
+    "instance": 3,
+    "name": "sorted-term-query-source",
+    "op_name": "randomized-sorted-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "regex"
+     }
+    },
+    "sort": [
+     {
+      "answers.date": {
+       "mode": "max",
+       "nested": {
+        "path": "answers"
+       },
+       "order": "desc"
+      }
+     }
+    ]
+   },
+   "families": [
+    "nested:sort",
+    "sort:date_desc",
+    "text:match"
+   ],
+   "name": "osb:randomized-sorted-term-queries#4",
+   "param_source": {
+    "class": "SortedTermQueryParamSource",
+    "draw": 4,
+    "instance": 4,
+    "name": "sorted-term-query-source",
+    "op_name": "randomized-sorted-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match": {
+      "tag": "wpf"
+     }
+    },
+    "sort": [
+     {
+      "answers.date": {
+       "mode": "max",
+       "nested": {
+        "path": "answers"
+       },
+       "order": "desc"
+      }
+     }
+    ]
+   },
+   "families": [
+    "nested:sort",
+    "sort:date_desc",
+    "text:match"
+   ],
+   "name": "osb:randomized-sorted-term-queries#5",
+   "param_source": {
+    "class": "SortedTermQueryParamSource",
+    "draw": 5,
+    "instance": 5,
+    "name": "sorted-term-query-source",
+    "op_name": "randomized-sorted-term-queries",
+    "seed": 4
+   },
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "match_all": {}
+    }
+   },
+   "families": [],
+   "name": "osb:match-all",
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggs": {
+     "answers": {
+      "aggs": {
+       "date_histo": {
+        "date_histogram": {
+         "calendar_interval": "month",
+         "field": "answers.date"
+        }
+       }
+      },
+      "nested": {
+       "path": "answers"
+      }
+     }
+    },
+    "size": 0
+   },
+   "families": [
+    "agg:date_histogram",
+    "nested:agg"
+   ],
+   "name": "osb:nested-date-histo",
+   "params": {},
+   "source": "osb:nested/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_import": {
+  "body_edits": {},
+  "ingest_ops": [
+   {
+    "bulk-size": 5000,
+    "ingest-percentage": 100,
+    "name": "index-append",
+    "operation-type": "bulk"
+   }
+  ],
+  "measured": [
+   "osb:randomized-nested-queries#1",
+   "osb:randomized-nested-queries#2",
+   "osb:randomized-nested-queries#3",
+   "osb:randomized-nested-queries#4",
+   "osb:randomized-nested-queries#5",
+   "osb:randomized-nested-queries-with-inner-hits_default#1",
+   "osb:randomized-nested-queries-with-inner-hits_default#2",
+   "osb:randomized-nested-queries-with-inner-hits_default#3",
+   "osb:randomized-nested-queries-with-inner-hits_default#4",
+   "osb:randomized-nested-queries-with-inner-hits_default#5",
+   "osb:randomized-nested-queries-with-inner-hits_default_big_size#1",
+   "osb:randomized-nested-queries-with-inner-hits_default_big_size#2",
+   "osb:randomized-nested-queries-with-inner-hits_default_big_size#3",
+   "osb:randomized-nested-queries-with-inner-hits_default_big_size#4",
+   "osb:randomized-nested-queries-with-inner-hits_default_big_size#5",
+   "osb:randomized-term-queries#1",
+   "osb:randomized-term-queries#2",
+   "osb:randomized-term-queries#3",
+   "osb:randomized-term-queries#4",
+   "osb:randomized-term-queries#5",
+   "osb:randomized-sorted-term-queries#1",
+   "osb:randomized-sorted-term-queries#2",
+   "osb:randomized-sorted-term-queries#3",
+   "osb:randomized-sorted-term-queries#4",
+   "osb:randomized-sorted-term-queries#5",
+   "osb:match-all",
+   "osb:nested-date-histo"
+  ],
+  "not_measured": [],
+  "ops_files": [
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {
+   "randomized-nested-queries": {
+    "class": "NestedQueryParamSource",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "nested-query-source",
+    "seed": 4
+   },
+   "randomized-nested-queries-with-inner-hits_default": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "nested-query-source-with-inner-hits",
+    "seed": 4
+   },
+   "randomized-nested-queries-with-inner-hits_default_big_size": {
+    "class": "NestedQueryParamSourceWithInnerHits",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "nested-query-source-with-inner-hits",
+    "seed": 4
+   },
+   "randomized-sorted-term-queries": {
+    "class": "SortedTermQueryParamSource",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "sorted-term-query-source",
+    "seed": 4
+   },
+   "randomized-term-queries": {
+    "class": "TermQueryParamSource",
+    "draws": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "param_source": "term-query-source",
+    "seed": 4
+   }
+  },
+  "workload_dir": "nested",
+  "workload_py_sha256": "039e3351e2550c573e2c5f5d243031d26d62309358c7054fad3fc09aacfb47c1"
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "nested",
+  "date_fields": [
+   "answers.date"
+  ],
+  "families_not_applicable": {},
+  "geo_fields": [],
+  "indices": [
+   {
+    "document_count": 11203029,
+    "name": "sonested",
+    "workload_default_shards": 1
+   }
+  ],
+  "keyword_fields": [
+   "tag",
+   "user"
+  ],
+  "nested": [
+   {
+    "date_fields": [
+     "answers.date"
+    ],
+    "keyword_fields": [
+     "answers.user"
+    ],
+    "path": "answers"
+   }
+  ],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [
+   "answer_count"
+  ],
+  "osb": {
+   "ops_files": [
+    "operations/*.json"
+   ],
+   "params": {},
+   "workload": "nested"
+  },
+  "osb_import": "ext",
+  "percolate": false,
+  "reference_op": "gen:range_creationDate_1d",
+  "single_shard": {
+   "note": "3.6 GB raw; record the measured store size",
+   "rule": "no"
+  },
+  "split_bkd": {
+   "applicable": true,
+   "fields": [
+    "creationDate",
+    "answers.date"
+   ]
+  },
+  "text_fields": [
+   "title"
+  ],
+  "time_field": "creationDate"
+ },
+ "reference_op": "gen:range_creationDate_1d",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll",
+  "nested:query",
+  "nested:inner_hits",
+  "nested:sort",
+  "nested:agg"
+ ],
+ "values": null
+}

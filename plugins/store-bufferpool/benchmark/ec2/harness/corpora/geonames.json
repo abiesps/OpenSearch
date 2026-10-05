@@ -1,0 +1,62 @@
+{
+  "corpus": "geonames",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "date_fields": [],
+  "keyword_fields": [
+    "country_code.raw",
+    "feature_class.raw",
+    "feature_code.raw",
+    "admin1_code.raw",
+    "timezone.raw"
+  ],
+  "numeric_fields": [
+    "population",
+    "elevation",
+    "geonameid"
+  ],
+  "text_fields": [
+    "name",
+    "asciiname",
+    "alternatenames"
+  ],
+  "geo_fields": [
+    {
+      "field": "location",
+      "type": "geo_point"
+    }
+  ],
+  "nested": [],
+  "percolate": false,
+  "osb": {
+    "workload": "geonames",
+    "ops_files": [
+      "operations/*.json"
+    ],
+    "params": {},
+    "param_source_seed": 4,
+    "param_source_seed_note": "geonames' workload.py does not seed random; the harness seeds it with 4 before constructing each param source"
+  },
+  "families_not_applicable": {
+    "bkd:range_date": "no date field in the geonames mapping",
+    "sort:date_asc": "no date field in the geonames mapping",
+    "sort:date_desc": "no date field in the geonames mapping",
+    "agg:date_histogram": "no date field in the geonames mapping"
+  },
+  "reference_op": "gen:term_country_code.raw_mid",
+  "indices": [
+    {
+      "name": "geonames",
+      "document_count": 11396503,
+      "workload_default_shards": 5
+    }
+  ],
+  "split_bkd": {
+    "applicable": false,
+    "reason": "no date field (location is a 2-D geo_point; the split format is for 1-D points)"
+  },
+  "single_shard": {
+    "rule": "no",
+    "note": "3.5 GB raw; record the measured store size"
+  }
+}

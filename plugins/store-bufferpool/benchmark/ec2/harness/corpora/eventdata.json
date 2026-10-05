@@ -1,0 +1,61 @@
+{
+  "corpus": "eventdata",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "time_field": "@timestamp",
+  "date_fields": [],
+  "keyword_fields": [
+    "agent",
+    "verb",
+    "httpversion",
+    "tags",
+    "geoip.country_name",
+    "useragent.name",
+    "useragent.os"
+  ],
+  "numeric_fields": [
+    "bytes",
+    "response"
+  ],
+  "text_fields": [
+    "request",
+    "referrer"
+  ],
+  "geo_fields": [
+    {
+      "field": "geoip.location",
+      "type": "geo_point"
+    }
+  ],
+  "nested": [],
+  "percolate": false,
+  "osb": {
+    "workload": "eventdata",
+    "ops_files": [
+      "operations/*.json"
+    ],
+    "params": {}
+  },
+  "families_not_applicable": {},
+  "text_fields_excluded": {
+    "message": "mapped with index: false (not searchable)"
+  },
+  "reference_op": "gen:range_@timestamp_1d",
+  "indices": [
+    {
+      "name": "eventdata",
+      "document_count": 20000000,
+      "workload_default_shards": 5
+    }
+  ],
+  "split_bkd": {
+    "applicable": true,
+    "fields": [
+      "@timestamp"
+    ]
+  },
+  "single_shard": {
+    "rule": "no",
+    "note": "16.4 GB raw; record the measured store size"
+  }
+}

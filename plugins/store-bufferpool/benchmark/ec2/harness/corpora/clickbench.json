@@ -1,0 +1,74 @@
+{
+  "corpus": "clickbench",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "time_field": "EventTime",
+  "date_fields": [
+    "EventDate",
+    "ClientEventTime",
+    "LocalEventTime"
+  ],
+  "keyword_fields": [
+    "SearchPhrase",
+    "URL",
+    "Title",
+    "Referer",
+    "MobilePhoneModel",
+    "BrowserCountry",
+    "UTMSource"
+  ],
+  "numeric_fields": [
+    "CounterID",
+    "UserID",
+    "RegionID",
+    "ResolutionWidth",
+    "WatchID",
+    "AdvEngineID"
+  ],
+  "text_fields": [],
+  "geo_fields": [],
+  "nested": [],
+  "percolate": false,
+  "osb": {
+    "workload": "clickbench",
+    "ops_files": [
+      "operations/dsl.json",
+      "operations/default.json"
+    ],
+    "params": {},
+    "skip_paths": {
+      "/_plugins/_ppl": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+    },
+    "body_edits": {
+      "remove_keys": [
+        "timeout"
+      ],
+      "reason": "removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion"
+    }
+  },
+  "families_not_applicable": {
+    "text:match": "no text field: every string field of the clickbench mapping is keyword",
+    "text:phrase": "no text field: every string field of the clickbench mapping is keyword",
+    "text:query_string": "no text field: every string field of the clickbench mapping is keyword",
+    "text:multi_match": "no text field: every string field of the clickbench mapping is keyword"
+  },
+  "reference_op": "gen:range_EventTime_1d",
+  "indices": [
+    {
+      "name": "clickbench",
+      "document_count": 99997497,
+      "workload_default_shards": 1
+    }
+  ],
+  "corpus_base_urls": {
+    "clickbench": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/clickbench"
+  },
+  "split_bkd": {
+    "applicable": false,
+    "reason": "the clickbench index has an index sort (CounterID, EventDate, UserID, EventTime, WatchID); PointsFormatSelectingCodec falls back to the stock points format on an index-sorted index (one WARN), so a split-BKD copy would hold stock-format files"
+  },
+  "single_shard": {
+    "rule": "mandatory",
+    "note": "full corpus in 1 shard (the workload's own default layout)"
+  }
+}

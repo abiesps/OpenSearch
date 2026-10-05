@@ -327,10 +327,19 @@ def coverage(ops):
 
 def cmd_build(a):
     profile = json.load(open(os.path.join(here, "corpora", a.corpus + ".json")))
-    ops = []
+    # generic workloads (clickbench, geo*, nested, percolator, ...): osb_import_ext / families_ext; others unchanged
+    ext = profile.get("osb_import") == "ext"
+    if ext:
+        import families_ext
+        import osb_import_ext
+    ops, osb_report = [], None
     if a.osb_workloads:
         wd = os.path.join(a.osb_workloads, profile["osb"]["workload"])
-        ops += render_osb_ops(wd, profile["osb"]["ops_files"], profile["osb"].get("params", {}), profile)
+        if ext:
+            ext_ops, osb_report = osb_import_ext.render(wd, profile, classify, families_ext.classify_extra)
+            ops += ext_ops
+        else:
+            ops += render_osb_ops(wd, profile["osb"]["ops_files"], profile["osb"].get("params", {}), profile)
         drop = set(profile["osb"].get("exclude", []))
         ops = [o for o in ops if o["name"][len("osb:"):] not in drop]
     if a.osb_only:
@@ -340,9 +349,9 @@ def cmd_build(a):
     else:
         if not a.url:
             sys.exit("need --url (discovery), --profile-values or --osb-only")
-        vals = discover(JsonClient(a.url), a.index, profile)
+        vals = (families_ext.discover if ext else discover)(JsonClient(a.url), a.index, profile)
     if vals is not None:
-        ops += generate(profile, vals)
+        ops += families_ext.generate(profile, vals) if ext else generate(profile, vals)
     names = [o["name"] for o in ops]
     dup = [n for n, c in collections.Counter(names).items() if c > 1]
     if dup:
@@ -350,9 +359,18 @@ def cmd_build(a):
     ref = profile.get("reference_op")
     if vals is not None and ref not in names:
         sys.exit(f"reference_op [{ref}] of the profile is not an op; ops: {names}")
-    have, missing = coverage(ops)
+    if ext:
+        have, missing, not_applicable, problems = families_ext.coverage(ops, profile)
+        if problems:
+            sys.exit(f"profile {a.corpus}: {problems}")
+    else:
+        have, missing = coverage(ops)
     out = {"corpus": a.corpus, "profile": profile, "values": vals, "reference_op": ref,
            "osb_workloads_commit": a.osb_commit, "ops": ops, "families": sorted(have), "missing_families": missing}
+    if ext:
+        out["families_not_applicable"] = not_applicable
+        out["required_families"] = families_ext.required_families(profile)
+        out["osb_import"] = osb_report
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as f:
         json.dump(out, f, indent=1, sort_keys=True)

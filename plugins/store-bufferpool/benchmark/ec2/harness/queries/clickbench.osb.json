@@ -1,0 +1,4735 @@
+{
+ "corpus": "clickbench",
+ "families": [
+  "agg:cardinality",
+  "agg:composite",
+  "agg:date_histogram",
+  "agg:stats",
+  "agg:terms",
+  "agg:top_hits",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "bkd:range_other",
+  "bool:filter",
+  "bool:must",
+  "bool:must_not",
+  "keyword:term",
+  "keyword:terms",
+  "sort:date_asc",
+  "sort:keyword"
+ ],
+ "families_not_applicable": {
+  "text:match": "no text field: every string field of the clickbench mapping is keyword",
+  "text:multi_match": "no text field: every string field of the clickbench mapping is keyword",
+  "text:phrase": "no text field: every string field of the clickbench mapping is keyword",
+  "text:query_string": "no text field: every string field of the clickbench mapping is keyword"
+ },
+ "missing_families": [
+  "bool:should",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:search_after",
+  "agg:range",
+  "agg:significant_terms",
+  "scroll"
+ ],
+ "ops": [
+  {
+   "body": {
+    "from": 0,
+    "size": 0,
+    "track_total_hits": 2147483647
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [],
+   "name": "osb:dsl-q01-count-all",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "AdvEngineID"
+     ]
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "AdvEngineID"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "AdvEngineID": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0,
+    "track_total_hits": 2147483647
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:term"
+   ],
+   "name": "osb:dsl-q02-count-adv-engine",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "avg(ResolutionWidth)": {
+      "avg": {
+       "field": "ResolutionWidth"
+      }
+     },
+     "count()": {
+      "value_count": {
+       "field": "_index"
+      }
+     },
+     "sum(AdvEngineID)": {
+      "sum": {
+       "field": "AdvEngineID"
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:stats"
+   ],
+   "name": "osb:dsl-q03-sum-count-avg",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "avg(UserID)": {
+      "avg": {
+       "field": "UserID"
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:stats"
+   ],
+   "name": "osb:dsl-q04-avg-userid",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "dc(UserID)": {
+      "cardinality": {
+       "field": "UserID"
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "exists": {
+      "boost": 1.0,
+      "field": "UserID"
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality"
+   ],
+   "name": "osb:dsl-q05-distinct-userid",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "dc(SearchPhrase)": {
+      "cardinality": {
+       "field": "SearchPhrase"
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "exists": {
+      "boost": 1.0,
+      "field": "SearchPhrase"
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality"
+   ],
+   "name": "osb:dsl-q06-distinct-searchphrase",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "max(EventDate)": {
+      "max": {
+       "field": "EventDate"
+      }
+     },
+     "min(EventDate)": {
+      "min": {
+       "field": "EventDate"
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:stats"
+   ],
+   "name": "osb:dsl-q07-min-max-eventdate",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "AdvEngineID": {
+      "terms": {
+       "field": "AdvEngineID",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10000
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "AdvEngineID"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "AdvEngineID": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q08-group-by-adv-engine",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "RegionID": {
+      "aggregations": {
+       "u": {
+        "cardinality": {
+         "field": "UserID"
+        }
+       }
+      },
+      "terms": {
+       "field": "RegionID",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "u": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q09-region-users",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "RegionID": {
+      "aggregations": {
+       "avg(ResolutionWidth)": {
+        "avg": {
+         "field": "ResolutionWidth"
+        }
+       },
+       "c": {
+        "value_count": {
+         "field": "_index"
+        }
+       },
+       "dc(UserID)": {
+        "cardinality": {
+         "field": "UserID"
+        }
+       },
+       "sum(AdvEngineID)": {
+        "sum": {
+         "field": "AdvEngineID"
+        }
+       }
+      },
+      "terms": {
+       "field": "RegionID",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "c": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality",
+    "agg:stats",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q10-region-stats",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "MobilePhoneModel": {
+      "aggregations": {
+       "u": {
+        "cardinality": {
+         "field": "UserID"
+        }
+       }
+      },
+      "terms": {
+       "field": "MobilePhoneModel",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "u": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "MobilePhoneModel"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "MobilePhoneModel": {
+          "boost": 1.0,
+          "value": ""
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality",
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q11-mobile-phone-model",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "MobilePhoneModel",
+      "MobilePhone",
+      "UserID"
+     ]
+    },
+    "aggregations": {
+     "MobilePhone|MobilePhoneModel": {
+      "aggregations": {
+       "u": {
+        "cardinality": {
+         "field": "UserID"
+        }
+       }
+      },
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "u": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10,
+       "terms": [
+        {
+         "field": "MobilePhone"
+        },
+        {
+         "field": "MobilePhoneModel"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "MobilePhoneModel"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "MobilePhoneModel": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "MobilePhone"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality",
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q12-mobile-phone-stats",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "SearchPhrase": {
+      "terms": {
+       "field": "SearchPhrase",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "SearchPhrase"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "SearchPhrase": {
+          "boost": 1.0,
+          "value": ""
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q13-search-phrase-count",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "SearchPhrase": {
+      "aggregations": {
+       "u": {
+        "cardinality": {
+         "field": "UserID"
+        }
+       }
+      },
+      "terms": {
+       "field": "SearchPhrase",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "u": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "SearchPhrase"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "SearchPhrase": {
+          "boost": 1.0,
+          "value": ""
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality",
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q14-search-phrase-users",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "SearchPhrase",
+      "SearchEngineID"
+     ]
+    },
+    "aggregations": {
+     "SearchEngineID|SearchPhrase": {
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10,
+       "terms": [
+        {
+         "field": "SearchEngineID"
+        },
+        {
+         "field": "SearchPhrase"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "SearchPhrase"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "SearchPhrase": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "SearchEngineID"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q15-search-engine-phrase",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "UserID": {
+      "terms": {
+       "field": "UserID",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q16-user-activity",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "UserID|SearchPhrase": {
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10,
+       "terms": [
+        {
+         "field": "UserID"
+        },
+        {
+         "field": "SearchPhrase"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q17-user-search-activity",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "composite_buckets": {
+      "composite": {
+       "size": 10,
+       "sources": [
+        {
+         "UserID": {
+          "terms": {
+           "field": "UserID",
+           "missing_bucket": false,
+           "order": "asc"
+          }
+         }
+        },
+        {
+         "SearchPhrase": {
+          "terms": {
+           "field": "SearchPhrase",
+           "missing_bucket": false,
+           "order": "asc"
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:composite",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q18-user-search-limit",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "UserID|m|SearchPhrase": {
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10,
+       "terms": [
+        {
+         "field": "UserID"
+        },
+        {
+         "script": {
+          "lang": "opensearch_compounded_script",
+          "params": {
+           "DIGESTS": [
+            "minute",
+            "EventTime"
+           ],
+           "SOURCES": [
+            2,
+            0
+           ],
+           "utcTimestamp": 1765261854238124000
+          },
+          "source": "{\"langType\":\"calcite\",\"script\":\"rO0ABXQCZnsKICAib3AiOiB7CiAgICAibmFtZSI6ICJFWFRSQUNUIiwKICAgICJraW5kIjogIk9USEVSX0ZVTkNUSU9OIiwKICAgICJzeW50YXgiOiAiRlVOQ1RJT04iCiAgfSwKICAib3BlcmFuZHMiOiBbCiAgICB7CiAgICAgICJkeW5hbWljUGFyYW0iOiAwLAogICAgICAidHlwZSI6IHsKICAgICAgICAidHlwZSI6ICJWQVJDSEFSIiwKICAgICAgICAibnVsbGFibGUiOiBmYWxzZSwKICAgICAgICAicHJlY2lzaW9uIjogLTEKICAgICAgfQogICAgfSwKICAgIHsKICAgICAgImR5bmFtaWNQYXJhbSI6IDEsCiAgICAgICJ0eXBlIjogewogICAgICAgICJ1ZHQiOiAiRVhQUl9USU1FU1RBTVAiLAogICAgICAgICJ0eXBlIjogIlZBUkNIQVIiLAogICAgICAgICJudWxsYWJsZSI6IHRydWUsCiAgICAgICAgInByZWNpc2lvbiI6IC0xCiAgICAgIH0KICAgIH0KICBdLAogICJjbGFzcyI6ICJvcmcub3BlbnNlYXJjaC5zcWwuZXhwcmVzc2lvbi5mdW5jdGlvbi5Vc2VyRGVmaW5lZEZ1bmN0aW9uQnVpbGRlciQxIiwKICAidHlwZSI6IHsKICAgICJ0eXBlIjogIkJJR0lOVCIsCiAgICAibnVsbGFibGUiOiB0cnVlCiAgfSwKICAiZGV0ZXJtaW5pc3RpYyI6IHRydWUsCiAgImR5bmFtaWMiOiBmYWxzZQp9\"}"
+         },
+         "value_type": "long"
+        },
+        {
+         "field": "SearchPhrase"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q19-user-minute-search",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "UserID"
+     ]
+    },
+    "from": 0,
+    "query": {
+     "term": {
+      "UserID": {
+       "boost": 1.0,
+       "value": 435090932899640449
+      }
+     }
+    },
+    "size": 10000
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "keyword:term"
+   ],
+   "name": "osb:dsl-q20-specific-user",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "URL"
+     ]
+    },
+    "from": 0,
+    "query": {
+     "wildcard": {
+      "URL": {
+       "boost": 1.0,
+       "wildcard": "*google*"
+      }
+     }
+    },
+    "size": 0,
+    "track_total_hits": 2147483647
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [],
+   "name": "osb:dsl-q21-google-urls",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "URL",
+      "SearchPhrase"
+     ]
+    },
+    "aggregations": {
+     "SearchPhrase": {
+      "terms": {
+       "field": "SearchPhrase",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "wildcard": {
+         "URL": {
+          "boost": 1.0,
+          "wildcard": "*google*"
+         }
+        }
+       },
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "SearchPhrase"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "SearchPhrase": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q22-google-search-phrases",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "URL",
+      "SearchPhrase",
+      "UserID",
+      "Title"
+     ]
+    },
+    "aggregations": {
+     "SearchPhrase": {
+      "aggregations": {
+       "c": {
+        "value_count": {
+         "field": "_index"
+        }
+       },
+       "dc(UserID)": {
+        "cardinality": {
+         "field": "UserID"
+        }
+       }
+      },
+      "terms": {
+       "field": "SearchPhrase",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "c": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "wildcard": {
+         "Title": {
+          "boost": 1.0,
+          "wildcard": "*Google*"
+         }
+        }
+       },
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "SearchPhrase"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "SearchPhrase": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must_not": [
+          {
+           "wildcard": {
+            "URL": {
+             "boost": 1.0,
+             "wildcard": "*.google.*"
+            }
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:cardinality",
+    "agg:stats",
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q23-google-title-search",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "URLRegionID",
+      "HasGCLID",
+      "Income",
+      "Interests",
+      "Robotness",
+      "BrowserLanguage",
+      "CounterClass",
+      "BrowserCountry",
+      "OriginalURL",
+      "ClientTimeZone",
+      "RefererHash",
+      "TraficSourceID",
+      "HitColor",
+      "RefererRegionID",
+      "URLCategoryID",
+      "LocalEventTime",
+      "EventTime",
+      "UTMTerm",
+      "AdvEngineID",
+      "UserAgentMinor",
+      "UserAgentMajor",
+      "RemoteIP",
+      "Sex",
+      "JavaEnable",
+      "URLHash",
+      "URL",
+      "ParamOrderID",
+      "OpenstatSourceID",
+      "HTTPError",
+      "SilverlightVersion3",
+      "MobilePhoneModel",
+      "SilverlightVersion4",
+      "SilverlightVersion1",
+      "SilverlightVersion2",
+      "IsDownload",
+      "IsParameter",
+      "CLID",
+      "FlashMajor",
+      "FlashMinor",
+      "UTMMedium",
+      "WatchID",
+      "DontCountHits",
+      "CookieEnable",
+      "HID",
+      "SocialAction",
+      "WindowName",
+      "ConnectTiming",
+      "PageCharset",
+      "IsLink",
+      "IsArtifical",
+      "JavascriptEnable",
+      "ClientEventTime",
+      "DNSTiming",
+      "CodeVersion",
+      "ResponseEndTiming",
+      "FUniqID",
+      "WindowClientHeight",
+      "OpenstatServiceName",
+      "UTMContent",
+      "HistoryLength",
+      "IsOldCounter",
+      "MobilePhone",
+      "SearchPhrase",
+      "FlashMinor2",
+      "SearchEngineID",
+      "IsEvent",
+      "UTMSource",
+      "RegionID",
+      "OpenstatAdID",
+      "UTMCampaign",
+      "GoodEvent",
+      "IsRefresh",
+      "ParamCurrency",
+      "Params",
+      "ResolutionHeight",
+      "ClientIP",
+      "FromTag",
+      "ParamCurrencyID",
+      "ResponseStartTiming",
+      "ResolutionWidth",
+      "SendTiming",
+      "RefererCategoryID",
+      "OpenstatCampaignID",
+      "UserID",
+      "WithHash",
+      "UserAgent",
+      "ParamPrice",
+      "ResolutionDepth",
+      "IsMobile",
+      "Age",
+      "SocialSourceNetworkID",
+      "OpenerName",
+      "OS",
+      "IsNotBounce",
+      "Referer",
+      "NetMinor",
+      "Title",
+      "NetMajor",
+      "IPNetworkID",
+      "FetchTiming",
+      "SocialNetwork",
+      "SocialSourcePage",
+      "CounterID",
+      "WindowClientWidth"
+     ]
+    },
+    "from": 0,
+    "query": {
+     "wildcard": {
+      "URL": {
+       "boost": 1.0,
+       "wildcard": "*google*"
+      }
+     }
+    },
+    "size": 10,
+    "sort": [
+     {
+      "EventTime": {
+       "missing": "_first",
+       "order": "asc"
+      }
+     }
+    ]
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "sort:date_asc"
+   ],
+   "name": "osb:dsl-q24-google-urls-sorted",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "SearchPhrase"
+     ]
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "SearchPhrase"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "SearchPhrase": {
+          "boost": 1.0,
+          "value": ""
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10,
+    "sort": [
+     {
+      "EventTime": {
+       "missing": "_first",
+       "order": "asc"
+      }
+     }
+    ]
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "sort:date_asc"
+   ],
+   "name": "osb:dsl-q25-search-phrases-by-time",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "SearchPhrase"
+     ]
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "SearchPhrase"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "SearchPhrase": {
+          "boost": 1.0,
+          "value": ""
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10,
+    "sort": [
+     {
+      "SearchPhrase": {
+       "missing": "_first",
+       "order": "asc"
+      }
+     }
+    ]
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "sort:keyword"
+   ],
+   "name": "osb:dsl-q26-search-phrases-sorted",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "SearchPhrase"
+     ]
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "SearchPhrase"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "SearchPhrase": {
+          "boost": 1.0,
+          "value": ""
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 10,
+    "sort": [
+     {
+      "EventTime": {
+       "missing": "_first",
+       "order": "asc"
+      }
+     },
+     {
+      "SearchPhrase": {
+       "missing": "_first",
+       "order": "asc"
+      }
+     }
+    ]
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "sort:date_asc",
+    "sort:keyword"
+   ],
+   "name": "osb:dsl-q27-search-phrases-multi-sort",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "URL",
+      "CounterID"
+     ]
+    },
+    "aggregations": {
+     "composite_buckets": {
+      "aggregations": {
+       "l": {
+        "avg": {
+         "script": {
+          "lang": "opensearch_compounded_script",
+          "params": {
+           "DIGESTS": [
+            "URL"
+           ],
+           "SOURCES": [
+            0
+           ],
+           "utcTimestamp": 1765261854565507000
+          },
+          "source": "{\"langType\":\"calcite\",\"script\":\"rO0ABXQA/3sKICAib3AiOiB7CiAgICAibmFtZSI6ICJDSEFSX0xFTkdUSCIsCiAgICAia2luZCI6ICJDSEFSX0xFTkdUSCIsCiAgICAic3ludGF4IjogIkZVTkNUSU9OIgogIH0sCiAgIm9wZXJhbmRzIjogWwogICAgewogICAgICAiZHluYW1pY1BhcmFtIjogMCwKICAgICAgInR5cGUiOiB7CiAgICAgICAgInR5cGUiOiAiVkFSQ0hBUiIsCiAgICAgICAgIm51bGxhYmxlIjogdHJ1ZSwKICAgICAgICAicHJlY2lzaW9uIjogLTEKICAgICAgfQogICAgfQogIF0KfQ==\"}"
+         }
+        }
+       }
+      },
+      "composite": {
+       "size": 10000,
+       "sources": [
+        {
+         "CounterID": {
+          "terms": {
+           "field": "CounterID",
+           "missing_bucket": false,
+           "order": "asc"
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "URL"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "URL": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "CounterID"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:composite",
+    "agg:stats",
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q28-counter-url-length",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "Referer"
+     ]
+    },
+    "aggregations": {
+     "composite_buckets": {
+      "aggregations": {
+       "l": {
+        "avg": {
+         "script": {
+          "lang": "opensearch_compounded_script",
+          "params": {
+           "DIGESTS": [
+            "Referer"
+           ],
+           "SOURCES": [
+            0
+           ],
+           "utcTimestamp": 1765261854612898000
+          },
+          "source": "{\"langType\":\"calcite\",\"script\":\"rO0ABXQA/3sKICAib3AiOiB7CiAgICAibmFtZSI6ICJDSEFSX0xFTkdUSCIsCiAgICAia2luZCI6ICJDSEFSX0xFTkdUSCIsCiAgICAic3ludGF4IjogIkZVTkNUSU9OIgogIH0sCiAgIm9wZXJhbmRzIjogWwogICAgewogICAgICAiZHluYW1pY1BhcmFtIjogMCwKICAgICAgInR5cGUiOiB7CiAgICAgICAgInR5cGUiOiAiVkFSQ0hBUiIsCiAgICAgICAgIm51bGxhYmxlIjogdHJ1ZSwKICAgICAgICAicHJlY2lzaW9uIjogLTEKICAgICAgfQogICAgfQogIF0KfQ==\"}"
+         }
+        }
+       },
+       "min(Referer)": {
+        "top_hits": {
+         "explain": false,
+         "fields": [
+          {
+           "field": "Referer"
+          }
+         ],
+         "from": 0,
+         "seq_no_primary_term": false,
+         "size": 1,
+         "sort": [
+          {
+           "Referer": {
+            "order": "asc"
+           }
+          }
+         ],
+         "version": false
+        }
+       }
+      },
+      "composite": {
+       "size": 10000,
+       "sources": [
+        {
+         "k": {
+          "terms": {
+           "missing_bucket": false,
+           "order": "asc",
+           "script": {
+            "lang": "opensearch_compounded_script",
+            "params": {
+             "DIGESTS": [
+              "Referer",
+              "^https?://(?:www\\.)?([^/]+)/.*$",
+              "$1"
+             ],
+             "SOURCES": [
+              0,
+              2,
+              2
+             ],
+             "utcTimestamp": 1765261854612898000
+            },
+            "source": "{\"langType\":\"calcite\",\"script\":\"rO0ABXQCGXsKICAib3AiOiB7CiAgICAibmFtZSI6ICJSRUdFWFBfUkVQTEFDRSIsCiAgICAia2luZCI6ICJPVEhFUl9GVU5DVElPTiIsCiAgICAic3ludGF4IjogIkZVTkNUSU9OIgogIH0sCiAgIm9wZXJhbmRzIjogWwogICAgewogICAgICAiZHluYW1pY1BhcmFtIjogMCwKICAgICAgInR5cGUiOiB7CiAgICAgICAgInR5cGUiOiAiVkFSQ0hBUiIsCiAgICAgICAgIm51bGxhYmxlIjogdHJ1ZSwKICAgICAgICAicHJlY2lzaW9uIjogLTEKICAgICAgfQogICAgfSwKICAgIHsKICAgICAgImR5bmFtaWNQYXJhbSI6IDEsCiAgICAgICJ0eXBlIjogewogICAgICAgICJ0eXBlIjogIlZBUkNIQVIiLAogICAgICAgICJudWxsYWJsZSI6IGZhbHNlLAogICAgICAgICJwcmVjaXNpb24iOiAtMQogICAgICB9CiAgICB9LAogICAgewogICAgICAiZHluYW1pY1BhcmFtIjogMiwKICAgICAgInR5cGUiOiB7CiAgICAgICAgInR5cGUiOiAiQ0hBUiIsCiAgICAgICAgIm51bGxhYmxlIjogZmFsc2UsCiAgICAgICAgInByZWNpc2lvbiI6IDIKICAgICAgfQogICAgfQogIF0KfQ==\"}"
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "Referer"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "Referer": {
+          "boost": 1.0,
+          "value": ""
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:composite",
+    "agg:stats",
+    "agg:top_hits",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q29-referer-analysis",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "sum(ResolutionWidth)": {
+      "sum": {
+       "field": "ResolutionWidth"
+      }
+     },
+     "sum(ResolutionWidth+1)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 1"
+       }
+      }
+     },
+     "sum(ResolutionWidth+10)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 10"
+       }
+      }
+     },
+     "sum(ResolutionWidth+11)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 11"
+       }
+      }
+     },
+     "sum(ResolutionWidth+12)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 12"
+       }
+      }
+     },
+     "sum(ResolutionWidth+13)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 13"
+       }
+      }
+     },
+     "sum(ResolutionWidth+14)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 14"
+       }
+      }
+     },
+     "sum(ResolutionWidth+15)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 15"
+       }
+      }
+     },
+     "sum(ResolutionWidth+16)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 16"
+       }
+      }
+     },
+     "sum(ResolutionWidth+17)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 17"
+       }
+      }
+     },
+     "sum(ResolutionWidth+18)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 18"
+       }
+      }
+     },
+     "sum(ResolutionWidth+19)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 19"
+       }
+      }
+     },
+     "sum(ResolutionWidth+2)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 2"
+       }
+      }
+     },
+     "sum(ResolutionWidth+20)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 20"
+       }
+      }
+     },
+     "sum(ResolutionWidth+21)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 21"
+       }
+      }
+     },
+     "sum(ResolutionWidth+22)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 22"
+       }
+      }
+     },
+     "sum(ResolutionWidth+23)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 23"
+       }
+      }
+     },
+     "sum(ResolutionWidth+24)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 24"
+       }
+      }
+     },
+     "sum(ResolutionWidth+25)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 25"
+       }
+      }
+     },
+     "sum(ResolutionWidth+26)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 26"
+       }
+      }
+     },
+     "sum(ResolutionWidth+27)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 27"
+       }
+      }
+     },
+     "sum(ResolutionWidth+28)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 28"
+       }
+      }
+     },
+     "sum(ResolutionWidth+29)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 29"
+       }
+      }
+     },
+     "sum(ResolutionWidth+3)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 3"
+       }
+      }
+     },
+     "sum(ResolutionWidth+30)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 30"
+       }
+      }
+     },
+     "sum(ResolutionWidth+31)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 31"
+       }
+      }
+     },
+     "sum(ResolutionWidth+32)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 32"
+       }
+      }
+     },
+     "sum(ResolutionWidth+33)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 33"
+       }
+      }
+     },
+     "sum(ResolutionWidth+34)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 34"
+       }
+      }
+     },
+     "sum(ResolutionWidth+35)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 35"
+       }
+      }
+     },
+     "sum(ResolutionWidth+36)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 36"
+       }
+      }
+     },
+     "sum(ResolutionWidth+37)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 37"
+       }
+      }
+     },
+     "sum(ResolutionWidth+38)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 38"
+       }
+      }
+     },
+     "sum(ResolutionWidth+39)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 39"
+       }
+      }
+     },
+     "sum(ResolutionWidth+4)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 4"
+       }
+      }
+     },
+     "sum(ResolutionWidth+40)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 40"
+       }
+      }
+     },
+     "sum(ResolutionWidth+41)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 41"
+       }
+      }
+     },
+     "sum(ResolutionWidth+42)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 42"
+       }
+      }
+     },
+     "sum(ResolutionWidth+43)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 43"
+       }
+      }
+     },
+     "sum(ResolutionWidth+44)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 44"
+       }
+      }
+     },
+     "sum(ResolutionWidth+45)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 45"
+       }
+      }
+     },
+     "sum(ResolutionWidth+46)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 46"
+       }
+      }
+     },
+     "sum(ResolutionWidth+47)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 47"
+       }
+      }
+     },
+     "sum(ResolutionWidth+48)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 48"
+       }
+      }
+     },
+     "sum(ResolutionWidth+49)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 49"
+       }
+      }
+     },
+     "sum(ResolutionWidth+5)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 5"
+       }
+      }
+     },
+     "sum(ResolutionWidth+50)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 50"
+       }
+      }
+     },
+     "sum(ResolutionWidth+51)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 51"
+       }
+      }
+     },
+     "sum(ResolutionWidth+52)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 52"
+       }
+      }
+     },
+     "sum(ResolutionWidth+53)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 53"
+       }
+      }
+     },
+     "sum(ResolutionWidth+54)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 54"
+       }
+      }
+     },
+     "sum(ResolutionWidth+55)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 55"
+       }
+      }
+     },
+     "sum(ResolutionWidth+56)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 56"
+       }
+      }
+     },
+     "sum(ResolutionWidth+57)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 57"
+       }
+      }
+     },
+     "sum(ResolutionWidth+58)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 58"
+       }
+      }
+     },
+     "sum(ResolutionWidth+59)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 59"
+       }
+      }
+     },
+     "sum(ResolutionWidth+6)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 6"
+       }
+      }
+     },
+     "sum(ResolutionWidth+60)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 60"
+       }
+      }
+     },
+     "sum(ResolutionWidth+61)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 61"
+       }
+      }
+     },
+     "sum(ResolutionWidth+62)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 62"
+       }
+      }
+     },
+     "sum(ResolutionWidth+63)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 63"
+       }
+      }
+     },
+     "sum(ResolutionWidth+64)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 64"
+       }
+      }
+     },
+     "sum(ResolutionWidth+65)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 65"
+       }
+      }
+     },
+     "sum(ResolutionWidth+66)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 66"
+       }
+      }
+     },
+     "sum(ResolutionWidth+67)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 67"
+       }
+      }
+     },
+     "sum(ResolutionWidth+68)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 68"
+       }
+      }
+     },
+     "sum(ResolutionWidth+69)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 69"
+       }
+      }
+     },
+     "sum(ResolutionWidth+7)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 7"
+       }
+      }
+     },
+     "sum(ResolutionWidth+70)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 70"
+       }
+      }
+     },
+     "sum(ResolutionWidth+71)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 71"
+       }
+      }
+     },
+     "sum(ResolutionWidth+72)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 72"
+       }
+      }
+     },
+     "sum(ResolutionWidth+73)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 73"
+       }
+      }
+     },
+     "sum(ResolutionWidth+74)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 74"
+       }
+      }
+     },
+     "sum(ResolutionWidth+75)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 75"
+       }
+      }
+     },
+     "sum(ResolutionWidth+76)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 76"
+       }
+      }
+     },
+     "sum(ResolutionWidth+77)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 77"
+       }
+      }
+     },
+     "sum(ResolutionWidth+78)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 78"
+       }
+      }
+     },
+     "sum(ResolutionWidth+79)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 79"
+       }
+      }
+     },
+     "sum(ResolutionWidth+8)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 8"
+       }
+      }
+     },
+     "sum(ResolutionWidth+80)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 80"
+       }
+      }
+     },
+     "sum(ResolutionWidth+81)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 81"
+       }
+      }
+     },
+     "sum(ResolutionWidth+82)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 82"
+       }
+      }
+     },
+     "sum(ResolutionWidth+83)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 83"
+       }
+      }
+     },
+     "sum(ResolutionWidth+84)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 84"
+       }
+      }
+     },
+     "sum(ResolutionWidth+85)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 85"
+       }
+      }
+     },
+     "sum(ResolutionWidth+86)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 86"
+       }
+      }
+     },
+     "sum(ResolutionWidth+87)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 87"
+       }
+      }
+     },
+     "sum(ResolutionWidth+88)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 88"
+       }
+      }
+     },
+     "sum(ResolutionWidth+89)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 89"
+       }
+      }
+     },
+     "sum(ResolutionWidth+9)": {
+      "sum": {
+       "field": "ResolutionWidth",
+       "script": {
+        "lang": "painless",
+        "source": "_value + 9"
+       }
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:stats"
+   ],
+   "name": "osb:dsl-q30-resolution-width-sums",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "SearchPhrase",
+      "SearchEngineID",
+      "IsRefresh",
+      "ClientIP",
+      "ResolutionWidth"
+     ]
+    },
+    "aggregations": {
+     "SearchEngineID|ClientIP": {
+      "aggregations": {
+       "avg(ResolutionWidth)": {
+        "avg": {
+         "field": "ResolutionWidth"
+        }
+       },
+       "c": {
+        "value_count": {
+         "field": "_index"
+        }
+       },
+       "sum(IsRefresh)": {
+        "sum": {
+         "field": "IsRefresh"
+        }
+       }
+      },
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "c": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10,
+       "terms": [
+        {
+         "field": "SearchEngineID"
+        },
+        {
+         "field": "ClientIP"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "SearchPhrase"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "SearchPhrase": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "SearchEngineID"
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "ClientIP"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q31-search-engine-client-stats",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "WatchID",
+      "SearchPhrase",
+      "IsRefresh",
+      "ClientIP",
+      "ResolutionWidth"
+     ]
+    },
+    "aggregations": {
+     "WatchID|ClientIP": {
+      "aggregations": {
+       "avg(ResolutionWidth)": {
+        "avg": {
+         "field": "ResolutionWidth"
+        }
+       },
+       "c": {
+        "value_count": {
+         "field": "_index"
+        }
+       },
+       "sum(IsRefresh)": {
+        "sum": {
+         "field": "IsRefresh"
+        }
+       }
+      },
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "c": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10,
+       "terms": [
+        {
+         "field": "WatchID"
+        },
+        {
+         "field": "ClientIP"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "SearchPhrase"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "SearchPhrase": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "WatchID"
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "ClientIP"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q32-watch-client-stats",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "WatchID|ClientIP": {
+      "aggregations": {
+       "avg(ResolutionWidth)": {
+        "avg": {
+         "field": "ResolutionWidth"
+        }
+       },
+       "c": {
+        "value_count": {
+         "field": "_index"
+        }
+       },
+       "sum(IsRefresh)": {
+        "sum": {
+         "field": "IsRefresh"
+        }
+       }
+      },
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "c": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10,
+       "terms": [
+        {
+         "field": "WatchID"
+        },
+        {
+         "field": "ClientIP"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:stats",
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q33-watch-client-all",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "URL": {
+      "terms": {
+       "field": "URL",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q34-url-popularity",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "URL": {
+      "terms": {
+       "field": "URL",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q35-url-with-constant",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "ClientIP": {
+      "terms": {
+       "field": "ClientIP",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "exists": {
+      "boost": 1.0,
+      "field": "ClientIP"
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q36-client-ip-variations",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "URL",
+      "DontCountHits",
+      "IsRefresh",
+      "CounterID"
+     ]
+    },
+    "aggregations": {
+     "URL": {
+      "terms": {
+       "field": "URL",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "term": {
+         "CounterID": {
+          "boost": 1.0,
+          "value": 62
+         }
+        }
+       },
+       {
+        "range": {
+         "EventDate": {
+          "boost": 1.0,
+          "format": "date_time",
+          "from": "2013-07-01T00:00:00.000Z",
+          "include_lower": true,
+          "include_upper": true,
+          "to": "2013-07-31T00:00:00.000Z"
+         }
+        }
+       },
+       {
+        "term": {
+         "DontCountHits": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "term": {
+         "IsRefresh": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "URL"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "URL": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q37-counter-62-urls",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "DontCountHits",
+      "IsRefresh",
+      "Title",
+      "CounterID"
+     ]
+    },
+    "aggregations": {
+     "Title": {
+      "terms": {
+       "field": "Title",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "term": {
+         "CounterID": {
+          "boost": 1.0,
+          "value": 62
+         }
+        }
+       },
+       {
+        "range": {
+         "EventDate": {
+          "boost": 1.0,
+          "format": "date_time",
+          "from": "2013-07-01T00:00:00.000Z",
+          "include_lower": true,
+          "include_upper": true,
+          "to": "2013-07-31T00:00:00.000Z"
+         }
+        }
+       },
+       {
+        "term": {
+         "DontCountHits": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "term": {
+         "IsRefresh": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "Title"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "Title": {
+             "boost": 1.0,
+             "value": ""
+            }
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q38-counter-62-titles",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "URL",
+      "IsDownload",
+      "IsLink",
+      "IsRefresh",
+      "CounterID"
+     ]
+    },
+    "aggregations": {
+     "URL": {
+      "terms": {
+       "field": "URL",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 1010
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "term": {
+         "CounterID": {
+          "boost": 1.0,
+          "value": 62
+         }
+        }
+       },
+       {
+        "range": {
+         "EventDate": {
+          "boost": 1.0,
+          "format": "date_time",
+          "from": "2013-07-01T00:00:00.000Z",
+          "include_lower": true,
+          "include_upper": true,
+          "to": "2013-07-31T00:00:00.000Z"
+         }
+        }
+       },
+       {
+        "term": {
+         "IsRefresh": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "bool": {
+         "adjust_pure_negative": true,
+         "boost": 1.0,
+         "must": [
+          {
+           "exists": {
+            "boost": 1.0,
+            "field": "IsLink"
+           }
+          }
+         ],
+         "must_not": [
+          {
+           "term": {
+            "IsLink": {
+             "boost": 1.0,
+             "value": 0
+            }
+           }
+          }
+         ]
+        }
+       },
+       {
+        "term": {
+         "IsDownload": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "URL"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q39-counter-62-links",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "TraficSourceID",
+      "AdvEngineID",
+      "URL",
+      "SearchEngineID",
+      "IsRefresh",
+      "Referer",
+      "CounterID"
+     ]
+    },
+    "aggregations": {
+     "TraficSourceID|SearchEngineID|AdvEngineID|Src|Dst": {
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 1010,
+       "terms": [
+        {
+         "field": "TraficSourceID"
+        },
+        {
+         "field": "SearchEngineID"
+        },
+        {
+         "field": "AdvEngineID"
+        },
+        {
+         "script": {
+          "lang": "opensearch_compounded_script",
+          "params": {
+           "DIGESTS": [
+            "SearchEngineID",
+            0,
+            "AdvEngineID",
+            0,
+            "Referer",
+            ""
+           ],
+           "SOURCES": [
+            0,
+            2,
+            0,
+            2,
+            0,
+            2
+           ],
+           "utcTimestamp": 1765261855083734000
+          },
+          "source": "{\"langType\":\"calcite\",\"script\":\"rO0ABXQGCnsKICAib3AiOiB7CiAgICAibmFtZSI6ICJDQVNFIiwKICAgICJraW5kIjogIkNBU0UiLAogICAgInN5bnRheCI6ICJTUEVDSUFMIgogIH0sCiAgIm9wZXJhbmRzIjogWwogICAgewogICAgICAib3AiOiB7CiAgICAgICAgIm5hbWUiOiAiQU5EIiwKICAgICAgICAia2luZCI6ICJBTkQiLAogICAgICAgICJzeW50YXgiOiAiQklOQVJZIgogICAgICB9LAogICAgICAib3BlcmFuZHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm9wIjogewogICAgICAgICAgICAibmFtZSI6ICI9IiwKICAgICAgICAgICAgImtpbmQiOiAiRVFVQUxTIiwKICAgICAgICAgICAgInN5bnRheCI6ICJCSU5BUlkiCiAgICAgICAgICB9LAogICAgICAgICAgIm9wZXJhbmRzIjogWwogICAgICAgICAgICB7CiAgICAgICAgICAgICAgImR5bmFtaWNQYXJhbSI6IDAsCiAgICAgICAgICAgICAgInR5cGUiOiB7CiAgICAgICAgICAgICAgICAidHlwZSI6ICJTTUFMTElOVCIsCiAgICAgICAgICAgICAgICAibnVsbGFibGUiOiB0cnVlCiAgICAgICAgICAgICAgfQogICAgICAgICAgICB9LAogICAgICAgICAgICB7CiAgICAgICAgICAgICAgImR5bmFtaWNQYXJhbSI6IDEsCiAgICAgICAgICAgICAgInR5cGUiOiB7CiAgICAgICAgICAgICAgICAidHlwZSI6ICJJTlRFR0VSIiwKICAgICAgICAgICAgICAgICJudWxsYWJsZSI6IGZhbHNlCiAgICAgICAgICAgICAgfQogICAgICAgICAgICB9CiAgICAgICAgICBdCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAib3AiOiB7CiAgICAgICAgICAgICJuYW1lIjogIj0iLAogICAgICAgICAgICAia2luZCI6ICJFUVVBTFMiLAogICAgICAgICAgICAic3ludGF4IjogIkJJTkFSWSIKICAgICAgICAgIH0sCiAgICAgICAgICAib3BlcmFuZHMiOiBbCiAgICAgICAgICAgIHsKICAgICAgICAgICAgICAiZHluYW1pY1BhcmFtIjogMiwKICAgICAgICAgICAgICAidHlwZSI6IHsKICAgICAgICAgICAgICAgICJ0eXBlIjogIlNNQUxMSU5UIiwKICAgICAgICAgICAgICAgICJudWxsYWJsZSI6IHRydWUKICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0sCiAgICAgICAgICAgIHsKICAgICAgICAgICAgICAiZHluYW1pY1BhcmFtIjogMywKICAgICAgICAgICAgICAidHlwZSI6IHsKICAgICAgICAgICAgICAgICJ0eXBlIjogIklOVEVHRVIiLAogICAgICAgICAgICAgICAgIm51bGxhYmxlIjogZmFsc2UKICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAgICAgICAgIF0KICAgICAgICB9CiAgICAgIF0KICAgIH0sCiAgICB7CiAgICAgICJkeW5hbWljUGFyYW0iOiA0LAogICAgICAidHlwZSI6IHsKICAgICAgICAidHlwZSI6ICJWQVJDSEFSIiwKICAgICAgICAibnVsbGFibGUiOiB0cnVlLAogICAgICAgICJwcmVjaXNpb24iOiAtMQogICAgICB9CiAgICB9LAogICAgewogICAgICAiZHluYW1pY1BhcmFtIjogNSwKICAgICAgInR5cGUiOiB7CiAgICAgICAgInR5cGUiOiAiVkFSQ0hBUiIsCiAgICAgICAgIm51bGxhYmxlIjogZmFsc2UsCiAgICAgICAgInByZWNpc2lvbiI6IC0xCiAgICAgIH0KICAgIH0KICBdCn0=\"}"
+         }
+        },
+        {
+         "field": "URL"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "term": {
+         "CounterID": {
+          "boost": 1.0,
+          "value": 62
+         }
+        }
+       },
+       {
+        "range": {
+         "EventDate": {
+          "boost": 1.0,
+          "format": "date_time",
+          "from": "2013-07-01T00:00:00.000Z",
+          "include_lower": true,
+          "include_upper": true,
+          "to": "2013-07-31T00:00:00.000Z"
+         }
+        }
+       },
+       {
+        "term": {
+         "IsRefresh": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "bool:must",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q40-traffic-source-analysis",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "RefererHash",
+      "TraficSourceID",
+      "URLHash",
+      "IsRefresh",
+      "CounterID"
+     ]
+    },
+    "aggregations": {
+     "URLHash|EventDate": {
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 110,
+       "terms": [
+        {
+         "field": "URLHash"
+        },
+        {
+         "field": "EventDate",
+         "value_type": "long"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "term": {
+         "CounterID": {
+          "boost": 1.0,
+          "value": 62
+         }
+        }
+       },
+       {
+        "range": {
+         "EventDate": {
+          "boost": 1.0,
+          "format": "date_time",
+          "from": "2013-07-01T00:00:00.000Z",
+          "include_lower": true,
+          "include_upper": true,
+          "to": "2013-07-31T00:00:00.000Z"
+         }
+        }
+       },
+       {
+        "term": {
+         "IsRefresh": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "terms": {
+         "TraficSourceID": [
+          -1.0,
+          6.0
+         ],
+         "boost": 1.0
+        }
+       },
+       {
+        "term": {
+         "RefererHash": {
+          "boost": 1.0,
+          "value": 3594120000172545465
+         }
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "URLHash"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "bool:must",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q41-url-hash-date",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "URLHash",
+      "DontCountHits",
+      "WindowClientHeight",
+      "IsRefresh",
+      "CounterID",
+      "WindowClientWidth"
+     ]
+    },
+    "aggregations": {
+     "WindowClientWidth|WindowClientHeight": {
+      "multi_terms": {
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10000,
+       "terms": [
+        {
+         "field": "WindowClientWidth"
+        },
+        {
+         "field": "WindowClientHeight"
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "term": {
+         "CounterID": {
+          "boost": 1.0,
+          "value": 62
+         }
+        }
+       },
+       {
+        "range": {
+         "EventDate": {
+          "boost": 1.0,
+          "format": "date_time",
+          "from": "2013-07-01T00:00:00.000Z",
+          "include_lower": true,
+          "include_upper": true,
+          "to": "2013-07-31T00:00:00.000Z"
+         }
+        }
+       },
+       {
+        "term": {
+         "IsRefresh": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "term": {
+         "DontCountHits": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "term": {
+         "URLHash": {
+          "boost": 1.0,
+          "value": 2868770270353813622
+         }
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "WindowClientWidth"
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "WindowClientHeight"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bkd:range_date",
+    "bool:must",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-q42-window-client-dimensions",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "_source": {
+     "excludes": [],
+     "includes": [
+      "EventDate",
+      "EventTime",
+      "DontCountHits",
+      "IsRefresh",
+      "CounterID"
+     ]
+    },
+    "aggregations": {
+     "composite_buckets": {
+      "composite": {
+       "size": 1010,
+       "sources": [
+        {
+         "M": {
+          "date_histogram": {
+           "field": "EventTime",
+           "fixed_interval": "1m",
+           "missing_bucket": false,
+           "order": "asc"
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "adjust_pure_negative": true,
+      "boost": 1.0,
+      "must": [
+       {
+        "term": {
+         "CounterID": {
+          "boost": 1.0,
+          "value": 62
+         }
+        }
+       },
+       {
+        "range": {
+         "EventDate": {
+          "boost": 1.0,
+          "format": "date_time",
+          "from": "2013-07-14T00:00:00.000Z",
+          "include_lower": true,
+          "include_upper": true,
+          "to": "2013-07-15T00:00:00.000Z"
+         }
+        }
+       },
+       {
+        "term": {
+         "IsRefresh": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "term": {
+         "DontCountHits": {
+          "boost": 1.0,
+          "value": 0
+         }
+        }
+       },
+       {
+        "exists": {
+         "boost": 1.0,
+         "field": "EventTime"
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:composite",
+    "agg:date_histogram",
+    "bkd:range_date",
+    "bool:must",
+    "keyword:term"
+   ],
+   "name": "osb:dsl-q43-hourly-pageviews",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "from": 0,
+    "query": {
+     "bool": {
+      "filter": [
+       {
+        "range": {
+         "RegionID": {
+          "boost": 1.0,
+          "from": 200,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 300
+         }
+        }
+       },
+       {
+        "range": {
+         "ResolutionWidth": {
+          "boost": 1.0,
+          "from": 1200,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 1400
+         }
+        }
+       },
+       {
+        "range": {
+         "ClientIP": {
+          "boost": 1.0,
+          "from": 500000000,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 1500000000
+         }
+        }
+       },
+       {
+        "range": {
+         "ResolutionHeight": {
+          "boost": 1.0,
+          "from": 700,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 900
+         }
+        }
+       },
+       {
+        "range": {
+         "Age": {
+          "boost": 1.0,
+          "from": 20,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 40
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "bkd:range_numeric",
+    "bkd:range_other",
+    "bool:filter"
+   ],
+   "name": "osb:dsl-q44-multi-range-no-sort",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "from": 0,
+    "query": {
+     "bool": {
+      "filter": [
+       {
+        "range": {
+         "CounterID": {
+          "boost": 1.0,
+          "from": 50,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 100
+         }
+        }
+       },
+       {
+        "range": {
+         "RegionID": {
+          "boost": 1.0,
+          "from": 200,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 300
+         }
+        }
+       },
+       {
+        "range": {
+         "ResolutionWidth": {
+          "boost": 1.0,
+          "from": 1200,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 1400
+         }
+        }
+       },
+       {
+        "range": {
+         "ClientIP": {
+          "boost": 1.0,
+          "from": 500000000,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 1500000000
+         }
+        }
+       },
+       {
+        "range": {
+         "ResolutionHeight": {
+          "boost": 1.0,
+          "from": 700,
+          "include_lower": true,
+          "include_upper": true,
+          "to": 900
+         }
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "bkd:range_numeric",
+    "bkd:range_other",
+    "bool:filter"
+   ],
+   "name": "osb:dsl-q45-multi-range-with-sort",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "aggregations": {
+     "SearchPhrase": {
+      "aggregations": {
+       "URL": {
+        "terms": {
+         "field": "URL",
+         "min_doc_count": 1,
+         "order": [
+          {
+           "_count": "desc"
+          },
+          {
+           "_key": "asc"
+          }
+         ],
+         "shard_min_doc_count": 0,
+         "show_term_doc_count_error": false,
+         "size": 10
+        }
+       }
+      },
+      "terms": {
+       "field": "SearchPhrase",
+       "min_doc_count": 1,
+       "order": [
+        {
+         "_count": "desc"
+        },
+        {
+         "_key": "asc"
+        }
+       ],
+       "shard_min_doc_count": 0,
+       "show_term_doc_count_error": false,
+       "size": 10
+      }
+     }
+    },
+    "from": 0,
+    "query": {
+     "bool": {
+      "must": [
+       {
+        "exists": {
+         "field": "SearchPhrase"
+        }
+       },
+       {
+        "exists": {
+         "field": "URL"
+        }
+       }
+      ],
+      "must_not": [
+       {
+        "term": {
+         "SearchPhrase": ""
+        }
+       },
+       {
+        "term": {
+         "URL": ""
+        }
+       }
+      ]
+     }
+    },
+    "size": 0
+   },
+   "body_edits": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "families": [
+    "agg:terms",
+    "bool:must",
+    "bool:must_not",
+    "keyword:term",
+    "keyword:terms"
+   ],
+   "name": "osb:dsl-streaming-nested-string-terms",
+   "osb_index": null,
+   "osb_path": "/_search",
+   "params": {},
+   "source": "osb:clickbench/operations/dsl.json",
+   "type": "search"
+  }
+ ],
+ "osb_import": {
+  "body_edits": {
+   "osb:dsl-q01-count-all": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q02-count-adv-engine": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q03-sum-count-avg": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q04-avg-userid": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q05-distinct-userid": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q06-distinct-searchphrase": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q07-min-max-eventdate": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q08-group-by-adv-engine": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q09-region-users": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q10-region-stats": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q11-mobile-phone-model": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q12-mobile-phone-stats": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q13-search-phrase-count": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q14-search-phrase-users": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q15-search-engine-phrase": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q16-user-activity": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q17-user-search-activity": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q18-user-search-limit": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q19-user-minute-search": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q20-specific-user": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q21-google-urls": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q22-google-search-phrases": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q23-google-title-search": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q24-google-urls-sorted": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q25-search-phrases-by-time": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q26-search-phrases-sorted": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q27-search-phrases-multi-sort": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q28-counter-url-length": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q29-referer-analysis": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q30-resolution-width-sums": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q31-search-engine-client-stats": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q32-watch-client-stats": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q33-watch-client-all": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q34-url-popularity": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q35-url-with-constant": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q36-client-ip-variations": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q37-counter-62-urls": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q38-counter-62-titles": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q39-counter-62-links": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q40-traffic-source-analysis": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q41-url-hash-date": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q42-window-client-dimensions": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q43-hourly-pageviews": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q44-multi-range-no-sort": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-q45-multi-range-with-sort": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ],
+   "osb:dsl-streaming-nested-string-terms": [
+    "removed top-level key timeout=\"1m\" (removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion)"
+   ]
+  },
+  "ingest_ops": [
+   {
+    "bulk-size": 5000,
+    "ingest-percentage": 100,
+    "name": "index-append",
+    "operation-type": "bulk"
+   }
+  ],
+  "measured": [
+   "osb:dsl-q01-count-all",
+   "osb:dsl-q02-count-adv-engine",
+   "osb:dsl-q03-sum-count-avg",
+   "osb:dsl-q04-avg-userid",
+   "osb:dsl-q05-distinct-userid",
+   "osb:dsl-q06-distinct-searchphrase",
+   "osb:dsl-q07-min-max-eventdate",
+   "osb:dsl-q08-group-by-adv-engine",
+   "osb:dsl-q09-region-users",
+   "osb:dsl-q10-region-stats",
+   "osb:dsl-q11-mobile-phone-model",
+   "osb:dsl-q12-mobile-phone-stats",
+   "osb:dsl-q13-search-phrase-count",
+   "osb:dsl-q14-search-phrase-users",
+   "osb:dsl-q15-search-engine-phrase",
+   "osb:dsl-q16-user-activity",
+   "osb:dsl-q17-user-search-activity",
+   "osb:dsl-q18-user-search-limit",
+   "osb:dsl-q19-user-minute-search",
+   "osb:dsl-q20-specific-user",
+   "osb:dsl-q21-google-urls",
+   "osb:dsl-q22-google-search-phrases",
+   "osb:dsl-q23-google-title-search",
+   "osb:dsl-q24-google-urls-sorted",
+   "osb:dsl-q25-search-phrases-by-time",
+   "osb:dsl-q26-search-phrases-sorted",
+   "osb:dsl-q27-search-phrases-multi-sort",
+   "osb:dsl-q28-counter-url-length",
+   "osb:dsl-q29-referer-analysis",
+   "osb:dsl-q30-resolution-width-sums",
+   "osb:dsl-q31-search-engine-client-stats",
+   "osb:dsl-q32-watch-client-stats",
+   "osb:dsl-q33-watch-client-all",
+   "osb:dsl-q34-url-popularity",
+   "osb:dsl-q35-url-with-constant",
+   "osb:dsl-q36-client-ip-variations",
+   "osb:dsl-q37-counter-62-urls",
+   "osb:dsl-q38-counter-62-titles",
+   "osb:dsl-q39-counter-62-links",
+   "osb:dsl-q40-traffic-source-analysis",
+   "osb:dsl-q41-url-hash-date",
+   "osb:dsl-q42-window-client-dimensions",
+   "osb:dsl-q43-hourly-pageviews",
+   "osb:dsl-q44-multi-range-no-sort",
+   "osb:dsl-q45-multi-range-with-sort",
+   "osb:dsl-streaming-nested-string-terms"
+  ],
+  "not_measured": [
+   {
+    "name": "flush-index",
+    "path": "/clickbench/_flush",
+    "reason": "not a search request (maintenance or ingest raw-request)"
+   },
+   {
+    "name": "q01-count-all",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q02-count-adv-engine",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q03-sum-count-avg",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q04-avg-userid",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q05-distinct-userid",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q06-distinct-searchphrase",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q07-min-max-eventdate",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q08-group-by-adv-engine",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q09-region-users",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q10-region-stats",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q11-mobile-phone-model",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q12-mobile-phone-stats",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q13-search-phrase-count",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q14-search-phrase-users",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q15-search-engine-phrase",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q16-user-activity",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q17-user-search-activity",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q18-user-search-limit",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q19-user-minute-search",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q20-specific-user",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q21-google-urls",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q22-google-search-phrases",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q23-google-title-search",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q24-google-urls-sorted",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q25-search-phrases-by-time",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q26-search-phrases-sorted",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q27-search-phrases-multi-sort",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q28-counter-url-length",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q29-referer-analysis",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q30-resolution-width-sums",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q31-search-engine-client-stats",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q32-watch-client-stats",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q33-watch-client-all",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q34-url-popularity",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q35-url-with-constant",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q36-client-ip-variations",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q37-counter-62-urls",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q38-counter-62-titles",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q39-counter-62-links",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q40-traffic-source-analysis",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q41-url-hash-date",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q42-window-client-dimensions",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   {
+    "name": "q43-hourly-pageviews",
+    "path": "/_plugins/_ppl",
+    "reason": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   }
+  ],
+  "ops_files": [
+   "operations/dsl.json",
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {},
+  "workload_dir": "clickbench",
+  "workload_py_sha256": null
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "clickbench",
+  "corpus_base_urls": {
+   "clickbench": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/clickbench"
+  },
+  "date_fields": [
+   "EventDate",
+   "ClientEventTime",
+   "LocalEventTime"
+  ],
+  "families_not_applicable": {
+   "text:match": "no text field: every string field of the clickbench mapping is keyword",
+   "text:multi_match": "no text field: every string field of the clickbench mapping is keyword",
+   "text:phrase": "no text field: every string field of the clickbench mapping is keyword",
+   "text:query_string": "no text field: every string field of the clickbench mapping is keyword"
+  },
+  "geo_fields": [],
+  "indices": [
+   {
+    "document_count": 99997497,
+    "name": "clickbench",
+    "workload_default_shards": 1
+   }
+  ],
+  "keyword_fields": [
+   "SearchPhrase",
+   "URL",
+   "Title",
+   "Referer",
+   "MobilePhoneModel",
+   "BrowserCountry",
+   "UTMSource"
+  ],
+  "nested": [],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [
+   "CounterID",
+   "UserID",
+   "RegionID",
+   "ResolutionWidth",
+   "WatchID",
+   "AdvEngineID"
+  ],
+  "osb": {
+   "body_edits": {
+    "reason": "removed identically in every arm: a cold query slower than the workload's 1m search timeout would return partial results, which can be neither compared nor timed; without the key the query runs to completion",
+    "remove_keys": [
+     "timeout"
+    ]
+   },
+   "ops_files": [
+    "operations/dsl.json",
+    "operations/default.json"
+   ],
+   "params": {},
+   "skip_paths": {
+    "/_plugins/_ppl": "PPL needs the opensearch-sql plugin, which is in neither the S0 nor the POC distribution; the workload's own DSL translation of the same queries (operations/dsl.json) is measured"
+   },
+   "workload": "clickbench"
+  },
+  "osb_import": "ext",
+  "percolate": false,
+  "reference_op": "gen:range_EventTime_1d",
+  "single_shard": {
+   "note": "full corpus in 1 shard (the workload's own default layout)",
+   "rule": "mandatory"
+  },
+  "split_bkd": {
+   "applicable": false,
+   "reason": "the clickbench index has an index sort (CounterID, EventDate, UserID, EventTime, WatchID); PointsFormatSelectingCodec falls back to the stock points format on an index-sorted index (one WARN), so a split-BKD copy would hold stock-format files"
+  },
+  "text_fields": [],
+  "time_field": "EventTime"
+ },
+ "reference_op": "gen:range_EventTime_1d",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll"
+ ],
+ "values": null
+}

@@ -1,0 +1,67 @@
+{
+  "corpus": "percolator",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "date_fields": [],
+  "keyword_fields": [],
+  "numeric_fields": [],
+  "text_fields": [],
+  "geo_fields": [],
+  "nested": [],
+  "percolate": true,
+  "osb": {
+    "workload": "percolator",
+    "ops_files": [
+      "operations/*.json"
+    ],
+    "params": {}
+  },
+  "families_not_applicable": {
+    "keyword:term": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "keyword:terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "text:match": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "text:phrase": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "text:query_string": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "text:multi_match": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "bool:must": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "bool:should": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "bool:filter": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "bool:must_not": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "bkd:range_date": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "bkd:range_numeric": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "sort:date_asc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "sort:date_desc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "sort:numeric_asc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "sort:numeric_desc": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "sort:keyword": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "sort:search_after": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "agg:date_histogram": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "agg:terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "agg:composite": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "agg:range": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "agg:cardinality": "the index holds stored percolator queries; the workload's percolate ops are its search ops",
+    "agg:significant_terms": "the index holds stored percolator queries; the workload's percolate ops are its search ops"
+  },
+  "text_fields_excluded": {
+    "body": "the stored-queries index has no documents with a body; body is the field of the percolated document"
+  },
+  "reference_op": "osb:percolator_with_content_google",
+  "indices": [
+    {
+      "name": "queries",
+      "document_count": 2000000,
+      "workload_default_shards": 5
+    }
+  ],
+  "corpus_base_urls": {
+    "percolator": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/percolator"
+  },
+  "split_bkd": {
+    "applicable": false,
+    "reason": "no date field"
+  },
+  "single_shard": {
+    "rule": "no",
+    "note": "0.1 GB raw; record the measured store size"
+  }
+}

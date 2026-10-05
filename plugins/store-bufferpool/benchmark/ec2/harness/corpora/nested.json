@@ -1,0 +1,59 @@
+{
+  "corpus": "nested",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "time_field": "creationDate",
+  "date_fields": [
+    "answers.date"
+  ],
+  "keyword_fields": [
+    "tag",
+    "user"
+  ],
+  "numeric_fields": [
+    "answer_count"
+  ],
+  "text_fields": [
+    "title"
+  ],
+  "geo_fields": [],
+  "nested": [
+    {
+      "path": "answers",
+      "date_fields": [
+        "answers.date"
+      ],
+      "keyword_fields": [
+        "answers.user"
+      ]
+    }
+  ],
+  "percolate": false,
+  "osb": {
+    "workload": "nested",
+    "ops_files": [
+      "operations/*.json"
+    ],
+    "params": {}
+  },
+  "families_not_applicable": {},
+  "reference_op": "gen:range_creationDate_1d",
+  "indices": [
+    {
+      "name": "sonested",
+      "document_count": 11203029,
+      "workload_default_shards": 1
+    }
+  ],
+  "split_bkd": {
+    "applicable": true,
+    "fields": [
+      "creationDate",
+      "answers.date"
+    ]
+  },
+  "single_shard": {
+    "rule": "no",
+    "note": "3.6 GB raw; record the measured store size"
+  }
+}

@@ -1,0 +1,279 @@
+{
+ "corpus": "geoshape",
+ "families": [
+  "geo:polygon",
+  "geo:shape"
+ ],
+ "families_not_applicable": {
+  "agg:cardinality": "the index has only one geo_shape field and no other field role",
+  "agg:composite": "the index has only one geo_shape field and no other field role",
+  "agg:date_histogram": "the index has only one geo_shape field and no other field role",
+  "agg:range": "the index has only one geo_shape field and no other field role",
+  "agg:significant_terms": "the index has only one geo_shape field and no other field role",
+  "agg:terms": "the index has only one geo_shape field and no other field role",
+  "bkd:range_date": "the index has only one geo_shape field and no other field role",
+  "bkd:range_numeric": "the index has only one geo_shape field and no other field role",
+  "bool:filter": "the index has only one geo_shape field and no other field role",
+  "bool:must": "the index has only one geo_shape field and no other field role",
+  "bool:must_not": "the index has only one geo_shape field and no other field role",
+  "bool:should": "the index has only one geo_shape field and no other field role",
+  "keyword:term": "the index has only one geo_shape field and no other field role",
+  "keyword:terms": "the index has only one geo_shape field and no other field role",
+  "sort:date_asc": "the index has only one geo_shape field and no other field role",
+  "sort:date_desc": "the index has only one geo_shape field and no other field role",
+  "sort:keyword": "the index has only one geo_shape field and no other field role",
+  "sort:numeric_asc": "the index has only one geo_shape field and no other field role",
+  "sort:numeric_desc": "the index has only one geo_shape field and no other field role",
+  "sort:search_after": "the index has only one geo_shape field and no other field role",
+  "text:match": "the index has only one geo_shape field and no other field role",
+  "text:multi_match": "the index has only one geo_shape field and no other field role",
+  "text:phrase": "the index has only one geo_shape field and no other field role",
+  "text:query_string": "the index has only one geo_shape field and no other field role"
+ },
+ "missing_families": [
+  "scroll",
+  "geo:bbox",
+  "geo:distance",
+  "geo:agg"
+ ],
+ "ops": [
+  {
+   "body": {
+    "query": {
+     "geo_shape": {
+      "shape": {
+       "shape": {
+        "coordinates": [
+         [
+          [
+           -0.1,
+           49.0
+          ],
+          [
+           5.0,
+           48.0
+          ],
+          [
+           15.0,
+           49.0
+          ],
+          [
+           14.0,
+           60.0
+          ],
+          [
+           -0.1,
+           61.0
+          ],
+          [
+           -0.1,
+           49.0
+          ]
+         ]
+        ],
+        "type": "polygon"
+       }
+      }
+     }
+    }
+   },
+   "families": [
+    "geo:polygon",
+    "geo:shape"
+   ],
+   "name": "osb:polygon",
+   "osb_index": "osm*",
+   "params": {},
+   "source": "osb:geoshape/operations/default.json",
+   "type": "search"
+  },
+  {
+   "body": {
+    "query": {
+     "geo_shape": {
+      "shape": {
+       "shape": {
+        "coordinates": [
+         [
+          -0.1,
+          61.0
+         ],
+         [
+          15.0,
+          48.0
+         ]
+        ],
+        "type": "envelope"
+       }
+      }
+     }
+    }
+   },
+   "families": [
+    "geo:shape"
+   ],
+   "name": "osb:bbox",
+   "osb_index": "osm*",
+   "params": {},
+   "source": "osb:geoshape/operations/default.json",
+   "type": "search"
+  }
+ ],
+ "osb_import": {
+  "body_edits": {},
+  "ingest_ops": [
+   {
+    "bulk-size": 100,
+    "corpora": "linestrings",
+    "ingest-percentage": 100,
+    "name": "index-append-linestrings",
+    "operation-type": "bulk"
+   },
+   {
+    "bulk-size": 100,
+    "corpora": "multilinestrings",
+    "ingest-percentage": 100,
+    "name": "index-append-multilinestrings",
+    "operation-type": "bulk"
+   },
+   {
+    "bulk-size": 100,
+    "corpora": "polygons",
+    "ingest-percentage": 100,
+    "name": "index-append-polygons",
+    "operation-type": "bulk"
+   }
+  ],
+  "measured": [
+   "osb:polygon",
+   "osb:bbox"
+  ],
+  "not_measured": [],
+  "ops_files": [
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {},
+  "workload_dir": "geoshape",
+  "workload_py_sha256": null
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "geoshape",
+  "corpus_base_urls": {
+   "linestrings": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/geoshape",
+   "multilinestrings": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/geoshape",
+   "polygons": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/geoshape"
+  },
+  "date_fields": [],
+  "families_not_applicable": {
+   "agg:cardinality": "the index has only one geo_shape field and no other field role",
+   "agg:composite": "the index has only one geo_shape field and no other field role",
+   "agg:date_histogram": "the index has only one geo_shape field and no other field role",
+   "agg:range": "the index has only one geo_shape field and no other field role",
+   "agg:significant_terms": "the index has only one geo_shape field and no other field role",
+   "agg:terms": "the index has only one geo_shape field and no other field role",
+   "bkd:range_date": "the index has only one geo_shape field and no other field role",
+   "bkd:range_numeric": "the index has only one geo_shape field and no other field role",
+   "bool:filter": "the index has only one geo_shape field and no other field role",
+   "bool:must": "the index has only one geo_shape field and no other field role",
+   "bool:must_not": "the index has only one geo_shape field and no other field role",
+   "bool:should": "the index has only one geo_shape field and no other field role",
+   "keyword:term": "the index has only one geo_shape field and no other field role",
+   "keyword:terms": "the index has only one geo_shape field and no other field role",
+   "sort:date_asc": "the index has only one geo_shape field and no other field role",
+   "sort:date_desc": "the index has only one geo_shape field and no other field role",
+   "sort:keyword": "the index has only one geo_shape field and no other field role",
+   "sort:numeric_asc": "the index has only one geo_shape field and no other field role",
+   "sort:numeric_desc": "the index has only one geo_shape field and no other field role",
+   "sort:search_after": "the index has only one geo_shape field and no other field role",
+   "text:match": "the index has only one geo_shape field and no other field role",
+   "text:multi_match": "the index has only one geo_shape field and no other field role",
+   "text:phrase": "the index has only one geo_shape field and no other field role",
+   "text:query_string": "the index has only one geo_shape field and no other field role"
+  },
+  "geo_fields": [
+   {
+    "field": "shape",
+    "type": "geo_shape"
+   }
+  ],
+  "indices": [
+   {
+    "document_count": 20532036,
+    "name": "osmlinestrings",
+    "workload_default_shards": 1
+   },
+   {
+    "document_count": 532036,
+    "name": "osmmultilinestrings",
+    "workload_default_shards": 1
+   },
+   {
+    "document_count": 39459211,
+    "name": "osmpolygons",
+    "workload_default_shards": 1
+   }
+  ],
+  "keyword_fields": [],
+  "multi_index_note": "the workload's ops query osm*: the arm target is the comma-joined members (indices_ext.py)",
+  "nested": [],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [],
+  "osb": {
+   "ops_files": [
+    "operations/*.json"
+   ],
+   "params": {},
+   "workload": "geoshape"
+  },
+  "osb_import": "ext",
+  "percolate": false,
+  "reference_op": "gen:geo_bbox_shape_1pct",
+  "single_shard": {
+   "index": "osmpolygons",
+   "note": "a single-shard index is one index: osmpolygons is the only candidate; build it when its measured force-merged store is >= 30 GB",
+   "rule": "conditional"
+  },
+  "split_bkd": {
+   "applicable": false,
+   "reason": "no date field (shape is a geo_shape: 7-D triangle points)"
+  },
+  "text_fields": []
+ },
+ "reference_op": "gen:geo_bbox_shape_1pct",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll",
+  "geo:bbox",
+  "geo:distance",
+  "geo:polygon",
+  "geo:shape",
+  "geo:agg"
+ ],
+ "values": null
+}

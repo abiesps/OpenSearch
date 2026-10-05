@@ -1,0 +1,135 @@
+{
+ "corpus": "so",
+ "families": [],
+ "families_not_applicable": {
+  "bkd:range_numeric": "no numeric field in the so mapping",
+  "sort:numeric_asc": "no numeric field in the so mapping",
+  "sort:numeric_desc": "no numeric field in the so mapping"
+ },
+ "missing_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll"
+ ],
+ "ops": [],
+ "osb_import": {
+  "body_edits": {},
+  "ingest_ops": [
+   {
+    "bulk-size": 5000,
+    "ingest-percentage": 100,
+    "name": "index-append",
+    "operation-type": "bulk"
+   }
+  ],
+  "measured": [],
+  "not_measured": [],
+  "ops_files": [
+   "operations/default.json"
+  ],
+  "param_source_instances": 5,
+  "param_source_seed": 4,
+  "param_sources": {},
+  "workload_dir": "so",
+  "workload_py_sha256": null
+ },
+ "osb_workloads_commit": "29dd7e1f681df035c87a5fba0e31d0cc0ce46a4f",
+ "profile": {
+  "corpus": "so",
+  "date_fields": [],
+  "families_not_applicable": {
+   "bkd:range_numeric": "no numeric field in the so mapping",
+   "sort:numeric_asc": "no numeric field in the so mapping",
+   "sort:numeric_desc": "no numeric field in the so mapping"
+  },
+  "geo_fields": [],
+  "indices": [
+   {
+    "document_count": 36062278,
+    "name": "so",
+    "workload_default_shards": 5
+   }
+  ],
+  "keyword_fields": [
+   "tags",
+   "type",
+   "user"
+  ],
+  "nested": [],
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "numeric_fields": [],
+  "osb": {
+   "ops_files": [
+    "operations/*.json"
+   ],
+   "params": {},
+   "workload": "so"
+  },
+  "osb_import": "ext",
+  "percolate": false,
+  "reference_op": "gen:range_creationDate_1d",
+  "single_shard": {
+   "note": "build when the measured force-merged store of the full corpus is >= 30 GB; else record not eligible with the size; never pad or duplicate data",
+   "rule": "conditional"
+  },
+  "split_bkd": {
+   "applicable": true,
+   "fields": [
+    "creationDate"
+   ]
+  },
+  "text_fields": [
+   "title",
+   "body"
+  ],
+  "time_field": "creationDate"
+ },
+ "reference_op": "gen:range_creationDate_1d",
+ "required_families": [
+  "keyword:term",
+  "keyword:terms",
+  "text:match",
+  "text:phrase",
+  "text:query_string",
+  "text:multi_match",
+  "bool:must",
+  "bool:should",
+  "bool:filter",
+  "bool:must_not",
+  "bkd:range_date",
+  "bkd:range_numeric",
+  "sort:date_asc",
+  "sort:date_desc",
+  "sort:numeric_asc",
+  "sort:numeric_desc",
+  "sort:keyword",
+  "sort:search_after",
+  "agg:date_histogram",
+  "agg:terms",
+  "agg:composite",
+  "agg:range",
+  "agg:cardinality",
+  "agg:significant_terms",
+  "scroll"
+ ],
+ "values": null
+}

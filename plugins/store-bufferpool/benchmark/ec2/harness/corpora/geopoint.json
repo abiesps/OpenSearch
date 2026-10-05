@@ -1,0 +1,69 @@
+{
+  "corpus": "geopoint",
+  "osb_import": "ext",
+  "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
+  "date_fields": [],
+  "keyword_fields": [],
+  "numeric_fields": [],
+  "text_fields": [],
+  "geo_fields": [
+    {
+      "field": "location",
+      "type": "geo_point"
+    }
+  ],
+  "nested": [],
+  "percolate": false,
+  "osb": {
+    "workload": "geopoint",
+    "ops_files": [
+      "operations/*.json"
+    ],
+    "params": {}
+  },
+  "families_not_applicable": {
+    "keyword:term": "the index has only one geo_point field and no other field role",
+    "keyword:terms": "the index has only one geo_point field and no other field role",
+    "text:match": "the index has only one geo_point field and no other field role",
+    "text:phrase": "the index has only one geo_point field and no other field role",
+    "text:query_string": "the index has only one geo_point field and no other field role",
+    "text:multi_match": "the index has only one geo_point field and no other field role",
+    "bool:must": "the index has only one geo_point field and no other field role",
+    "bool:should": "the index has only one geo_point field and no other field role",
+    "bool:filter": "the index has only one geo_point field and no other field role",
+    "bool:must_not": "the index has only one geo_point field and no other field role",
+    "bkd:range_date": "the index has only one geo_point field and no other field role",
+    "bkd:range_numeric": "the index has only one geo_point field and no other field role",
+    "sort:date_asc": "the index has only one geo_point field and no other field role",
+    "sort:date_desc": "the index has only one geo_point field and no other field role",
+    "sort:numeric_asc": "the index has only one geo_point field and no other field role",
+    "sort:numeric_desc": "the index has only one geo_point field and no other field role",
+    "sort:keyword": "the index has only one geo_point field and no other field role",
+    "sort:search_after": "the index has only one geo_point field and no other field role",
+    "agg:date_histogram": "the index has only one geo_point field and no other field role",
+    "agg:terms": "the index has only one geo_point field and no other field role",
+    "agg:composite": "the index has only one geo_point field and no other field role",
+    "agg:range": "the index has only one geo_point field and no other field role",
+    "agg:cardinality": "the index has only one geo_point field and no other field role",
+    "agg:significant_terms": "the index has only one geo_point field and no other field role"
+  },
+  "reference_op": "gen:geo_bbox_location_1pct",
+  "indices": [
+    {
+      "name": "osmgeopoints",
+      "document_count": 60844404,
+      "workload_default_shards": 5
+    }
+  ],
+  "corpus_base_urls": {
+    "geopoint": "https://dbyiw3u3rf9yr.cloudfront.net/corpora/geopoint"
+  },
+  "split_bkd": {
+    "applicable": false,
+    "reason": "no date field (location is a 2-D geo_point)"
+  },
+  "single_shard": {
+    "rule": "no",
+    "note": "2.4 GB raw; record the measured store size"
+  }
+}
