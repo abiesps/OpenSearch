@@ -55,6 +55,7 @@ from common import HttpError, JsonClient, JsonlWriter, wait_until  # noqa: E402
 
 SCHEMA = 1
 FLOAT_DIGITS = 12
+DROP_ROUNDS = 5  # agent /cache/drop?until_empty: at most this many pageout + sync + drop rounds per cold clear
 
 
 # ---------------------------------------------------------------- query execution and canonical results
@@ -170,6 +171,9 @@ class Node:
         self.url = url
         self.os = JsonClient(url, timeout=timeout)
         self.agent = JsonClient(agent_url, timeout=900.0, headers={"X-Coldpath-Token": token}) if agent_url else None
+        if residency_tolerance != 0:
+            # common-rules "Agent pageout bug": a cold iteration counts only with 0 resident index pages
+            raise SystemExit(f"--residency-tolerance {residency_tolerance}: only 0 is allowed (cold = no index page resident)")
         self.residency_tolerance = residency_tolerance
 
     def up(self):
@@ -494,15 +498,27 @@ class Iteration:
         if bp:
             n.os.request("POST", "/_bufferpool/cache/_clear")
         n.os.request("POST", "/_cache/clear?query=true&fielddata=true&request=true")
+        checked = False
         if n.agent:
-            d = n.agent.request("POST", f"/cache/drop?pageout=1&{self.q}")
+            # until_empty: pageout + sync + drop_caches repeated until mincore finds no resident page of the arm's
+            # index files (one MADV_PAGEOUT pass can leave a few pages; common-rules "Agent pageout bug" follow-up)
+            d = n.agent.request("POST", f"/cache/drop?pageout=1&until_empty={DROP_ROUNDS}&{self.q}&uuids="
+                                + ",".join(self.uuids))
             out["nfs"] = d.get("nfs")
             out["drop"] = {k: d[k] for k in ("pageout_ms", "sync_ms", "drop_ms")}
+            out["drop_rounds"] = d.get("rounds")
             out["pageout"] = d.get("pageout")
-            out["cached_after_drop"] = d["meminfo_after"]["Cached"]
+            if "resident_bytes" in d:
+                out["resident_bytes"] = d["resident_bytes"]
+                out["index_bytes"] = d["bytes"]
+                if d["resident_bytes"] > n.residency_tolerance:
+                    out["top_resident"] = (d.get("round_detail") or [{}])[-1].get("top_resident")
+                checked = True
+            else:  # an agent without until_empty: one drop, then the residency check below
+                out["cached_after_drop"] = d["meminfo_after"]["Cached"]
         if bp:
             out["bp_cached_blocks"] = n.bp_stats()["cached_blocks"]
-        if n.agent and self.residency_every and self.count % self.residency_every == 0:
+        if not checked and n.agent and self.residency_every and self.count % self.residency_every == 0:
             r = n.agent.request("GET", f"/cache/residency?{self.q}&uuids=" + ",".join(self.uuids))
             out["resident_bytes"] = r["resident_bytes"]
             out["index_bytes"] = r["bytes"]
@@ -988,7 +1004,8 @@ def add_common(p):
     p.add_argument("--url", default="http://localhost:9200")
     p.add_argument("--agent", help="data-node agent URL, e.g. http://10.0.1.5:9700")
     p.add_argument("--token-file")
-    p.add_argument("--residency-tolerance", type=int, default=1 << 20, help="bytes of index files allowed resident after a clear")
+    p.add_argument("--residency-tolerance", type=int, default=0, help="bytes of index files allowed resident after a clear "
+                   "(only 0 is accepted: a cold iteration needs every index page evicted)")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
     p.add_argument("--bp-block-size", type=int, default=runguards.IO_DEFAULTS["block_size"],
                    help="bufferpool arms: required cache block size in bytes (from /_bufferpool/stats; else refused)")

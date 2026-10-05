@@ -64,6 +64,7 @@ class Mock:
         self.disk_reads = 0
         self.pid = 100
         self.broken_clear = False
+        self.until_empty_drops = 0
         self.rng = random.Random(3)
         # what /_bufferpool/stats reports as the node's IO configuration
         self.bp_io = {"block_size": 8192, "random_read_size": 32768, "sequential_read_size": 131072}
@@ -298,8 +299,14 @@ def make_agent_handler(m):
                 if u.path == "/cache/drop":
                     if not m.broken_clear:
                         m.page_cache.clear()
-                    return self.send(200, {"pageout_ms": 0.1, "sync_ms": 0.1, "drop_ms": 0.1, "pageout": {"mappings": 0},
-                                           "meminfo_before": {"Cached": 1}, "meminfo_after": {"Cached": 0}})
+                    out = {"pageout_ms": 0.1, "sync_ms": 0.1, "drop_ms": 0.1, "pageout": {"mappings": 0},
+                           "meminfo_before": {"Cached": 1}, "meminfo_after": {"Cached": 0}}
+                    if "until_empty" in q:  # the agent's drop_until_empty: residency after the rounds
+                        m.until_empty_drops += 1
+                        res = 4096 * len(m.page_cache)
+                        out.update(rounds=1 if res == 0 else int(q["until_empty"]), resident_bytes=res, files=4,
+                                   bytes=1 << 30, round_detail=[{"resident_bytes": res, "top_resident": []}])
+                    return self.send(200, out)
                 if u.path == "/cache/residency":
                     res = 4096 * len(m.page_cache)
                     return self.send(200, {"files": 4, "bytes": 1 << 30, "resident_bytes": res, "by_ext": {},
@@ -516,6 +523,12 @@ def main():
         assert sum(r["type"] == "osb_summary" for r in recs) == 2 * 2 * 2
         run([PY, os.path.join(here, "analyze.py"), s4, "--base", "S0-EBS", "--boot", "500", "--ni-boot", "300",
              "--ni-ref", "S0-EBS", "--ni-target", "S2-X-EFS", "--warm-metric", "took_ms", "--out", os.path.join(tmp, "analysis-osb")])
+    assert m.until_empty_drops > 0, "cold clears use the agent's /cache/drop?until_empty"
+    # a residency tolerance above 0 is refused (common-rules "Agent pageout bug")
+    p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S1-EFS", "--rounds", "1",
+                        "--modes", "cold", "--out", os.path.join(tmp, "session-tol"), "--residency-tolerance", "4096"],
+                       capture_output=True, text=True)
+    assert p.returncode != 0 and "only 0 is allowed" in (p.stdout + p.stderr), (p.stdout[-1000:], p.stderr[-1000:])
     # a broken clear must be caught
     m.broken_clear = True
     s3 = os.path.join(tmp, "session-broken")
