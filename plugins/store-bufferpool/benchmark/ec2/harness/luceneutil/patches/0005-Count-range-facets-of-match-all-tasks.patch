@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Mon, 5 Oct 2026 03:31:57 -0700
+Subject: [PATCH] Count range facets of match-all tasks
+
+luceneutil at the pin cannot run the four Browse*RangeFacets tasks of wikimedium.10M.facets.tasks (*:* with a range facet) in the default POST_COLLECTION mode: it throws an AssertionError and the JVM fails. A range facet needs a FacetsCollector, so a MatchAllDocsQuery with a range facet task now collects through FacetsCollectorManager, the path every other query uses. Same patch for the stock and POC copies.
+---
+ src/main/perf/SearchTask.java | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/main/perf/SearchTask.java b/src/main/perf/SearchTask.java
+index f546de2a..1cdc1da0 100644
+--- a/src/main/perf/SearchTask.java
++++ b/src/main/perf/SearchTask.java
+@@ -271,7 +271,10 @@ final class SearchTask extends Task {
+             }
+           }
+           if (postCollectionFacetTasks.isEmpty() == false) {
+-            if (q instanceof MatchAllDocsQuery) {
++            // coldpath harness: a range facet needs a FacetsCollector (there is no all-docs range count path), so a
++            // MatchAllDocsQuery with a range facet task collects through FacetsCollectorManager like any other query
++            boolean anyRange = postCollectionFacetTasks.stream().anyMatch(t -> t.type().equals("range"));
++            if (q instanceof MatchAllDocsQuery && anyRange == false) {
+               for (TaskParser.TaskBuilder.FacetTask request : postCollectionFacetTasks) {
+                 switch (request.type()) {
+                   case "taxonomy" -> {
+@@ -290,8 +293,7 @@ final class SearchTask extends Task {
+                     SortedSetDocValuesFacetCounts facets = new SortedSetDocValuesFacetCounts(ssdvState);
+                     facetResults.add(facets.getTopChildren(10, dim));
+                   }
+-                  case "range" -> throw new AssertionError(
+-                      "range facets with MatchAllDocsQuery in POST_COLLECTION not yet supported");
++                  case "range" -> throw new AssertionError("unreachable: range facets collect through FacetsCollectorManager");
+                   default -> throw new AssertionError("unknown facet type: " + request.type());
+                 }
+               }
+-- 
+2.54.0 (Apple Git-157)
+
