@@ -33,6 +33,13 @@ Endpoints (JSON in and out):
                                      the caller checks them (segformat_check.py), the agent only reads
   GET  /snapshot                     JVM /proc/<pid>/io, /proc/diskstats of the data device (EBS) or NFS mountstats of
                                      the data mount (EFS), and a monotonic timestamp
+  GET  /efs/connections             backend TCP connections of the data path's EFS mount: efs-proxy's established
+                                     connections to the mount target port 2049 (count, proxy pid, mount port); also in
+                                     every /snapshot as efs_connections (coldpath_efsconn.py)
+  POST /efs/precondition?target=5&timeout_s=60  reads a scratch file on the same mount with O_DIRECT 1 MiB reads
+                                     (no page-cache footprint, no index file) until the count is >= target and stable
+                                     for 3 s (efs-proxy scales 1 -> 5 after 3 s at >= 300 MiB/s); config key
+                                     efs_precondition_file overrides <mountpoint>/coldpath-efs-precondition.bin
   GET  /host                         kernel, CPU, memory, data mount, device queue settings, EBS volume id
   POST /readahead?kb=N|default       sets read_ahead_kb of the data path's backing device (/sys/class/bdi/<maj:min>,
                                      the NFS mount's bdi on EFS) so the kernel does not enlarge reads; "default"
@@ -77,8 +84,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coldpath_readahead  # noqa: E402 - installed next to this file
 import coldpath_readattr  # noqa: E402 - installed next to this file
+import coldpath_efsconn  # noqa: E402 - installed next to this file
 
-VERSION = "1"
+VERSION = "2"
 PAGE = os.sysconf("SC_PAGE_SIZE")
 MADV_PAGEOUT = 21
 SYS_PIDFD_OPEN = 434  # same number on x86_64 and aarch64 (generic syscall table)
@@ -566,7 +574,24 @@ class Agent:
     def snapshot(self, st):
         pid = self.jvm_pid()
         return {"t_mono": time.monotonic(), "pid": pid, "proc_io": self.proc_io(pid), "disk": self.diskstats(st["device"]),
-                "nfs": self.nfsstats(st["mount"]["mountpoint"]) if st["nfs"] else None}
+                "nfs": self.nfsstats(st["mount"]["mountpoint"]) if st["nfs"] else None,
+                "efs_connections": self.efs_connections(st)}
+
+    @staticmethod
+    def efs_connections(st):
+        """Backend TCP connections of the data path's NFS (EFS) mount (coldpath_efsconn.py); None on a block device."""
+        if not st["nfs"]:
+            return None
+        try:
+            return coldpath_efsconn.backend_connections(st["mount"])
+        except OSError as e:  # recorded as unknown, never as a count
+            return {"count": None, "error": str(e)}
+
+    def efs_precondition(self, st, target, timeout_s):
+        if not st["nfs"]:
+            return {"ok": True, "count": None, "skipped": True, "reason": "not an NFS mount"}
+        scratch = self.cfg.get("efs_precondition_file")
+        return coldpath_efsconn.precondition(st["mount"], target, timeout_s=timeout_s, scratch=scratch)
 
     def host(self, st):
         def read(p):
@@ -684,6 +709,11 @@ def make_handler(agent, token):
                     out = agent.formats(set(x for x in q.get("uuids", "").split(",") if x), st)
                 elif route == ("GET", "/snapshot"):
                     out = agent.snapshot(st)
+                elif route == ("GET", "/efs/connections"):
+                    out = {"storage": st, "efs_connections": agent.efs_connections(st)}
+                elif route == ("POST", "/efs/precondition"):
+                    with agent.lock:
+                        out = agent.efs_precondition(st, int(q.get("target", "5")), float(q.get("timeout_s", "60")))
                 elif route == ("GET", "/host"):
                     out = agent.host(st)
                 elif route == ("POST", "/readahead"):

@@ -5,7 +5,7 @@
   "python": "load generator: python3 >= 3.8 stdlib (jinja2 only for queries.py OSB rendering, installed with opensearch-benchmark); data node agent: python3 stdlib, root",
   "selftest": "python3 harness/selftest.py [--osb-bin opensearch-benchmark]; python3 harness/selftest_segformat.py",
   "data_node_agent": {
-    "install": "copy harness/agent/coldpath_agent.py, harness/agent/coldpath_readahead.py, harness/agent/coldpath_readattr.py and harness/agent/coldpath_segformat.py to /opt/coldpath/; write /etc/coldpath-agent/agent.json from harness/agent/agent.example.json (one arm per binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS with data_path and start/stop argv); umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token; install harness/agent/coldpath-agent.service; systemctl enable --now coldpath-agent",
+    "install": "copy harness/agent/coldpath_agent.py, harness/agent/coldpath_readahead.py, harness/agent/coldpath_readattr.py, harness/agent/coldpath_segformat.py and harness/agent/coldpath_efsconn.py to /opt/coldpath/; write /etc/coldpath-agent/agent.json from harness/agent/agent.example.json (one arm per binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS with data_path and start/stop argv); umask 077; head -c 32 /dev/urandom | base64 > /etc/coldpath-agent/token; install harness/agent/coldpath-agent.service; systemctl enable --now coldpath-agent",
     "port": 9700,
     "auth": "header X-Coldpath-Token; allow the port only from the load generator security group",
     "endpoints": [
