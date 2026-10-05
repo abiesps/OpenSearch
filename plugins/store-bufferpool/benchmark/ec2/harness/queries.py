@@ -213,7 +213,7 @@ def time_anchor(client, index, tf, tmin, tmax):
     for cmp, order in (("gte", "asc"), ("lte", "desc")):
         r = client.request("POST", f"/{index}/_search?request_cache=false",
                            {"size": 1, "_source": False, "query": {"range": {tf: {cmp: int(mid), "format": "epoch_millis"}}},
-                            "sort": [{tf: {"order": order, "format": "epoch_millis"}}]})
+                            "sort": [{tf: {"order": order}}]})  # a date sort value is epoch millis
         hits = r["hits"]["hits"]
         if hits:
             return {"anchor_ms": float(hits[0]["sort"][0]), "anchor_rule": ANCHOR_RULE}
