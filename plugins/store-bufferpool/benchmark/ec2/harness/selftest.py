@@ -371,6 +371,10 @@ def main():
     a = ap.parse_args()
     tmp = a.keep or tempfile.mkdtemp(prefix="coldbench-selftest-")
     os.makedirs(tmp, exist_ok=True)
+    # discovery keeps only analyzer tokens as term candidates (http_logs: "anime" inside "/anime_1.gif" is no term)
+    sys.path.insert(0, here)
+    import queries
+    assert queries.indexed_ranked({"anime": 3, "get": 5, "gif": 4}, {"get", "gif", "anime_1.gif"}) == ["get", "gif"]
     m = Mock()
     m.strict_store = True
     m.indices["big5_split"]["nodes"] = {"POC-B-EFS"}  # the split index has its own data path (format isolation)

@@ -171,9 +171,25 @@ def phrase_bigrams(client, index, field, text):
     "mar cron" from "Mar 22 ... cron"); such a phrase matches nothing, and on a match_only_text field the phrase query
     then confirms every candidate from _source (161 s on big5 100 GB).
     """
+    return analyze(client, index, field, text)[0]
+
+
+def analyze(client, index, field, text):
+    """(phrase bigrams, indexed tokens) of one document by the field's own analyzer (_analyze)."""
     an = client.request("POST", f"/{index}/_analyze", {"field": field, "text": str(text or "")})
     pos = {tk["position"]: tk["token"] for tk in an.get("tokens", [])}
-    return {(pos[p], pos[p + 1]) for p in pos if p + 1 in pos and TOKEN.fullmatch(pos[p]) and TOKEN.fullmatch(pos[p + 1])}
+    bigrams = {(pos[p], pos[p + 1]) for p in pos if p + 1 in pos and TOKEN.fullmatch(pos[p]) and TOKEN.fullmatch(pos[p + 1])}
+    return bigrams, set(pos.values())
+
+
+def indexed_ranked(docfreq, indexed):
+    """
+    Candidate terms by document frequency, keeping only tokens the analyzer indexes. A TOKEN match inside a longer
+    token is not a term of the field (http_logs: "anime" from "/anime_1.gif", which the standard tokenizer keeps
+    as one token) and its match query has 0 hits; where every TOKEN match is a token (whitespace text), nothing is
+    dropped and the ranking is the same as before.
+    """
+    return [w for w, _ in sorted(docfreq.items(), key=lambda kv: (-kv[1], kv[0])) if w in indexed]
 
 
 def discover(client, index, profile):
@@ -211,7 +227,7 @@ def discover(client, index, profile):
         r = client.request("POST", f"/{index}/_search?request_cache=false",
                            {"size": 200, "_source": [f], "query": {"function_score": {"query": {"exists": {"field": f}},
                             "random_score": {"seed": 42, "field": "_seq_no"}}}})
-        docfreq, bigrams = collections.Counter(), collections.Counter()
+        docfreq, bigrams, indexed = collections.Counter(), collections.Counter(), set()
         for h in r["hits"]["hits"]:
             t = _get(h.get("_source", {}), f)
             if isinstance(t, list):
@@ -219,8 +235,10 @@ def discover(client, index, profile):
             toks = TOKEN.findall(str(t or "").lower())
             docfreq.update(set(toks))
             # _analyze needs one concrete index: the hit's own (http_logs discovers over logs-*)
-            bigrams.update(phrase_bigrams(client, h.get("_index") or index, f, t))
-        ranked = [w for w, _ in sorted(docfreq.items(), key=lambda kv: (-kv[1], kv[0]))]
+            bg, tk = analyze(client, h.get("_index") or index, f, t)
+            bigrams.update(bg)
+            indexed |= tk
+        ranked = indexed_ranked(docfreq, indexed)
         if len(ranked) < 4:
             continue
         bg = sorted(bigrams.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]

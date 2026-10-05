@@ -163,7 +163,7 @@ def _text_vals(client, index, fields):
         r = client.request("POST", f"/{index}/_search?request_cache=false",
                            {"size": 200, "_source": [f], "query": {"function_score": {"query": {"exists": {"field": f}},
                             "random_score": {"seed": 42, "field": "_seq_no"}}}})
-        docfreq, bigrams = collections.Counter(), collections.Counter()
+        docfreq, bigrams, indexed = collections.Counter(), collections.Counter(), set()
         for h in r["hits"]["hits"]:
             t = queries._get(h.get("_source", {}), f)
             if isinstance(t, list):
@@ -171,8 +171,10 @@ def _text_vals(client, index, fields):
             toks = queries.TOKEN.findall(str(t or "").lower())
             docfreq.update(set(toks))
             # _analyze needs one concrete index: the hit's own (http_logs discovers over logs-*)
-            bigrams.update(queries.phrase_bigrams(client, h.get("_index") or index, f, t))
-        ranked = [w for w, _ in sorted(docfreq.items(), key=lambda kv: (-kv[1], kv[0]))]
+            bg, tk = queries.analyze(client, h.get("_index") or index, f, t)
+            bigrams.update(bg)
+            indexed |= tk
+        ranked = queries.indexed_ranked(docfreq, indexed)
         if len(ranked) < 4:
             continue
         bg = sorted(bigrams.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
