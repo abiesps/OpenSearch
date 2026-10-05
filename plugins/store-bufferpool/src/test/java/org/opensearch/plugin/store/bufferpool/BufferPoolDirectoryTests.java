@@ -8,6 +8,16 @@
 
 package org.opensearch.plugin.store.bufferpool;
 
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.StoredField;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.NoMergePolicy;
+import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.store.DataAccessHint;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSLockFactory;
@@ -223,10 +233,63 @@ public class BufferPoolDirectoryTests extends OpenSearchBaseDirectoryTestCase {
                 sequentialInput.readBytes(b, 0, b.length);
                 assertArrayEquals(data, a);
                 assertArrayEquals(data, b);
-                assertEquals(stats.bytesRead.sum(), stats.bytesLoaded.sum());
-                assertEquals(cache.sizeInBytes(), stats.bytesRead.sum());
+                // windows that overlap cached blocks are read whole: their cached blocks' bytes are dropped, never re-inserted
+                assertEquals(stats.bytesRead.sum(), stats.bytesLoaded.sum() + stats.bytesOverread.sum());
+                assertEquals(cache.sizeInBytes(), stats.bytesLoaded.sum());
                 assertEquals(data.length, cache.sizeInBytes());
             }
+        }
+    }
+
+    public void testCompoundFileSubFilesKeepTheirReadSizes() throws IOException {
+        final int block = 1024;
+        final int random = 4 * block;
+        final int sequential = 16 * block;
+        // with a small cache, blocks of one sub-file are evicted while the other sub-file reads windows of the other size
+        final long maxBytes = random().nextBoolean() ? 1L << 26 : 64L * block;
+        final BlockCache cache = new BlockCache(maxBytes, block, random, sequential, Runnable::run);
+        final int docs = 5000;
+        final String[] values = new String[docs];
+        final long[] numbers = new long[docs];
+        try (Directory dir = new BufferPoolDirectory(createTempDir(), FSLockFactory.getDefault(), cache)) {
+            final IndexWriterConfig config = new IndexWriterConfig().setUseCompoundFile(true).setMergePolicy(NoMergePolicy.INSTANCE);
+            try (IndexWriter writer = new IndexWriter(dir, config)) {
+                for (int i = 0; i < docs; i++) {
+                    values[i] = TestUtil.randomSimpleString(random(), 20, 60);
+                    numbers[i] = random().nextLong();
+                    final Document doc = new Document();
+                    doc.add(new StoredField("s", values[i]));
+                    doc.add(new NumericDocValuesField("n", numbers[i]));
+                    writer.addDocument(doc);
+                }
+                writer.commit();
+            }
+            assertTrue(Arrays.toString(dir.listAll()), Arrays.stream(dir.listAll()).anyMatch(n -> n.endsWith(".cfs")));
+            cache.clear();
+            cache.resetStats();
+            try (DirectoryReader reader = DirectoryReader.open(dir)) {
+                assertEquals(1, reader.leaves().size());
+                final LeafReader leaf = reader.leaves().get(0).reader();
+                final StoredFields stored = leaf.storedFields();
+                final NumericDocValues dv = leaf.getNumericDocValues("n");
+                // stored fields (random access) and doc values (not) interleaved in one compound file
+                for (int d = 0; d < docs; d++) {
+                    assertEquals(d, dv.nextDoc());
+                    assertEquals(numbers[d], dv.longValue());
+                    if (random().nextInt(20) == 0) {
+                        final int doc = random().nextInt(docs);
+                        assertEquals(values[doc], stored.document(doc).get("s"));
+                    }
+                }
+            }
+            final BlockCache.FileStats cfs = cache.statsFor("_0.cfs");
+            assertTrue("random windows of stored fields: " + cfs.readsBySize(), cfs.readsBySize().containsKey((long) random));
+            assertTrue("sequential windows of doc values: " + cfs.readsBySize(), cfs.readsBySize().containsKey((long) sequential));
+            for (long size : cfs.readsBySize().keySet()) {
+                assertTrue("read of size class " + size, size <= sequential);
+            }
+            assertEquals(cfs.windowBlocks.sum(), cfs.blocksInserted() + cfs.windowBlocksCached.sum() + cfs.windowBlocksInFlight.sum());
+            assertEquals(cfs.bytesRead.sum(), cfs.bytesLoaded.sum() + cfs.bytesOverread.sum());
         }
     }
 }

@@ -13,15 +13,12 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.opensearch.common.io.Channels;
 import org.opensearch.core.concurrency.OpenSearchRejectedExecutionException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -50,15 +47,22 @@ import java.util.stream.Collectors;
  * <p>Storage is read in IO windows that can be larger than a block. A miss reads the aligned window of the reader's read
  * size that holds the missed block ({@link #randomReadSize()} for inputs opened for random access, else
  * {@link #sequentialReadSize()}), and a prefetch reads the aligned windows of {@link #sequentialReadSize()} that its range
- * touches. Every block of a window that is not cached and not already being read is inserted; cached blocks are never
- * read again or replaced, so a window with cached blocks is read as one read per run of missing blocks. Windows are
- * clipped at the end of the file. With both read sizes equal to the block size, every read is one block.
+ * touches. A window is always one storage read of the whole window, clipped at the end of the file, even if some of its
+ * blocks are cached or being read by another thread: those blocks are neither replaced nor waited for, their bytes are
+ * dropped and counted ({@link FileStats#bytesOverread}). Every other block of the window is inserted. With both read sizes
+ * equal to the block size, every read is one block. Each read goes through {@link StorageFile#read}, which announces the
+ * window to the kernel when read hints are on, so the window is also one storage IO (see {@link NativeReadHints}).
  *
  * <p>Concurrent misses are de-duplicated twice: per window (one thread reads a window of a given size, the others wait
- * for it) and per block (a block that a read of another size is loading is waited for, never read a second time).
+ * for it) and per block (a block that a read of another size is loading is waited for, never inserted a second time).
  *
- * <p>For experiments, the cache counts block requests, reads and inserted blocks per file type (see {@link FileStats}) and
- * can add a fixed delay to every storage read to simulate remote storage such as EFS.
+ * <p>Memory: the cache weight counts the cached blocks only. Outside it, a multi-block read uses a direct read buffer of
+ * the largest read size, from a pool of idle buffers bounded to 32 MiB ({@link #SCRATCH_POOL_BYTES}; a read that finds the
+ * pool empty allocates one, so the transient amount grows with the number of concurrent window reads), and copies each
+ * inserted block into its own direct buffer. Size {@code -XX:MaxDirectMemorySize} for the cache plus these buffers.
+ *
+ * <p>For experiments, the cache counts block requests, reads, inserted and skipped blocks, and waits per file type (see
+ * {@link FileStats}) and can add a fixed delay to every storage read to simulate remote storage such as EFS.
  */
 final class BlockCache {
 
@@ -73,7 +77,7 @@ final class BlockCache {
     /** Size classes of {@link FileStats#readsBySize}: class {@code c} counts reads of {@code (2^(c-1), 2^c]} bytes. */
     static final int READ_SIZE_CLASSES = Integer.numberOfTrailingZeros(MAX_READ_SIZE) + 1;
     /** Upper bound of the bytes held by idle read buffers of multi-block reads. */
-    private static final long SCRATCH_POOL_BYTES = 32L << 20;
+    static final long SCRATCH_POOL_BYTES = 32L << 20;
 
     private final int blockSize;
     private final int blockSizePower;
@@ -93,6 +97,18 @@ final class BlockCache {
      */
     private final ArrayBlockingQueue<ByteBuffer> readBuffers;
     private final int maxReadSize;
+    private final NativeReadHints readHints;
+    /** Prefetch tasks submitted and not finished (queued or running). */
+    private final AtomicInteger pendingPrefetchTasks = new AtomicInteger();
+    /** Prefetch tasks dropped because the prefetch queue was full. */
+    private final LongAdder rejectedPrefetchTasks = new LongAdder();
+    /** Prefetch requests that spanned more than one window and had a missing block. */
+    private final LongAdder multiWindowPrefetches = new LongAdder();
+    /** Prefetch storage reads running now, and the most that ran at once since start or the last {@link #resetStats()}. */
+    private final AtomicInteger prefetchReadsInFlight = new AtomicInteger();
+    private final AtomicInteger maxPrefetchReadsInFlight = new AtomicInteger();
+    /** Whether each window of a prefetch is its own task, see {@link #setPrefetchTaskPerWindow(boolean)}. */
+    private volatile boolean prefetchTaskPerWindow;
     private volatile long simulatedLoadLatencyNanos;
     /** Non-null while a trace is being recorded, see {@link #startTrace(int)}. */
     private volatile Trace trace;
@@ -126,6 +142,20 @@ final class BlockCache {
      * @param prefetchExecutor   executor that loads prefetched blocks in the background
      */
     BlockCache(long maxBytes, int blockSize, int randomReadSize, int sequentialReadSize, Executor prefetchExecutor) {
+        this(maxBytes, blockSize, randomReadSize, sequentialReadSize, NativeReadHints.DISABLED, prefetchExecutor);
+    }
+
+    /**
+     * @param readHints        how files opened for this cache announce their reads to the kernel, see {@link #readHints()}
+     */
+    BlockCache(
+        long maxBytes,
+        int blockSize,
+        int randomReadSize,
+        int sequentialReadSize,
+        NativeReadHints readHints,
+        Executor prefetchExecutor
+    ) {
         validateBlockSize(blockSize);
         validateReadSize("random read size", randomReadSize, blockSize);
         validateReadSize("sequential read size", sequentialReadSize, blockSize);
@@ -135,6 +165,7 @@ final class BlockCache {
         this.randomReadSize = randomReadSize;
         this.sequentialReadSize = sequentialReadSize;
         this.maxReadSize = Math.max(randomReadSize, sequentialReadSize);
+        this.readHints = readHints;
         this.readBuffers = new ArrayBlockingQueue<>((int) Math.max(1, SCRATCH_POOL_BYTES / maxReadSize));
         this.cache = Caffeine.newBuilder()
             .maximumWeight(maxBytes)
@@ -207,6 +238,47 @@ final class BlockCache {
         return sequentialReadSize;
     }
 
+    /** Read hints of the files opened for this cache ({@link StorageFile#open(Path, NativeReadHints)}). */
+    NativeReadHints readHints() {
+        return readHints;
+    }
+
+    /**
+     * Whether each aligned window of a prefetch request is submitted as its own prefetch task, so the windows of one
+     * request are read concurrently (up to the prefetch thread count), instead of one task that reads them one after
+     * another. Tasks that do not fit in the prefetch queue are dropped and counted.
+     */
+    void setPrefetchTaskPerWindow(boolean taskPerWindow) {
+        this.prefetchTaskPerWindow = taskPerWindow;
+    }
+
+    boolean prefetchTaskPerWindow() {
+        return prefetchTaskPerWindow;
+    }
+
+    /**
+     * Prefetch tasks submitted and not finished, queued or running. Together with {@link #inFlightReads()} == 0 this means
+     * that no prefetch will insert blocks any more, until the next prefetch request.
+     */
+    int pendingPrefetchTasks() {
+        return pendingPrefetchTasks.get();
+    }
+
+    /** Prefetch tasks dropped because the prefetch queue was full, since start or the last {@link #resetStats()}. */
+    long rejectedPrefetchTasks() {
+        return rejectedPrefetchTasks.sum();
+    }
+
+    /** Prefetch requests that spanned more than one window and had a missing block. */
+    long multiWindowPrefetches() {
+        return multiWindowPrefetches.sum();
+    }
+
+    /** The most prefetch storage reads that ran at the same time, since start or the last {@link #resetStats()}. */
+    int maxPrefetchReadsInFlight() {
+        return maxPrefetchReadsInFlight.get();
+    }
+
     /**
      * Returns the block for {@code key}, reading the window of {@code readSize} bytes that holds it from {@code channel}
      * on a miss.
@@ -215,15 +287,15 @@ final class BlockCache {
      * @param readSize   the reader's read size, {@link #randomReadSize()} or {@link #sequentialReadSize()}
      * @param fileStats  counters of the file's type, from {@link #statsFor(String)}
      */
-    ByteBuffer getOrLoad(BlockKey key, FileChannel channel, long fileLength, int readSize, FileStats fileStats) throws IOException {
+    ByteBuffer getOrLoad(BlockKey key, StorageFile storage, long fileLength, int readSize, FileStats fileStats) throws IOException {
         fileStats.requests.increment();
         final Trace t = trace;
         if (t == null) {
-            return getOrLoadBlock(key, channel, fileLength, readSize, fileStats);
+            return getOrLoadBlock(key, storage, fileLength, readSize, fileStats);
         }
         // tracing only: record reads that blocked, on their own load or on a load already in flight (e.g. a prefetch)
         final long start = System.nanoTime();
-        final ByteBuffer block = getOrLoadBlock(key, channel, fileLength, readSize, fileStats);
+        final ByteBuffer block = getOrLoadBlock(key, storage, fileLength, readSize, fileStats);
         final long waited = System.nanoTime() - start;
         if (waited > TimeUnit.MICROSECONDS.toNanos(100)) {
             t.recordWait(key, waited);
@@ -232,7 +304,7 @@ final class BlockCache {
         return block;
     }
 
-    private ByteBuffer getOrLoadBlock(BlockKey key, FileChannel channel, long fileLength, int readSize, FileStats fileStats)
+    private ByteBuffer getOrLoadBlock(BlockKey key, StorageFile storage, long fileLength, int readSize, FileStats fileStats)
         throws IOException {
         assert readSize == randomReadSize || readSize == sequentialReadSize : "unknown read size " + readSize;
         final long windowStart = key.blockOffset() & -(long) readSize;
@@ -243,17 +315,19 @@ final class BlockCache {
             }
             final CompletableFuture<ByteBuffer> inFlight = loadingBlocks.get(key);
             if (inFlight != null) {
+                final long waitStart = System.nanoTime();
                 final ByteBuffer loaded = inFlight.join();
+                fileStats.recordWait(System.nanoTime() - waitStart);
                 if (loaded != null) {
                     return loaded;
                 }
-                // that read failed or skipped the block: look again, and read it here if it is still missing
+                // that read failed: look again, and read it here if it is still missing
                 continue;
             }
             final ByteBuffer loaded = loadWindow(
                 key.file(),
                 key.fileId(),
-                channel,
+                storage,
                 fileLength,
                 readSize,
                 windowStart,
@@ -285,67 +359,136 @@ final class BlockCache {
 
     /**
      * Loads the missing blocks among {@code blockCount} blocks that start at {@code firstBlockOffset}, asynchronously, in
-     * aligned windows of {@link #sequentialReadSize()} bytes (adjacent missing blocks of a window are read together, and
-     * the window's other missing blocks with them). Best effort: the request is dropped when the prefetch queue is full,
-     * and load failures are only logged.
+     * aligned windows of {@link #sequentialReadSize()} bytes: each window that holds a missing requested block is one read
+     * of the whole window. The windows are read by one prefetch task one after another, or by one task each (see
+     * {@link #setPrefetchTaskPerWindow(boolean)}). Best effort: a task is dropped when the prefetch queue is full, and load
+     * failures are only logged.
      */
     void prefetch(
         Path file,
         long fileId,
-        FileChannel channel,
+        StorageFile storage,
         long fileLength,
         long firstBlockOffset,
         long blockCount,
         FileStats fileStats
     ) {
         fileStats.prefetchRequests.add(blockCount);
-        boolean anyMissing = false;
-        for (long i = 0; i < blockCount && anyMissing == false; i++) {
-            final BlockKey key = new BlockKey(file, fileId, firstBlockOffset + (i << blockSizePower));
-            // containsKey does not count as an access, so a prefetch does not skew the eviction policy
-            anyMissing = cache.asMap().containsKey(key) == false && loadingBlocks.containsKey(key) == false;
-        }
-        if (anyMissing == false) {
+        final long lastBlockOffset = firstBlockOffset + ((blockCount - 1) << blockSizePower);
+        if (anyMissing(file, fileId, firstBlockOffset, lastBlockOffset) == false) {
             return;
         }
-        final long lastBlockOffset = firstBlockOffset + ((blockCount - 1) << blockSizePower);
         // tracing only: the prefetch runs on another thread, so remember which code asked for it
         final String[] requester = trace == null ? null : Trace.callers();
+        final long windowMask = -(long) sequentialReadSize;
+        final long firstWindow = firstBlockOffset & windowMask;
+        final boolean multiWindow = firstWindow + sequentialReadSize <= lastBlockOffset;
+        if (multiWindow) {
+            multiWindowPrefetches.increment();
+        }
+        if (prefetchTaskPerWindow && multiWindow) {
+            for (long window = firstWindow; window <= lastBlockOffset; window += sequentialReadSize) {
+                final long w = window;
+                final long first = Math.max(firstBlockOffset, w);
+                final long last = Math.min(lastBlockOffset, w + sequentialReadSize - blockSize);
+                if (anyMissing(file, fileId, first, last)) {
+                    submitPrefetch(file, () -> prefetchWindows(file, fileId, storage, fileLength, w, w, first, last, fileStats, requester));
+                }
+            }
+        } else {
+            submitPrefetch(
+                file,
+                () -> prefetchWindows(
+                    file,
+                    fileId,
+                    storage,
+                    fileLength,
+                    firstWindow,
+                    lastBlockOffset,
+                    firstBlockOffset,
+                    lastBlockOffset,
+                    fileStats,
+                    requester
+                )
+            );
+        }
+    }
+
+    /** Whether a block between {@code first} and {@code last} (block offsets, inclusive) is neither cached nor being read. */
+    private boolean anyMissing(Path file, long fileId, long first, long last) {
+        for (long offset = first; offset <= last; offset += blockSize) {
+            final BlockKey key = new BlockKey(file, fileId, offset);
+            // containsKey does not count as an access, so a prefetch does not skew the eviction policy
+            if (cache.asMap().containsKey(key) == false && loadingBlocks.containsKey(key) == false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void submitPrefetch(Path file, Runnable task) {
+        pendingPrefetchTasks.incrementAndGet();
         try {
             prefetchExecutor.execute(() -> {
-                final long windowMask = -(long) sequentialReadSize;
-                for (long window = firstBlockOffset & windowMask; window <= lastBlockOffset; window += sequentialReadSize) {
-                    try {
-                        loadWindow(
-                            file,
-                            fileId,
-                            channel,
-                            fileLength,
-                            sequentialReadSize,
-                            window,
-                            null,
-                            Math.max(firstBlockOffset, window),
-                            Math.min(lastBlockOffset, window + sequentialReadSize - blockSize),
-                            fileStats,
-                            requester
-                        );
-                    } catch (IOException | RuntimeException e) {
-                        // e.g. the input was closed before the prefetch ran; a later read loads the block on demand
-                        final long w = window;
-                        logger.debug(() -> "prefetch of [" + file + "] window at [" + w + "] failed", e);
-                        return;
-                    }
+                try {
+                    task.run();
+                } finally {
+                    pendingPrefetchTasks.decrementAndGet();
                 }
             });
         } catch (OpenSearchRejectedExecutionException e) {
-            logger.trace("prefetch queue is full, dropping prefetch of [{}] blocks of [{}]", blockCount, file);
+            pendingPrefetchTasks.decrementAndGet();
+            rejectedPrefetchTasks.increment();
+            logger.trace("prefetch queue is full, dropping a prefetch task of [{}]", file);
         }
     }
 
     /**
-     * Reads the blocks of one window that are neither cached nor being read, if one of the requested blocks is among them,
-     * and inserts them. Returns without reading if another thread is reading the same window (a demand read waits for it
-     * first). Never waits while it holds a claim, so concurrent window reads cannot deadlock.
+     * Reads the sequential windows that start at {@code fromWindow} up to the one that holds {@code toBlock}, each only if a
+     * requested block in it (between {@code requestedFirst} and {@code requestedLast}) is missing. Stops at the first failure.
+     */
+    private void prefetchWindows(
+        Path file,
+        long fileId,
+        StorageFile storage,
+        long fileLength,
+        long fromWindow,
+        long toBlock,
+        long requestedFirst,
+        long requestedLast,
+        FileStats fileStats,
+        String[] requester
+    ) {
+        for (long window = fromWindow; window <= toBlock; window += sequentialReadSize) {
+            try {
+                loadWindow(
+                    file,
+                    fileId,
+                    storage,
+                    fileLength,
+                    sequentialReadSize,
+                    window,
+                    null,
+                    Math.max(requestedFirst, window),
+                    Math.min(requestedLast, window + sequentialReadSize - blockSize),
+                    fileStats,
+                    requester
+                );
+            } catch (IOException | RuntimeException e) {
+                // e.g. the input was closed before the prefetch ran; a later read loads the block on demand
+                final long w = window;
+                logger.debug(() -> "prefetch of [" + file + "] window at [" + w + "] failed", e);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Reads one window with one storage read if one of the requested blocks in it is neither cached nor being read, and
+     * inserts every block of the window that is neither cached nor being read. The bytes of the other blocks are dropped:
+     * a cached block is never replaced, and a block that another read is loading is left to that read. Returns without
+     * reading if another thread is reading the same window (a demand read waits for it first). Never waits while it holds
+     * a claim, so concurrent window reads cannot deadlock.
      *
      * @param wanted         for a demand read, the block the reader needs; null for a prefetch
      * @param requestedFirst for a prefetch, offset of the first requested block in this window
@@ -356,7 +499,7 @@ final class BlockCache {
     private ByteBuffer loadWindow(
         Path file,
         long fileId,
-        FileChannel channel,
+        StorageFile storage,
         long fileLength,
         int readSize,
         long windowStart,
@@ -371,77 +514,52 @@ final class BlockCache {
         final CompletableFuture<Void> other = loadingWindows.putIfAbsent(windowKey, window);
         if (other != null) {
             if (wanted != null) {
+                final long waitStart = System.nanoTime();
                 other.join();
+                fileStats.recordWait(System.nanoTime() - waitStart);
             }
             return null;
         }
         final boolean prefetch = wanted == null;
         final long windowEnd = Math.min(windowStart + readSize, fileLength);
-        final List<Claim> claims = new ArrayList<>();
+        final int windowBlocks = Math.toIntExact((windowEnd - windowStart + blockSize - 1) >>> blockSizePower);
+        // claims[i] is this read's claim on block i of the window, or null if the block is cached or another read loads it
+        final Claim[] claims = new Claim[windowBlocks];
         try {
             boolean anyRequested = false;
-            for (long offset = windowStart; offset < windowEnd; offset += blockSize) {
+            int cachedBlocks = 0;
+            int inFlightBlocks = 0;
+            for (int i = 0; i < windowBlocks; i++) {
+                final long offset = windowStart + ((long) i << blockSizePower);
                 final boolean requested = prefetch ? offset >= requestedFirst && offset <= requestedLast : offset == wanted.blockOffset();
                 final BlockKey key = requested && prefetch == false ? wanted : new BlockKey(file, fileId, offset);
                 if (cache.asMap().containsKey(key)) {
+                    cachedBlocks++;
                     continue;
                 }
                 final CompletableFuture<ByteBuffer> loading = new CompletableFuture<>();
                 if (loadingBlocks.putIfAbsent(key, loading) != null) {
-                    continue; // a read of another size or origin is loading it
+                    inFlightBlocks++; // a read of another size or origin is loading it
+                    continue;
                 }
                 // a read that finished between containsKey and the claim already inserted the block
                 if (cache.asMap().containsKey(key)) {
                     loadingBlocks.remove(key, loading);
                     loading.complete(null);
+                    cachedBlocks++;
                     continue;
                 }
-                claims.add(new Claim(key, loading, requested));
+                claims[i] = new Claim(key, loading, requested);
                 anyRequested |= requested;
             }
             if (anyRequested == false) {
                 return null; // the finally block releases the claims: never read a window only for its neighbours
             }
-            // runs of adjacent claimed blocks; the run with the wanted block is read first
-            final List<int[]> runs = new ArrayList<>();
-            int wantedRun = -1;
-            for (int i = 0; i < claims.size();) {
-                int j = i;
-                while (j + 1 < claims.size() && claims.get(j + 1).key.blockOffset() == claims.get(j).key.blockOffset() + blockSize) {
-                    j++;
-                }
-                for (int k = i; k <= j && prefetch == false; k++) {
-                    if (claims.get(k).requested) {
-                        wantedRun = runs.size();
-                    }
-                }
-                runs.add(new int[] { i, j });
-                i = j + 1;
-            }
-            ByteBuffer result = null;
-            if (wantedRun >= 0) {
-                result = readRun(channel, fileLength, claims, runs.get(wantedRun), false, fileStats, requester);
-            }
-            for (int r = 0; r < runs.size(); r++) {
-                if (r == wantedRun) {
-                    continue;
-                }
-                if (prefetch) {
-                    readRun(channel, fileLength, claims, runs.get(r), true, fileStats, requester);
-                } else {
-                    try {
-                        readRun(channel, fileLength, claims, runs.get(r), false, fileStats, requester);
-                    } catch (IOException | RuntimeException e) {
-                        // only neighbours of the wanted block: a reader that needs them reads them again
-                        logger.debug(() -> "read-ahead in [" + file + "] window at [" + windowStart + "] failed", e);
-                    }
-                }
-            }
-            return result;
+            return readWindow(storage, windowStart, windowEnd, claims, cachedBlocks, inFlightBlocks, prefetch, fileStats, requester);
         } finally {
-            // every claim is released even if a read failed, so no reader waits forever; waiters on a failed block retry
+            // every claim is released even if the read failed, so no reader waits forever; waiters on a failed block retry
             for (Claim claim : claims) {
-                if (claim.loading.isDone() == false) {
+                if (claim != null && claim.loading.isDone() == false) {
                     loadingBlocks.remove(claim.key, claim.loading);
                     claim.loading.complete(null);
                 }
@@ -452,60 +570,82 @@ final class BlockCache {
     }
 
     /**
-     * Reads the claimed blocks {@code run[0]..run[1]} (adjacent) with one storage read, inserts them and releases their
-     * claims.
+     * Reads the window {@code [windowStart, windowEnd)} with one storage read, inserts the claimed blocks, drops the bytes
+     * of the others and releases the claims.
      *
-     * @return the block of the run that was requested by a demand read, or null
+     * @param claims         per block of the window, this read's claim, or null for a block that is not inserted
+     * @param cachedBlocks   blocks of the window that were cached when it was claimed
+     * @param inFlightBlocks blocks of the window that another read was loading
+     * @return the block requested by a demand read, or null
      */
-    private ByteBuffer readRun(
-        FileChannel channel,
-        long fileLength,
-        List<Claim> claims,
-        int[] run,
+    private ByteBuffer readWindow(
+        StorageFile storage,
+        long windowStart,
+        long windowEnd,
+        Claim[] claims,
+        int cachedBlocks,
+        int inFlightBlocks,
         boolean prefetch,
         FileStats fileStats,
         String[] requester
     ) throws IOException {
         final long start = System.nanoTime();
-        final long runStart = claims.get(run[0]).key.blockOffset();
-        final long runEnd = Math.min(claims.get(run[1]).key.blockOffset() + blockSize, fileLength);
-        final int size = Math.toIntExact(runEnd - runStart);
-        final ByteBuffer[] blocks = new ByteBuffer[run[1] - run[0] + 1];
-        if (blocks.length == 1) {
-            blocks[0] = ByteBuffer.allocateDirect(size);
-            Channels.readFromFileChannelWithEofException(channel, runStart, blocks[0]);
-        } else {
-            ByteBuffer buffer = readBuffers.poll();
-            if (buffer == null) {
-                buffer = ByteBuffer.allocateDirect(maxReadSize);
-            }
-            try {
-                buffer.clear().limit(size);
-                Channels.readFromFileChannelWithEofException(channel, runStart, buffer);
-                for (int b = 0; b < blocks.length; b++) {
-                    final int from = b << blockSizePower;
-                    final int length = Math.min(blockSize, size - from);
-                    blocks[b] = ByteBuffer.allocateDirect(length).put(buffer.slice(from, length));
-                }
-            } finally {
-                readBuffers.offer(buffer);
-            }
+        final int size = Math.toIntExact(windowEnd - windowStart);
+        final ByteBuffer[] blocks = new ByteBuffer[claims.length];
+        if (prefetch) {
+            final int inFlight = prefetchReadsInFlight.incrementAndGet();
+            maxPrefetchReadsInFlight.accumulateAndGet(inFlight, Math::max);
         }
-        final long latency = simulatedLoadLatencyNanos;
-        if (latency > 0) {
-            final long deadline = start + latency;
-            for (long now = System.nanoTime(); now < deadline; now = System.nanoTime()) {
-                LockSupport.parkNanos(deadline - now);
+        try {
+            if (claims.length == 1) {
+                blocks[0] = ByteBuffer.allocateDirect(size);
+                storage.read(windowStart, blocks[0]);
+            } else {
+                ByteBuffer buffer = readBuffers.poll();
+                if (buffer == null) {
+                    buffer = ByteBuffer.allocateDirect(maxReadSize);
+                }
+                try {
+                    buffer.clear().limit(size);
+                    storage.read(windowStart, buffer);
+                    for (int b = 0; b < claims.length; b++) {
+                        if (claims[b] != null) {
+                            final int from = b << blockSizePower;
+                            final int length = Math.min(blockSize, size - from);
+                            blocks[b] = ByteBuffer.allocateDirect(length).put(buffer.slice(from, length));
+                        }
+                    }
+                } finally {
+                    readBuffers.offer(buffer);
+                }
+            }
+            final long latency = simulatedLoadLatencyNanos;
+            if (latency > 0) {
+                final long deadline = start + latency;
+                for (long now = System.nanoTime(); now < deadline; now = System.nanoTime()) {
+                    LockSupport.parkNanos(deadline - now);
+                }
+            }
+        } finally {
+            if (prefetch) {
+                prefetchReadsInFlight.decrementAndGet();
             }
         }
         (prefetch ? fileStats.prefetchReads : fileStats.reads).increment();
         fileStats.bytesRead.add(size);
         fileStats.readsBySize[sizeClass(size)].increment();
         fileStats.loadNanos.add(System.nanoTime() - start);
+        fileStats.windowBlocks.add(claims.length);
+        fileStats.windowBlocksInFlight.add(inFlightBlocks);
         final Trace t = trace;
         ByteBuffer result = null;
-        for (int b = 0; b < blocks.length; b++) {
-            final Claim claim = claims.get(run[0] + b);
+        long overread = 0;
+        for (int b = 0; b < claims.length; b++) {
+            final Claim claim = claims[b];
+            if (claim == null) {
+                overread += Math.min(blockSize, size - (b << blockSizePower));
+                continue;
+            }
             // readers only use absolute gets, so the shared buffer is never mutated and needs no position/limit reset
             final ByteBuffer block = blocks[b].asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN);
             final ByteBuffer existing = cache.asMap().putIfAbsent(claim.key, block);
@@ -517,6 +657,10 @@ final class BlockCache {
                 if (t != null) {
                     t.record(claim.key, block.capacity(), prefetch, readahead, requester);
                 }
+            } else {
+                // only claim holders insert, so this does not happen; count it like a cached block to keep the identity
+                cachedBlocks++;
+                overread += block.capacity();
             }
             if (prefetch == false && claim.requested) {
                 result = value;
@@ -524,6 +668,8 @@ final class BlockCache {
             loadingBlocks.remove(claim.key, claim.loading);
             claim.loading.complete(value);
         }
+        fileStats.windowBlocksCached.add(cachedBlocks);
+        fileStats.bytesOverread.add(overread);
         return result;
     }
 
@@ -562,7 +708,10 @@ final class BlockCache {
         return cache.policy().eviction().map(e -> e.weightedSize().orElse(-1L)).orElse(-1L);
     }
 
-    /** Number of blocks and windows being read right now (0 when idle). For tests and stats. */
+    /**
+     * Number of blocks and windows being read right now (0 when idle). For tests and stats. This counts running reads
+     * only: a prefetch task still in the queue is not counted, see {@link #pendingPrefetchTasks()}.
+     */
     int inFlightReads() {
         return loadingBlocks.size() + loadingWindows.size();
     }
@@ -592,6 +741,10 @@ final class BlockCache {
     /** Sets all counters to zero. Inputs keep their {@link FileStats} references, so entries are reset, not removed. */
     void resetStats() {
         stats.values().forEach(FileStats::reset);
+        rejectedPrefetchTasks.reset();
+        multiWindowPrefetches.reset();
+        maxPrefetchReadsInFlight.set(prefetchReadsInFlight.get());
+        readHints.resetCounters();
     }
 
     /**
@@ -800,6 +953,21 @@ final class BlockCache {
         final LongAdder[] readsBySize = new LongAdder[READ_SIZE_CLASSES];
         /** Time spent in all storage reads, including the simulated latency. */
         final LongAdder loadNanos = new LongAdder();
+        /**
+         * Blocks spanned by all storage reads. Per file type, {@code windowBlocks == blocksInserted + windowBlocksCached +
+         * windowBlocksInFlight}, where blocksInserted is {@code loads + prefetchLoads + readaheadLoads}.
+         */
+        final LongAdder windowBlocks = new LongAdder();
+        /** Blocks of a read window that were not inserted because they were cached already. */
+        final LongAdder windowBlocksCached = new LongAdder();
+        /** Blocks of a read window that were not inserted because another read was loading them. */
+        final LongAdder windowBlocksInFlight = new LongAdder();
+        /** Bytes read from storage but not inserted (the skipped blocks of read windows): {@code bytesRead - bytesLoaded}. */
+        final LongAdder bytesOverread = new LongAdder();
+        /** Block reads by readers that waited for another thread's read of the block or of its window. */
+        final LongAdder waits = new LongAdder();
+        /** Time readers spent in those waits. */
+        final LongAdder waitNanos = new LongAdder();
 
         FileStats() {
             for (int i = 0; i < readsBySize.length; i++) {
@@ -833,6 +1001,21 @@ final class BlockCache {
                 adder.reset();
             }
             loadNanos.reset();
+            windowBlocks.reset();
+            windowBlocksCached.reset();
+            windowBlocksInFlight.reset();
+            bytesOverread.reset();
+            waits.reset();
+            waitNanos.reset();
+        }
+
+        void recordWait(long nanos) {
+            waits.increment();
+            waitNanos.add(nanos);
+        }
+
+        long blocksInserted() {
+            return loads.sum() + prefetchLoads.sum() + readaheadLoads.sum();
         }
     }
 }

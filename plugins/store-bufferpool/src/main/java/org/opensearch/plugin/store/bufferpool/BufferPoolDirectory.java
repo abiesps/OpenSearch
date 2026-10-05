@@ -19,11 +19,9 @@ import org.apache.lucene.util.Constants;
 import org.opensearch.common.util.io.IOUtils;
 
 import java.io.IOException;
-import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -41,6 +39,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * else {@link BlockCache#sequentialReadSize()} bytes. The access pattern is taken from the context the same way OpenSearch
  * configures {@code mmapfs} and {@code hybridfs} ({@link MMapDirectory#ADVISE_BY_CONTEXT}): merges and flushes are
  * sequential, then the context's {@code DataAccessHint}, then Lucene's default read advice.
+ *
+ * <p>Files are opened as a {@link StorageFile} with the cache's {@link BlockCache#readHints()}, so with read hints on each
+ * open file also holds a read-only descriptor for the hints.
  */
 public final class BufferPoolDirectory extends FSDirectory {
 
@@ -61,7 +62,7 @@ public final class BufferPoolDirectory extends FSDirectory {
         ensureOpen();
         ensureCanRead(name);
         final Path file = directory.resolve(name);
-        final FileChannel channel = FileChannel.open(file, StandardOpenOption.READ);
+        final StorageFile storage = StorageFile.open(file, cache.readHints());
         boolean success = false;
         try {
             final long fileId = fileIds.computeIfAbsent(name, n -> NEXT_FILE_ID.incrementAndGet());
@@ -69,7 +70,7 @@ public final class BufferPoolDirectory extends FSDirectory {
                 "BufferPoolIndexInput(path=\"" + file + "\")",
                 file,
                 fileId,
-                channel,
+                storage,
                 cache,
                 cache.readSize(isRandomAccess(name, context))
             );
@@ -77,7 +78,7 @@ public final class BufferPoolDirectory extends FSDirectory {
             return input;
         } finally {
             if (success == false) {
-                IOUtils.closeWhileHandlingException(channel);
+                IOUtils.closeWhileHandlingException(storage);
             }
         }
     }

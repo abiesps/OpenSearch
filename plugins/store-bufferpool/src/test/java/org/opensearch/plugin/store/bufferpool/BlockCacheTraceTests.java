@@ -11,10 +11,8 @@ package org.opensearch.plugin.store.bufferpool;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.io.IOException;
-import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 
@@ -41,7 +39,7 @@ public class BlockCacheTraceTests extends OpenSearchTestCase {
         // prefetch runs on the calling thread
         final BlockCache cache = new BlockCache(64L * DEFAULT_BLOCK_SIZE, Runnable::run);
         final BlockCache.FileStats stats = cache.statsFor(file.getFileName().toString());
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+        try (StorageFile channel = StorageFile.open(file, NativeReadHints.DISABLED)) {
             final long length = channel.size();
             cache.startTrace(1000);
             cache.prefetch(file, 1, channel, length, 0, 3, stats);
@@ -64,7 +62,7 @@ public class BlockCacheTraceTests extends OpenSearchTestCase {
         final Path file = writeFile("_1.kdd");
         final BlockCache cache = new BlockCache(64L * DEFAULT_BLOCK_SIZE, Runnable::run);
         final BlockCache.FileStats stats = cache.statsFor(file.getFileName().toString());
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+        try (StorageFile channel = StorageFile.open(file, NativeReadHints.DISABLED)) {
             cache.startTrace(1000);
             cache.prefetch(file, 1, channel, channel.size(), 0, BLOCKS, stats);
             final BlockCache.Trace trace = cache.stopTrace();
@@ -77,7 +75,7 @@ public class BlockCacheTraceTests extends OpenSearchTestCase {
         final Path file = writeFile("_2.dvd");
         final BlockCache cache = new BlockCache(64L * DEFAULT_BLOCK_SIZE, Runnable::run);
         final BlockCache.FileStats stats = cache.statsFor(file.getFileName().toString());
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+        try (StorageFile channel = StorageFile.open(file, NativeReadHints.DISABLED)) {
             // prefetched before the trace starts: not tracked by it
             cache.prefetch(file, 1, channel, channel.size(), 0, 3, stats);
             assertNull(cache.currentTrace());
@@ -95,7 +93,7 @@ public class BlockCacheTraceTests extends OpenSearchTestCase {
         final int block = DEFAULT_BLOCK_SIZE / 4;
         final BlockCache cache = new BlockCache(64L * DEFAULT_BLOCK_SIZE, block, block, DEFAULT_BLOCK_SIZE, Runnable::run);
         final BlockCache.FileStats stats = cache.statsFor(file.getFileName().toString());
-        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+        try (StorageFile channel = StorageFile.open(file, NativeReadHints.DISABLED)) {
             final long length = channel.size();
             cache.startTrace(1000);
             cache.prefetch(file, 1, channel, length, block, 1, stats);

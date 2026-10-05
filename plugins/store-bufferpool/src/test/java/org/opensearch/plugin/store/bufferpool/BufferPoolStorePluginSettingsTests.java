@@ -16,7 +16,9 @@ import org.opensearch.search.query.SortIoExperiments;
 import org.opensearch.test.OpenSearchTestCase;
 
 import static org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin.BLOCK_SIZE_SETTING;
+import static org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin.PREFETCH_TASK_PER_WINDOW_SETTING;
 import static org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin.RANDOM_READ_SIZE_SETTING;
+import static org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin.READ_HINT_SETTING;
 import static org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin.SEQUENTIAL_READ_SIZE_SETTING;
 
 public class BufferPoolStorePluginSettingsTests extends OpenSearchTestCase {
@@ -108,5 +110,30 @@ public class BufferPoolStorePluginSettingsTests extends OpenSearchTestCase {
         } finally {
             BufferPoolStorePlugin.setPrefetchNodeBytes(BlockCache.DEFAULT_BLOCK_SIZE);
         }
+    }
+
+    public void testReadHintSetting() {
+        assertEquals("auto", READ_HINT_SETTING.get(Settings.EMPTY));
+        assertEquals(NativeReadHints.isAvailable(), create(Settings.EMPTY).readHints().enabled());
+        final BlockCache none = create(Settings.builder().put(READ_HINT_SETTING.getKey(), "none").build());
+        assertFalse(none.readHints().enabled());
+        assertEquals(NativeReadHints.Mode.NONE, none.readHints().mode());
+        final IllegalArgumentException e = expectThrows(
+            IllegalArgumentException.class,
+            () -> create(Settings.builder().put(READ_HINT_SETTING.getKey(), "always").build())
+        );
+        assertTrue(messages(e), messages(e).contains("must be auto, willneed or none, got [always]"));
+        final Settings willneed = Settings.builder().put(READ_HINT_SETTING.getKey(), "WillNeed").build();
+        if (NativeReadHints.isAvailable()) {
+            assertEquals(NativeReadHints.Mode.WILLNEED, create(willneed).readHints().mode());
+        } else {
+            assertInvalid(willneed, "posix_fadvise is not available");
+        }
+    }
+
+    public void testPrefetchTaskPerWindowSetting() {
+        assertFalse(PREFETCH_TASK_PER_WINDOW_SETTING.get(Settings.EMPTY));
+        assertTrue(PREFETCH_TASK_PER_WINDOW_SETTING.isDynamic());
+        assertFalse(create(Settings.EMPTY).prefetchTaskPerWindow());
     }
 }

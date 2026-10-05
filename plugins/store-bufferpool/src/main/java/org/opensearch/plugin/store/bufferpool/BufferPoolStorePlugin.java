@@ -8,6 +8,8 @@
 
 package org.opensearch.plugin.store.bufferpool;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TopKPrefetch;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockFactory;
@@ -67,6 +69,8 @@ import java.util.function.Supplier;
  */
 public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, EnginePlugin, ActionPlugin {
 
+    private static final Logger logger = LogManager.getLogger(BufferPoolStorePlugin.class);
+
     /** Creates the plugin; the block cache is created when the node starts. */
     public BufferPoolStorePlugin() {}
 
@@ -79,7 +83,9 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
     /**
      * Upper bound of the total size of the cached blocks on this node, as bytes or as a percentage of the heap size. The
      * blocks are direct buffers, so this must stay below {@code -XX:MaxDirectMemorySize}, which OpenSearch sets to half of
-     * the heap by default.
+     * the heap by default. Direct memory outside this bound: the idle read buffers of multi-block reads (at most 32 MiB),
+     * one read buffer of the largest read size per concurrent window read beyond those (search threads plus prefetch
+     * threads), and the copy of each block being inserted. Leave room for them, and for Netty and other direct buffers.
      */
     public static final Setting<ByteSizeValue> CACHE_SIZE_SETTING = Setting.memorySizeSetting(
         "bufferpool.cache.size",
@@ -140,6 +146,33 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
     }
 
     /**
+     * How storage reads are announced to the kernel, see {@link NativeReadHints}: {@code willneed} calls
+     * {@code posix_fadvise(POSIX_FADV_WILLNEED)} on each read window first, so the window is one storage IO even with
+     * kernel read-ahead off (without it, Linux reads a buffered window page by page when {@code read_ahead_kb} is 0); the node
+     * fails to start if the platform cannot do it. {@code none} reads without hints. {@code auto} (default) is
+     * {@code willneed} on Linux and {@code none} elsewhere. With hints on, each open file holds a second, read-only file
+     * descriptor. Changing it needs a node restart.
+     */
+    public static final Setting<String> READ_HINT_SETTING = Setting.simpleString(
+        "bufferpool.io.read_hint",
+        "auto",
+        NativeReadHints.Mode::parse,
+        Property.NodeScope
+    );
+
+    /**
+     * Whether each aligned window of a prefetch request is its own prefetch task (read concurrently with the request's other
+     * windows, up to the prefetch thread count) instead of one task per request that reads its windows one after another.
+     * Tasks that do not fit in the prefetch queue are dropped. Default false. Dynamic.
+     */
+    public static final Setting<Boolean> PREFETCH_TASK_PER_WINDOW_SETTING = Setting.boolSetting(
+        "bufferpool.prefetch.task_per_window",
+        false,
+        Property.NodeScope,
+        Property.Dynamic
+    );
+
+    /**
      * Experiment knob: a delay added to every block load, to simulate a remote storage backend (for example about 4ms for
      * EFS) on a local disk. 0 disables it.
      */
@@ -162,6 +195,8 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
             BLOCK_SIZE_SETTING,
             RANDOM_READ_SIZE_SETTING,
             SEQUENTIAL_READ_SIZE_SETTING,
+            READ_HINT_SETTING,
+            PREFETCH_TASK_PER_WINDOW_SETTING,
             SIMULATED_LOAD_LATENCY_SETTING
         );
     }
@@ -195,16 +230,31 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
         cache.setSimulatedLoadLatencyNanos(SIMULATED_LOAD_LATENCY_SETTING.get(settings).nanos());
         clusterService.getClusterSettings()
             .addSettingsUpdateConsumer(SIMULATED_LOAD_LATENCY_SETTING, latency -> cache.setSimulatedLoadLatencyNanos(latency.nanos()));
+        cache.setPrefetchTaskPerWindow(PREFETCH_TASK_PER_WINDOW_SETTING.get(settings));
+        clusterService.getClusterSettings().addSettingsUpdateConsumer(PREFETCH_TASK_PER_WINDOW_SETTING, cache::setPrefetchTaskPerWindow);
+        logger.info(
+            "block cache: size [{}], block [{}], random read [{}], sequential read [{}], read hint [{}], prefetch task per window [{}]",
+            new ByteSizeValue(maxBytes),
+            new ByteSizeValue(cache.blockSize()),
+            new ByteSizeValue(cache.randomReadSize()),
+            new ByteSizeValue(cache.sequentialReadSize()),
+            cache.readHints().mode(),
+            cache.prefetchTaskPerWindow()
+        );
         blockCache.set(cache);
         return Collections.emptyList();
     }
 
-    /** Creates the block cache from the node settings; fails if the block or read sizes are invalid. */
+    /**
+     * Creates the block cache from the node settings; fails if the block or read sizes are invalid, or if read hints are
+     * required and not available.
+     */
     static BlockCache createBlockCache(Settings settings, long maxBytes, Executor prefetchExecutor) {
         final int blockSize = Math.toIntExact(BLOCK_SIZE_SETTING.get(settings).getBytes());
         final int randomReadSize = Math.toIntExact(RANDOM_READ_SIZE_SETTING.get(settings).getBytes());
         final int sequentialReadSize = Math.toIntExact(SEQUENTIAL_READ_SIZE_SETTING.get(settings).getBytes());
-        return new BlockCache(maxBytes, blockSize, randomReadSize, sequentialReadSize, prefetchExecutor);
+        final NativeReadHints readHints = NativeReadHints.create(NativeReadHints.Mode.parse(READ_HINT_SETTING.get(settings)));
+        return new BlockCache(maxBytes, blockSize, randomReadSize, sequentialReadSize, readHints, prefetchExecutor);
     }
 
     /**

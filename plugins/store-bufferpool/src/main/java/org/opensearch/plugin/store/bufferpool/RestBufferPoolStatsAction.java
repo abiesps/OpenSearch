@@ -45,7 +45,17 @@ import static org.opensearch.rest.RestRequest.Method.POST;
  *       {@code loads}, {@code prefetch_loads} and {@code readahead_loads} count inserted blocks (demand misses, requested
  *       prefetch blocks, and blocks inserted only because they share a read window with one of those), {@code bytes_loaded}
  *       their bytes; {@code reads}, {@code prefetch_reads}, {@code bytes_read} and {@code reads_by_size} (count per size
- *       class, keyed by the class's upper bound in bytes) count the storage reads</li>
+ *       class, keyed by the class's upper bound in bytes) count the storage reads, one per read window. {@code window_blocks}
+ *       counts the blocks those windows span, {@code window_blocks_cached} and {@code window_blocks_in_flight} the ones not
+ *       inserted because they were cached or another read was loading them ({@code window_blocks == blocks_inserted +
+ *       window_blocks_cached + window_blocks_in_flight}), and {@code bytes_overread} their bytes ({@code bytes_read ==
+ *       bytes_loaded + bytes_overread}). {@code waits} and {@code wait_time_micros} count block reads that waited for
+ *       another thread's read. Node-wide: {@code read_hint} (effective mode), {@code read_hints} and
+ *       {@code read_hint_errors}; {@code in_flight_reads} counts running reads only, {@code pending_prefetch_tasks} the
+ *       prefetch tasks queued or running, and the cache is quiet when both are 0;
+ *       {@code rejected_prefetch_tasks} counts prefetch tasks dropped on a full queue, {@code multi_window_prefetches}
+ *       the prefetch requests that span more than one window, and {@code max_prefetch_reads_in_flight} the most prefetch
+ *       reads that ran at once</li>
  *   <li>{@code POST /_bufferpool/stats/_reset}: sets the counters to zero</li>
  *   <li>{@code POST /_bufferpool/cache/_clear}: drops all cached blocks, so the next reads are cold</li>
  *   <li>{@code POST /_bufferpool/dual_nav/_mode?mode=doc|nav}: where {@code Lucene104DualNav} postings read skip data
@@ -194,7 +204,15 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
             builder.field("random_read_size", cache.randomReadSize());
             builder.field("sequential_read_size", cache.sequentialReadSize());
             builder.field("prefetch_node_bytes", cache.prefetchNodeBytes());
+            builder.field("read_hint", cache.readHints().mode().toString());
+            builder.field("read_hints", cache.readHints().hints());
+            builder.field("read_hint_errors", cache.readHints().errors());
+            builder.field("prefetch_task_per_window", cache.prefetchTaskPerWindow());
             builder.field("in_flight_reads", cache.inFlightReads());
+            builder.field("pending_prefetch_tasks", cache.pendingPrefetchTasks());
+            builder.field("rejected_prefetch_tasks", cache.rejectedPrefetchTasks());
+            builder.field("multi_window_prefetches", cache.multiWindowPrefetches());
+            builder.field("max_prefetch_reads_in_flight", cache.maxPrefetchReadsInFlight());
             builder.field("cached_blocks", cache.size());
             builder.field("cached_bytes", cache.sizeInBytes());
             builder.field("dual_nav_read_mode", Lucene104DualNavPostingsFormat.getReadMode().name().toLowerCase(Locale.ROOT));
@@ -241,11 +259,17 @@ final class RestBufferPoolStatsAction extends BaseRestHandler {
                 builder.field("prefetch_requests", s.prefetchRequests.sum());
                 builder.field("prefetch_loads", s.prefetchLoads.sum());
                 builder.field("readahead_loads", s.readaheadLoads.sum());
-                builder.field("blocks_inserted", s.loads.sum() + s.prefetchLoads.sum() + s.readaheadLoads.sum());
+                builder.field("blocks_inserted", s.blocksInserted());
                 builder.field("bytes_loaded", s.bytesLoaded.sum());
                 builder.field("reads", s.reads.sum());
                 builder.field("prefetch_reads", s.prefetchReads.sum());
                 builder.field("bytes_read", s.bytesRead.sum());
+                builder.field("bytes_overread", s.bytesOverread.sum());
+                builder.field("window_blocks", s.windowBlocks.sum());
+                builder.field("window_blocks_cached", s.windowBlocksCached.sum());
+                builder.field("window_blocks_in_flight", s.windowBlocksInFlight.sum());
+                builder.field("waits", s.waits.sum());
+                builder.field("wait_time_micros", TimeUnit.NANOSECONDS.toMicros(s.waitNanos.sum()));
                 builder.startObject("reads_by_size");
                 for (Map.Entry<Long, Long> size : s.readsBySize().entrySet()) {
                     builder.field(Long.toString(size.getKey()), size.getValue());

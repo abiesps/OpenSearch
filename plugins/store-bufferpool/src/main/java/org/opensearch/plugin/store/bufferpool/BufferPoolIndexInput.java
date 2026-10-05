@@ -17,7 +17,6 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.Optional;
 
@@ -31,14 +30,14 @@ import java.util.Optional;
  * of their input; a slice takes the read size of the {@link IOContext} it is created with, if any.
  * {@link #prefetch(long, long)} loads blocks in the background on request.
  *
- * <p>The input that {@link BufferPoolDirectory} opens owns the file channel. Clones and slices share the channel and are
+ * <p>The input that {@link BufferPoolDirectory} opens owns the {@link StorageFile}. Clones and slices share it and are
  * not usable after that input is closed.
  */
 final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput {
 
     private final Path file;
     private final long fileId;
-    private final FileChannel channel;
+    private final StorageFile storage;
     private final BlockCache cache;
     private final BlockCache.FileStats stats;
     private final long blockMask;
@@ -51,7 +50,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
     private final long length;
     /** Bytes read per miss, {@link BlockCache#randomReadSize()} or {@link BlockCache#sequentialReadSize()}. */
     private int readSize;
-    /** True for clones and slices, which do not own the channel. */
+    /** True for clones and slices, which do not own the storage file. */
     private boolean isClone;
     private boolean closed;
 
@@ -65,18 +64,18 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
     private long blockEnd;
 
     /** @param readSize bytes read per miss, {@link BlockCache#randomReadSize()} or {@link BlockCache#sequentialReadSize()} */
-    BufferPoolIndexInput(String resourceDescription, Path file, long fileId, FileChannel channel, BlockCache cache, int readSize)
+    BufferPoolIndexInput(String resourceDescription, Path file, long fileId, StorageFile storage, BlockCache cache, int readSize)
         throws IOException {
         this(
             resourceDescription,
             file,
             fileId,
-            channel,
+            storage,
             cache,
             cache.statsFor(file.getFileName().toString()),
-            channel.size(),
+            storage.size(),
             0L,
-            channel.size(),
+            storage.size(),
             readSize,
             false
         );
@@ -86,7 +85,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         String resourceDescription,
         Path file,
         long fileId,
-        FileChannel channel,
+        StorageFile storage,
         BlockCache cache,
         BlockCache.FileStats stats,
         long fileLength,
@@ -98,7 +97,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         super(resourceDescription);
         this.file = file;
         this.fileId = fileId;
-        this.channel = channel;
+        this.storage = storage;
         this.cache = cache;
         this.stats = stats;
         this.blockMask = cache.blockMask();
@@ -120,7 +119,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         final long blockOffset = (sliceOffset + p) & ~blockMask;
         final ByteBuffer b;
         try {
-            b = cache.getOrLoad(new BlockKey(file, fileId, blockOffset), channel, fileLength, readSize, stats);
+            b = cache.getOrLoad(new BlockKey(file, fileId, blockOffset), storage, fileLength, readSize, stats);
         } catch (ClosedChannelException e) {
             throw new AlreadyClosedException("Already closed: " + this, e);
         }
@@ -276,7 +275,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         }
         final long firstBlock = (sliceOffset + offset) >>> blockSizePower;
         final long lastBlock = (sliceOffset + offset + len - 1) >>> blockSizePower;
-        cache.prefetch(file, fileId, channel, fileLength, firstBlock << blockSizePower, lastBlock - firstBlock + 1, stats);
+        cache.prefetch(file, fileId, storage, fileLength, firstBlock << blockSizePower, lastBlock - firstBlock + 1, stats);
     }
 
     @Override
@@ -379,7 +378,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
             getFullSliceDescription(sliceDescription),
             file,
             fileId,
-            channel,
+            storage,
             cache,
             stats,
             fileLength,
@@ -401,7 +400,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         blockStart = 0;
         blockEnd = 0;
         if (isClone == false) {
-            channel.close();
+            storage.close();
         }
     }
 }
