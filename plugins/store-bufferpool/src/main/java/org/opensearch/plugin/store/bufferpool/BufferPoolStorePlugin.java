@@ -14,6 +14,7 @@ import org.apache.lucene.search.TopKPrefetch;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockFactory;
 import org.apache.lucene.util.bkd.BKDExperiments;
+import org.opensearch.action.support.ActionFilter;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.service.ClusterService;
@@ -187,6 +188,8 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
     private static final int PREFETCH_QUEUE_SIZE = 1024;
 
     private final SetOnce<BlockCache> blockCache = new SetOnce<>();
+    private final SetOnce<ClusterService> clusterService = new SetOnce<>();
+    private final SetOnce<IndexNameExpressionResolver> indexNameExpressionResolver = new SetOnce<>();
 
     @Override
     public List<Setting<?>> getSettings() {
@@ -242,6 +245,8 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
             cache.prefetchTaskPerWindow()
         );
         blockCache.set(cache);
+        this.clusterService.set(clusterService);
+        this.indexNameExpressionResolver.set(indexNameExpressionResolver);
         return Collections.emptyList();
     }
 
@@ -284,6 +289,19 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
             return Optional.empty();
         }
         return Optional.of(BufferPoolCodecService::new);
+    }
+
+    /**
+     * Refuses a {@code meta.postings_format} or {@code meta.points_format} name that is not available in the mapping of a
+     * {@value #STORE_TYPE} index, when the index is created or its mapping is updated, see
+     * {@link FormatMetaMappingValidator}.
+     */
+    @Override
+    public List<ActionFilter> getActionFilters() {
+        return List.of(new FormatMetaMappingValidator(() -> {
+            final ClusterService service = clusterService.get();
+            return service == null ? null : service.state();
+        }, indexNameExpressionResolver::get));
     }
 
     @Override
