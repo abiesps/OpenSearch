@@ -742,6 +742,25 @@ def part_f(tmp, fork, fork_commit):
           "(f) driver: EFS samples off the connection target are re-measured at the end, not a stop")
     check("JVM_RETRIES = 2" in txt and "failed_attempts" in txt and '.failed{attempt}' in txt,
           "(f) driver: a failed JVM run is kept aside and re-queued")
+    # bufferpool directory arms: identical -Dcoldpath.bp.* flags, readahead 0 on their storage, no mixing per storage
+    d4, s4 = run_luceneutil.plan(cfg, table, "cold-strict", "wikimedium.10M.nostopwords.tasks", "EBS",
+                                 ["LB0:EBS@a", "LB1:EFS@a", "LB1:EBS@a", "LB0:EFS@a"], os.path.join(tmp, "lu-bp"))
+    compile(open(d4).read(), d4, "exec")
+    flags = {x["java_command"].split(cfg["java_command"], 1)[1] for x in s4["arms"]}
+    check(len(flags) == 1 and "-Dcoldpath.bp.cache_bytes=25769803776" in flags.pop()
+          and all(x["storage_spec"]["read_ahead_mode"] == "0" and x["directory"] == "BufferPoolDirectory" for x in s4["arms"]),
+          "(f) bufferpool arms: one set of bufferpool flags, readahead 0")
+    for bad_labels in (["LB0:EBS", "L0:EBS@x"],):
+        try:
+            run_luceneutil.plan(cfg, table, "warm", "t", "EBS", bad_labels, os.path.join(tmp, "lu-bad3"))
+            check(False, "(f) mmap and bufferpool arms on one storage refused")
+        except ValueError:
+            check(True, "(f) mmap and bufferpool arms on one storage refused")
+    try:
+        run_luceneutil.bufferpool_flags(dict(cfg, bufferpool=dict(cfg["bufferpool"], random_read_size=65536)), "BufferPoolDirectory")
+        check(False, "(f) bufferpool IO sizes other than 8 / 32 / 128 KiB refused")
+    except ValueError:
+        check(True, "(f) bufferpool IO sizes other than 8 / 32 / 128 KiB refused")
     rd = run_luceneutil.report_driver(os.path.join(tmp, "lu-mixed"))
     compile(open(rd).read(), rd, "exec")
     check("results = {l: [m" in open(rd).read(), "(f) report driver for a finished session compiles")

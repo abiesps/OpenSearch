@@ -1,5 +1,5 @@
 {
- "_doc": "luceneutil arms of branch g-luceneutil (GENERIC-PLAN section 5). Values in {braces} are params: the IO sizes come from the IO configuration (8 KiB block, 32 KiB random, 128 KiB sequential); the K2 / ORPF / TOPK values and the CORE set must be copied from artifacts-final.json and the final POC report before phase B (recorded per arm in session.json). Switch names are checked against switches.json (generated from the fork). Stock Lucene arms carry no switches. The index variants are built by luceneutil (run_luceneutil.py index) on EBS and copied with checksums to EFS (run_luceneutil.py copy). Index builds use luceneutil's own defaults (1 indexing thread, LogDocMergePolicy, SerialMergeScheduler): the build is deterministic, so every variant (stock, POC-built stock codec, split BKD, DualNav) has the same doc ids and the same segments, and only the codec differs between variants. Arm labels ARM:STORAGE@REPEAT interleave one arm on EBS and EFS in one session. Storages: residency_tolerance: bytes of the index files (index/ and facets/) that may be resident when a cold task or a cold JVM starts: 0, not one page; drop_rounds: the agent repeats pageout + sync + drop_caches until mincore finds no resident page, at most this many times (one pass can leave a few pages faulted just before it). EFS: efs_connections_target 5, the agent pre-conditions efs-proxy to 5 backend connections before every JVM run on EFS and a run (or strict-cold task) that does not start and end at 5 on one proxy process stops the session (common-rules: the EFS connection count is a measured variable).",
+ "_doc": "luceneutil arms of branch g-luceneutil (GENERIC-PLAN section 5). Values in {braces} are params: the IO sizes come from the IO configuration (8 KiB block, 32 KiB random, 128 KiB sequential); the K2 / ORPF / TOPK values and the CORE set must be copied from artifacts-final.json and the final POC report before phase B (recorded per arm in session.json). Switch names are checked against switches.json (generated from the fork). Stock Lucene arms carry no switches. The index variants are built by luceneutil (run_luceneutil.py index) on EBS and copied with checksums to EFS (run_luceneutil.py copy). Index builds use luceneutil's own defaults (1 indexing thread, LogDocMergePolicy, SerialMergeScheduler): the build is deterministic, so every variant (stock, POC-built stock codec, split BKD, DualNav) has the same doc ids and the same segments, and only the codec differs between variants. Arm labels ARM:STORAGE@REPEAT interleave one arm on EBS and EFS in one session. Storages: residency_tolerance: bytes of the index files (index/ and facets/) that may be resident when a cold task or a cold JVM starts: 0, not one page; drop_rounds: the agent repeats pageout + sync + drop_caches until mincore finds no resident page, at most this many times (one pass can leave a few pages faulted just before it). EFS: efs_connections_target 5, the agent pre-conditions efs-proxy to 5 backend connections before every JVM run on EFS and a run (or strict-cold task) that does not start and end at 5 on one proxy process stops the session (common-rules: the EFS connection count is a measured variable). Bufferpool arms (directory BufferPoolDirectory) read through the OpenSearch store-bufferpool plugin (jar unchanged, setup_bufferpool.sh), with readahead 0 on their storage and the [bufferpool] settings; one directory kind per storage in a session.",
  "python": "python3",
  "luceneutil": {
   "path": "/data/ebs/lu/luceneutil",
@@ -371,6 +371,20 @@
     "org.apache.lucene.search.TopKPrefetch.setNodeBytes": "{io.sequential_bytes}"
    },
    "note": "set to the accepted core Lucene switches of the final POC report before phase B"
+  },
+  "LB0": {
+   "checkout": "stock",
+   "index": "stock",
+   "directory": "BufferPoolDirectory",
+   "switches": {},
+   "note": "baseline: stock Lucene 10.5.1 on the store-bufferpool directory (user decision 2026-10-05)"
+  },
+  "LB1": {
+   "checkout": "poc",
+   "index": "stock",
+   "directory": "BufferPoolDirectory",
+   "switches": {},
+   "note": "attribution reference: POC Lucene, every switch off, on the store-bufferpool directory"
   }
  },
  "outcome": {
@@ -381,5 +395,23 @@
   ],
   "aa": "L0@a,L0@b",
   "delta_min": 0.05
- }
+ },
+ "bufferpool": {
+  "_note": "the OpenSearch configurations' bufferpool settings (gates/baseline-ready.md), identical in every bufferpool arm; cache sized so the whole luceneutil index (19.36 GB) fits warm",
+  "cache_bytes": 25769803776,
+  "max_direct_memory": "32g",
+  "block_size": 8192,
+  "random_read_size": 32768,
+  "sequential_read_size": 131072,
+  "read_hint": "auto",
+  "max_in_flight": 8,
+  "budget_scope": "prefetch",
+  "queue_size": 1024,
+  "queue_policy": "fifo",
+  "task_per_window": false
+ },
+ "env": {
+  "_note": "set from gates/baseline-ready.md (jemalloc LD_PRELOAD and MALLOC_CONF), identical for every JVM"
+ },
+ "mem_limit_pct": 70
 }

@@ -1,0 +1,217 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: coldpath <coldpath@localhost>
+Date: Mon, 5 Oct 2026 14:42:19 -0700
+Subject: [PATCH] Search through the store-bufferpool directory
+
+coldpath harness (user decision: the bufferpool is the baseline). -dirImpl BufferPoolDirectory opens the index and the taxonomy through the OpenSearch store-bufferpool plugin's directory (the plugin jar unchanged, built by a shim in its package; called by reflection, so luceneutil compiles without it). The strict cold mode also waits for prefetch to finish, clears the block cache and requires 0 cached blocks before every task, records the bufferpool counters before and after the task, and traces every device read of the task (-Dcoldpath.cold.trace=nfs|block). The cold reset reopens the taxonomy with the JVM's directory implementation.
+---
+ src/main/perf/ColdpathBufferPool.java | 77 +++++++++++++++++++++++++++
+ src/main/perf/ColdpathCold.java       | 31 ++++++++++-
+ src/main/perf/IndexState.java         |  7 +--
+ src/main/perf/OpenDirectory.java      | 26 ++++++++-
+ 4 files changed, 135 insertions(+), 6 deletions(-)
+ create mode 100644 src/main/perf/ColdpathBufferPool.java
+
+diff --git a/src/main/perf/ColdpathBufferPool.java b/src/main/perf/ColdpathBufferPool.java
+new file mode 100644
+index 00000000..e0c4d7b3
+--- /dev/null
++++ b/src/main/perf/ColdpathBufferPool.java
+@@ -0,0 +1,77 @@
++package perf;
++
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++import java.lang.reflect.InvocationTargetException;
++import java.lang.reflect.Method;
++import java.nio.file.Path;
++import org.apache.lucene.store.Directory;
++
++/**
++ * coldpath harness: the OpenSearch store-bufferpool plugin's directory (-dirImpl BufferPoolDirectory). The plugin jar,
++ * its dependencies and the harness shim (org.opensearch.plugin.store.bufferpool.LuceneutilBufferPool) are on the run
++ * classpath (luceneutil/lib); they are called by reflection so luceneutil compiles without them. One block cache per
++ * JVM, configured by -Dcoldpath.bp.* (see the shim).
++ */
++public final class ColdpathBufferPool {
++  private static final String SHIM = "org.opensearch.plugin.store.bufferpool.LuceneutilBufferPool";
++  private static volatile boolean used;
++
++  private ColdpathBufferPool() {}
++
++  private static Object call(String name, Class<?>[] types, Object... args) {
++    try {
++      Method m = Class.forName(SHIM).getMethod(name, types);
++      return m.invoke(null, args);
++    } catch (InvocationTargetException e) {
++      Throwable c = e.getCause();
++      if (c instanceof RuntimeException re) {
++        throw re;
++      }
++      throw new IllegalStateException(c);
++    } catch (ReflectiveOperationException e) {
++      throw new IllegalStateException("-dirImpl BufferPoolDirectory needs the store-bufferpool plugin and the coldpath shim on the classpath", e);
++    }
++  }
++
++  public static Directory open(Path path) {
++    used = true;
++    return (Directory) call("open", new Class<?>[] {Path.class}, path);
++  }
++
++  /** True once a bufferpool directory was opened in this JVM. */
++  public static boolean used() {
++    return used;
++  }
++
++  public static void clear() {
++    call("clear", new Class<?>[0]);
++  }
++
++  public static long cachedBlocks() {
++    return (Long) call("cachedBlocks", new Class<?>[0]);
++  }
++
++  public static long waitPrefetchIdle(long timeoutMillis) {
++    return (Long) call("waitPrefetchIdle", new Class<?>[] {long.class}, timeoutMillis);
++  }
++
++  public static String statsJson() {
++    return (String) call("statsJson", new Class<?>[0]);
++  }
++}
+diff --git a/src/main/perf/ColdpathCold.java b/src/main/perf/ColdpathCold.java
+index 9707e7a7..72aa94e4 100644
+--- a/src/main/perf/ColdpathCold.java
++++ b/src/main/perf/ColdpathCold.java
+@@ -56,6 +56,8 @@ public final class ColdpathCold {
+   private static String preResidency;
+   private static String preSnapshot;
+   private static String preReset;
++  private static String preBp;
++  private static long preBpCached;
+   private static long preResident;
+   private static long count;
+ 
+@@ -135,18 +137,43 @@ public final class ColdpathCold {
+     preResidency = call("GET", "/cache/residency?" + arm + "&uuids=" + q(System.getProperty("coldpath.cold.uuids", "")));
+     Matcher m = RESIDENT.matcher(preResidency);
+     preResident = m.find() ? Long.parseLong(m.group(1)) : -1;
++    preBp = null;
++    preBpCached = -1;
++    if (ColdpathBufferPool.used()) {
++      // bufferpool directory: no prefetch left running, every cached block dropped (POST /_bufferpool/cache/_clear),
++      // then the page-cache drop above already ran; the cache must hold 0 blocks when the task starts
++      ColdpathBufferPool.waitPrefetchIdle(60_000L);
++      ColdpathBufferPool.clear();
++      preBpCached = ColdpathBufferPool.cachedBlocks();
++      preBp = ColdpathBufferPool.statsJson();
++    }
+     preSnapshot = call("GET", "/snapshot?" + arm);
++    String trace = System.getProperty("coldpath.cold.trace", "");
++    if (trace.isEmpty() == false) {
++      // every device read of the task: NFS READ RPCs (Amazon EFS) or block read requests (Amazon EBS)
++      call("POST", "/trace/" + trace + "/_start?" + arm);
++    }
+   }
+ 
+   /** Records the task's run time with the clear, the residency and the IO counters around it. */
+   public static synchronized void afterTask(Task task) {
+     String arm = "arm=" + q(System.getProperty("coldpath.cold.arm", ""));
++    String postBp = null;
++    if (preBp != null) {
++      // prefetch reads issued by the task count as its reads: wait until they finished before the counters are read
++      ColdpathBufferPool.waitPrefetchIdle(60_000L);
++      postBp = ColdpathBufferPool.statsJson();
++    }
++    String trace = System.getProperty("coldpath.cold.trace", "");
++    String traced = trace.isEmpty() ? "null" : call("POST", "/trace/" + trace + "/_stop?" + arm + "&uuids=" + q(System.getProperty("coldpath.cold.uuids", "")));
+     String post = call("GET", "/snapshot?" + arm);
+     long tolerance = Long.getLong("coldpath.cold.residencyTolerance", 0L);
+-    boolean ok = preResident >= 0 && preResident <= tolerance;
++    boolean ok = preResident >= 0 && preResident <= tolerance && (preBp == null || preBpCached == 0);
+     log.println("{\"n\":" + (count++) + ",\"category\":" + json(task.getCategory()) + ",\"task\":" + json(task.toString())
+         + ",\"run_ms\":" + (task.runTimeNanos / 1e6) + ",\"resident_bytes\":" + preResident + ",\"cold_ok\":" + ok + ",\"cold_protocol\":\"jit-warm\",\"caches_reset\":" + preReset
+-        + ",\"drop\":" + preDrop + ",\"residency\":" + preResidency + ",\"pre\":" + preSnapshot + ",\"post\":" + post + "}");
++        + ",\"drop\":" + preDrop + ",\"residency\":" + preResidency + ",\"pre\":" + preSnapshot + ",\"post\":" + post
++        + ",\"bp_cached_blocks\":" + (preBp == null ? "null" : Long.toString(preBpCached)) + ",\"bp_pre\":" + (preBp == null ? "null" : preBp)
++        + ",\"bp_post\":" + (postBp == null ? "null" : postBp) + ",\"trace\":\"" + trace + "\",\"read_sizes\":" + traced + "}");
+   }
+ 
+   private static String json(String s) {
+diff --git a/src/main/perf/IndexState.java b/src/main/perf/IndexState.java
+index 0219b758..f943813f 100644
+--- a/src/main/perf/IndexState.java
++++ b/src/main/perf/IndexState.java
+@@ -148,11 +148,12 @@ class IndexState {
+       // a page mapped twice cannot be paged out (MADV_PAGEOUT skips it), so the cold drop could not empty the cache
+       org.apache.lucene.store.Directory oldDir = old.getInternalIndexReader().directory();
+       org.apache.lucene.store.Directory unwrapped = org.apache.lucene.store.FilterDirectory.unwrap(oldDir);
+-      if (unwrapped instanceof org.apache.lucene.store.MMapDirectory == false) {
+-        throw new IllegalStateException("coldpath cold mode reopens the taxonomy on MMapDirectory only, got " + unwrapped);
++      if (unwrapped instanceof org.apache.lucene.store.FSDirectory == false) {
++        throw new IllegalStateException("coldpath cold mode reopens the taxonomy on an FSDirectory only, got " + unwrapped);
+       }
+       java.nio.file.Path path = ((org.apache.lucene.store.FSDirectory) unwrapped).getDirectory();
+-      taxoReader = new org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader(new org.apache.lucene.store.MMapDirectory(path));
++      // through the directory implementation of this JVM (MMapDirectory or the bufferpool directory), on a new instance
++      taxoReader = new org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader(perf.OpenDirectory.current().open(path));
+       old.close();
+       oldDir.close();
+       taxo = true;
+diff --git a/src/main/perf/OpenDirectory.java b/src/main/perf/OpenDirectory.java
+index d973e31d..abd92617 100644
+--- a/src/main/perf/OpenDirectory.java
++++ b/src/main/perf/OpenDirectory.java
+@@ -28,8 +28,32 @@ import org.apache.lucene.store.NIOFSDirectory;
+ public abstract class OpenDirectory {
+   public abstract Directory open(Path path) throws IOException;
+ 
++  private static volatile OpenDirectory current;
++
++  /** The directory implementation the JVM opened its index with (the cold reset reopens the taxonomy with it). */
++  public static OpenDirectory current() {
++    if (current == null) {
++      throw new IllegalStateException("no directory implementation chosen yet");
++    }
++    return current;
++  }
++
+   public static OpenDirectory get(String dirImpl) {
+-    if (dirImpl.equals("MMapDirectory")) {
++    OpenDirectory od = get0(dirImpl);
++    current = od;
++    return od;
++  }
++
++  private static OpenDirectory get0(String dirImpl) {
++    if (dirImpl.equals("BufferPoolDirectory")) {
++      // coldpath harness: the OpenSearch store-bufferpool plugin's directory (ColdpathBufferPool)
++      return new OpenDirectory() {
++          @Override
++          public Directory open(Path path) throws IOException {
++            return ColdpathBufferPool.open(path);
++          }
++        };
++    } else if (dirImpl.equals("MMapDirectory")) {
+       return new OpenDirectory() {
+           @Override
+           public Directory open(Path path) throws IOException {
+-- 
+2.54.0 (Apple Git-157)
+

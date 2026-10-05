@@ -101,6 +101,15 @@ python3 selftest_generic.py --osb-workloads OSBW [--lucene-fork LUCENE_FORK --fo
 - `patches/0003` + `patches/poc/0001`: `-Dcoldpath.pointsFormat=Lucene90Split:lastMod,timesecnum,dayOfYear` writes
   those 1-D points fields in the split BKD format under the codec name Lucene104SplitPoints (POC Lucene only;
   stock exits "not available"). The DualNav variant uses luceneutil's own `postingsFormat`.
+- Bufferpool baseline (user decision 2026-10-05): `setup_bufferpool.sh BASE DIST` puts the OpenSearch store-bufferpool
+  plugin jar (unchanged, from the distribution's plugins/), the library jars its directory loads, the
+  `org.opensearch.common.io.Channels` classes (extracted, not the whole server jar) and the shim
+  `bufferpool/LuceneutilBufferPool.java` into `luceneutil/lib` of both checkouts, recorded with sha256. Patch 0006 adds
+  `-dirImpl BufferPoolDirectory`; arms with `"directory": "BufferPoolDirectory"` (LB0 stock Lucene, LB1 POC Lucene all
+  off) get the `[bufferpool]` settings as `-Dcoldpath.bp.*` (identical in every arm; 8 / 32 / 128 KiB enforced),
+  readahead 0 on their storage, the `[env]` (jemalloc) for every JVM, a 10 s memory guard (`mem_limit_pct`, kill and
+  re-queue), and in strict cold: prefetch idle, block cache cleared and 0 cached blocks before every task, bufferpool
+  counters and a device read trace around every task, checked with coldbench's one-device-read-per-window rule.
 - `run_luceneutil.py plan|run|index|copy`: N interleaved arms through luceneutil's own API (rotation per JVM
   iteration, same seeds), modes warm / cold-luceneutil / cold-strict, EBS and EFS index copies (copied with sha256
   verification), kernel readahead of the index storage set and verified through the agent (mode "default", as

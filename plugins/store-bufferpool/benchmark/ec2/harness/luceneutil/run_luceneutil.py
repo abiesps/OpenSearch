@@ -72,6 +72,28 @@ def arm_spec(cfg, label, default_storage=None):
     return arm, cfg["arms"][arm], storage
 
 
+DIRECTORIES = ("MMapDirectory", "BufferPoolDirectory")
+BP_PROPS = ("cache_bytes", "block_size", "random_read_size", "sequential_read_size", "read_hint", "max_in_flight",
+            "budget_scope", "queue_size", "queue_policy", "task_per_window")
+
+
+def bufferpool_flags(cfg, directory):
+    """JVM flags of a bufferpool arm: every -Dcoldpath.bp.* value of the config's [bufferpool] (identical in every arm)
+    and its direct-memory limit; nothing for a memory-mapped arm."""
+    if directory != "BufferPoolDirectory":
+        return ""
+    bp = cfg.get("bufferpool")
+    if not bp:
+        raise ValueError("BufferPoolDirectory arms need a [bufferpool] section (cache and IO settings)")
+    missing = [k for k in BP_PROPS if k not in bp]
+    if missing:
+        raise ValueError(f"[bufferpool] misses {missing}: every value is given explicitly (no plugin default is assumed)")
+    if bp["block_size"] != 8192 or bp["random_read_size"] != 32768 or bp["sequential_read_size"] != 131072:
+        raise ValueError("[bufferpool] IO configuration must be 8 KiB blocks, 32 KiB random and 128 KiB sequential reads")
+    return (f" -XX:MaxDirectMemorySize={bp['max_direct_memory']}" if bp.get("max_direct_memory") else "") + "".join(
+        f" -Dcoldpath.bp.{k}={str(bp[k]).lower() if isinstance(bp[k], bool) else bp[k]}" for k in BP_PROPS)
+
+
 def plan(cfg, table, mode, tasks, storage, labels, out, iter_offset=0):
     if mode not in MODES:
         raise ValueError(f"mode {mode}: one of {MODES}")
@@ -90,17 +112,36 @@ def plan(cfg, table, mode, tasks, storage, labels, out, iter_offset=0):
         flag, resolved = sw.jvm_flag(table, a.get("switches", {}), params)
         if resolved and a["checkout"] != "poc":
             raise ValueError(f"arm {label}: switches need the POC Lucene (stock Lucene has none)")
-        java = cfg["java_command"] + (" " + flag if flag else "")
+        directory = a.get("directory", "MMapDirectory")
+        if directory not in DIRECTORIES:
+            raise ValueError(f"arm {label}: directory {directory}: one of {DIRECTORIES}")
+        java = cfg["java_command"] + (" " + flag if flag else "") + bufferpool_flags(cfg, directory)
         arms.append({"label": label, "arm": name, "storage": st_name, "storage_spec": cfg["storages"][st_name],
                      "checkout": checkout["path"], "index": a["index"], "index_spec": idx, "java_command": java,
-                     "switches": resolved})
+                     "switches": resolved, "directory": directory})
     runnable = [x for x in arms if not x.get("not_applicable")]
     if not runnable:
         raise ValueError("no runnable arm")
     storages = sorted({x["storage"] for x in runnable})
+    # kernel readahead is per device and must not change while a JVM has the index open: one directory kind per storage
+    # in a session (memory mapping keeps the as-mounted readahead, the bufferpool directory runs with readahead 0 and
+    # announces each window with the read hint, as in the OpenSearch configurations)
+    storage_spec = {}
+    for s_name in storages:
+        kinds = {x["directory"] for x in runnable if x["storage"] == s_name}
+        if len(kinds) > 1:
+            raise ValueError(f"storage {s_name}: arms with different directories {sorted(kinds)} in one session")
+        spec = dict(cfg["storages"][s_name])
+        spec["directory"] = kinds.pop()
+        if spec["directory"] == "BufferPoolDirectory":
+            spec["read_ahead_mode"] = "0"
+        storage_spec[s_name] = spec
+    for x in runnable:
+        x["storage_spec"] = storage_spec[x["storage"]]
     os.makedirs(out, exist_ok=True)
     session = {"mode": mode, "tasks": tasks, "storage": ",".join(storages),
-               "storage_spec": {s: cfg["storages"][s] for s in storages}, "labels": labels, "arms": arms,
+               "storage_spec": storage_spec, "labels": labels, "arms": arms, "bufferpool": cfg.get("bufferpool"),
+               "env": cfg.get("env") or {}, "mem_limit_pct": cfg.get("mem_limit_pct", 70),
                "competition": comp, "luceneutil": cfg["luceneutil"], "params": params, "data": cfg.get("data", "wikimediumall"),
                "switches_fork_commit": table.get("fork_commit"), "id": os.path.basename(os.path.abspath(out)),
                "iter_offset": iter_offset,
@@ -152,6 +193,10 @@ def agent(st, method, path):
 # luceneutil arm reads through MMapDirectory (no bufferpool), so all arms use the same mode, "default" = as mounted
 # (common-rules: stock mmap keeps the kernel readahead); a storage whose value differs refuses the session. The JVMs
 # start after this, so every index file is opened with the verified value.
+# the same environment for every JVM of the session (for example LD_PRELOAD of jemalloc and MALLOC_CONF), recorded
+for k, v in (S.get("env") or {}).items():
+    os.environ[k] = str(v)
+json.dump({"env": S.get("env") or {}, "bufferpool": S.get("bufferpool")}, open(os.path.join(OUT, "jvm-env.json"), "w"), indent=1)
 ra_all = {}
 for name, st in S["storage_spec"].items():
     ra = agent(st, "POST", f"/readahead/mode?arm={st['agent_arm']}&mode={st.get('read_ahead_mode', 'default')}")
@@ -171,7 +216,7 @@ for a in S["arms"]:
         if spec.get("facets"):
             kw["facets"] = tuple(tuple(x) for x in spec["facets"])
         indices[key] = comp.newIndex(spec["builder_checkout"], competition.DATA[S["data"]], **kw)
-    kwc = {"index": indices[key], "javaCommand": a["java_command"], "directory": "MMapDirectory",
+    kwc = {"index": indices[key], "javaCommand": a["java_command"], "directory": a.get("directory", "MMapDirectory"),
            "searchConcurrency": comp_cfg.get("search_concurrency", 0)}
     nq = 1 if strict else comp_cfg.get("num_concurrent_queries")
     if nq is not None:
@@ -200,6 +245,40 @@ manifest = open(os.path.join(OUT, "manifest.jsonl"), "w")
 iter_offset = S.get("iter_offset", 0)
 for _ in range(iter_offset):
     rand.randint(-10000000, 1000000)
+import threading
+
+
+class MemoryMonitor(threading.Thread):
+    """Polls the agent's /node/memory every 10 s while a JVM runs; keeps the peak; past limit % of host memory the
+    JVM is killed and the run is discarded and re-queued (common-rules memory guard)."""
+
+    def __init__(self, st, limit):
+        super().__init__(daemon=True)
+        self.st, self.limit, self.peak, self.killed = st, limit, None, False
+        self._stop_ev = threading.Event()
+
+    def run(self):
+        while not self._stop_ev.wait(10):
+            try:
+                m = agent(self.st, "GET", f"/node/memory?arm={self.st['agent_arm']}")
+            except Exception:
+                continue
+            pct = m.get("rss_pct")
+            if pct is not None and (self.peak is None or pct > self.peak.get("rss_pct", 0)):
+                self.peak = {k: m.get(k) for k in ("rss_pct", "anon_pct", "vm_rss_kb", "rss_anon_kb", "mem_total_kb", "pid")}
+            if pct is not None and pct > self.limit and m.get("pid"):
+                self.killed = True
+                try:
+                    os.kill(int(m["pid"]), 9)
+                except OSError:
+                    pass
+                return
+
+    def stop(self):
+        self._stop_ev.set()
+        self.join(timeout=30)
+
+
 def efs_ok(a, b, target):
     """EFS connection level at the start and the end on one efs-proxy process: target 1 = exactly 1, target 5 = 5 or
     more (a scaled-up mount can show 6 sockets while the previous proxy incarnation closes); coldbench's rule."""
@@ -225,7 +304,9 @@ def run_one(label, it, seed, remeasure=False):
                  "coldpath.cold.arm": st["agent_arm"], "coldpath.cold.uuids": c.index.getName(),
                  "coldpath.cold.residencyTolerance": str(st.get("residency_tolerance", 0)),
                  "coldpath.cold.dropRounds": str(st.get("drop_rounds", 5)),
-                 "coldpath.cold.log": cold_log}
+                 "coldpath.cold.log": cold_log,
+                 # every device read of each task (NFS READ RPCs on Amazon EFS, block reads on Amazon EBS)
+                 "coldpath.cold.trace": "nfs" if st["index_dir_base"].startswith("/mnt/efs") else "block"}
         c.javaCommand = base_cmd + "".join(f" -D{k}={v}" for k, v in props.items())
     else:
         c.javaCommand = base_cmd
@@ -259,8 +340,15 @@ def run_one(label, it, seed, remeasure=False):
         snap_pre = agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")
         t0 = time.time()
         epoch0 = t0
+        mon = MemoryMonitor(st, S.get("mem_limit_pct", 70))
+        mon.start()
         try:
-            log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
+            try:
+                log = r.runSimpleSearchBench(it, S["id"], c, False, seed, static_seed)
+            finally:
+                mon.stop()
+            if mon.killed:
+                raise RuntimeError(f"JVM passed {mon.limit}% of host memory ({mon.peak}): run discarded")
         except RuntimeError as e:
             lf = os.path.join(constants.LOGS_DIR, f"{S['id']}.{c.name}.{it}")
             kept = []
@@ -268,7 +356,7 @@ def run_one(label, it, seed, remeasure=False):
                 if f and os.path.exists(f):
                     os.rename(f, f"{f}.failed{attempt}")
                     kept.append(f"{f}.failed{attempt}")
-            failures.append({"attempt": attempt, "error": str(e)[:500], "wall_s": time.time() - t0, "kept": kept,
+            failures.append({"attempt": attempt, "error": str(e)[:500], "wall_s": time.time() - t0, "kept": kept, "memory": mon.peak,
                              "snapshot_pre": snap_pre, "snapshot_post": agent(st, "GET", f"/snapshot?arm={st['agent_arm']}")})
             print(f"{label} iteration {it}: JVM run failed (attempt {attempt}), re-queued: {e}", flush=True)
             if efs_target:
@@ -318,7 +406,7 @@ def run_one(label, it, seed, remeasure=False):
                                "efs_precondition": efs_pre, "jvm_snapshots": {"pre": snap_pre, "post": snap_post},
                                "efs_invalid_samples": efs_invalid, "remeasure": remeasure,
                                "failed_attempts": failures, "epoch_start": epoch0, "epoch_end": epoch0 + wall,
-                               "storage_incidents": incidents}) + "\n")
+                               "storage_incidents": incidents, "memory_peak": mon.peak, "directory": c.directory}) + "\n")
     manifest.flush()
     return efs_invalid
 

@@ -47,11 +47,12 @@ def _cold_records(path):
     return list(read_jsonl(path))
 
 
-def _io(pre, post):
-    """Device / NFS counter deltas of one task (same keys as coldbench.io_delta, from the agent snapshots)."""
+def _io(pre, post, bp_pre=None, bp_post=None):
+    """Device / NFS counter deltas of one task (same keys as coldbench.io_delta, from the agent snapshots), plus the
+    bufferpool counter deltas when the task read through the bufferpool directory (same stats shape as the plugin)."""
     import coldbench  # the harness's own delta code
 
-    return coldbench.io_delta({"agent": pre, "bp": None}, {"agent": post, "bp": None})
+    return coldbench.io_delta({"agent": pre, "bp": bp_pre}, {"agent": post, "bp": bp_post})
 
 
 def coldbench_efs_ok(io, target):
@@ -146,8 +147,21 @@ def convert(session_dir, out_dir, reference=None):
                 if c.get("task") != t.line:
                     raise SystemExit(f"{m['cold_log']}: record {i} is task {c.get('task')!r}, log task {t.line!r}")
                 rec["cold_ok"] = bool(c["cold_ok"])
-                rec["checks"] = {"page_cache_empty": bool(c["cold_ok"]), "resident_bytes": c["resident_bytes"]}
-                rec["io"] = _io(c.get("pre"), c.get("post"))
+                rec["checks"] = {"page_cache_empty": c["resident_bytes"] == 0 or bool(c["cold_ok"]),
+                                 "resident_bytes": c["resident_bytes"]}
+                rec["io"] = _io(c.get("pre"), c.get("post"), c.get("bp_pre"), c.get("bp_post"))
+                if c.get("read_sizes"):
+                    rec["io"]["nfs_read_sizes" if c.get("trace") == "nfs" else "block_read_sizes"] = c["read_sizes"]
+                if c.get("bp_pre") is not None:
+                    # bufferpool directory: 0 cached blocks at the task start, and every device read is one window
+                    import coldbench
+
+                    rec["checks"]["bp_empty"] = c.get("bp_cached_blocks") == 0
+                    dv = coldbench.device_vs_bufferpool(rec["io"])
+                    rec["io"]["device_vs_bufferpool"] = dv
+                    if dv["ok"] is not None:
+                        rec["checks"]["device_reads_are_windows"] = dv["ok"]
+                    rec["cold_ok"] = rec["cold_ok"] and rec["checks"]["bp_empty"] and dv["ok"] is not False
                 eok = coldbench_efs_ok(rec["io"], efs_target)
                 if eok is not None:
                     rec["checks"]["efs_connections_ok"] = eok
