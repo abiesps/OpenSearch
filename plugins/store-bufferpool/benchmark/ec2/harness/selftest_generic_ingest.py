@@ -50,6 +50,18 @@ def part_g(osbw, tmp, check, generic):
         wl = json.load(open(os.path.join(tmp, f"ingest-{c}-u", "workload.json")))
         check(rec["bulk_ops"] == ["index-update"] and wl["operations"][0].get("conflicts") == "random",
               f"(g) {c}: the update procedure runs the workload's index-update op with conflicts")
+    for c in ("nested", "percolator"):  # nested templates index.store.type, percolator has none
+        out = os.path.join(tmp, f"ingest-{c}-bp")
+        rec = ingest_osb.derive(osbw, c, out, shards=6, store_type="bufferpoolfs", params={"store_type": "hybridfs"})
+        body = json.load(open(os.path.join(out, json.load(open(os.path.join(out, "workload.json")))["indices"][0]["body"])))
+        check(body["settings"].get("index.store.type") == "bufferpoolfs" and
+              any("index.store.type=bufferpoolfs" in o for o in rec["overrides"]),
+              f"(g) {c}: --store-type bufferpoolfs replaces the workload's store type and is recorded")
+        out2 = os.path.join(tmp, f"ingest-{c}-param")
+        ingest_osb.derive(osbw, c, out2, shards=6, params={"store_type": "hybridfs"})
+        body2 = json.load(open(os.path.join(out2, json.load(open(os.path.join(out2, "workload.json")))["indices"][0]["body"])))
+        check(body2["settings"].get("index.store.type") == ("hybridfs" if c == "nested" else None),
+              f"(g) {c}: without --store-type the workload's own store type (template parameter) is kept")
     try:
         ingest_osb.derive(osbw, "so", os.path.join(tmp, "ingest-bad"), split_fields=["title"])
         check(False, "(g) split meta refused on a text field")

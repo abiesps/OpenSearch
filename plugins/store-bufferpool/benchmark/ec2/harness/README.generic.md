@@ -37,8 +37,12 @@ python3 ingest_osb.py check --osb-workloads OSBW --corpus eventdata --shards 6 -
     --agent http://DATA:9700 --token-file TOKEN --sequence S0-EBS,POC-EBS,POC-EBS,S0-EBS,S0-EBS,POC-EBS \
     --out results/eventdata/ingest-check
 python3 ingest_osb.py check ... --procedure update          # geonames, geopoint, geopointshape: index-update
-# B index (split BKD date fields, POC binary): eventdata, so, nested, noaa only
-python3 ingest_osb.py render ... --rename eventdata=eventdata_split --split-fields @timestamp --out work/eventdata/derived-b
+# B index (split BKD date fields, POC binary): eventdata, so, nested, noaa only. --store-type bufferpoolfs is
+# required: the plugin's codec (split points format) is used only for bufferpoolfs indices
+# (BufferPoolStorePlugin.getCustomCodecServiceFactory); without it the "B" index is written in the stock format.
+# Check: the codec name Lucene104SplitPoints appears in the .si files of every segment.
+python3 ingest_osb.py render ... --rename eventdata=eventdata_split --split-fields @timestamp --store-type bufferpoolfs --out work/eventdata/derived-b
+# ingest check with the POC as deployed (bufferpoolfs, plugin codec): --store-types S0-EBS=hybridfs,POC-EBS=bufferpoolfs
 # arms (generated from the branch's arms file); single-shard >= 30 GB and 1-segment variants
 python3 arms_generic.py build --base arms.json --corpus geoshape --segments 10 --out arms.geoshape.json
 python3 arms_generic.py indices --corpus clickbench --layout single --segments 10 --out indices.clickbench.1s.json

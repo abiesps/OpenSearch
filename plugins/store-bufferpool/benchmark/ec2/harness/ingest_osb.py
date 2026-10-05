@@ -85,7 +85,7 @@ def set_field_meta(mappings, dotted, meta):
 
 
 def derive(osb_workloads, corpus, out, shards=None, replicas=0, renames=None, split_fields=None, procedure="append",
-           clients=8, bulk_size=None, params=None):
+           clients=8, bulk_size=None, params=None, store_type=None):
     """Writes the derived workload into `out`; returns its derivation record."""
     profile = load_profile(corpus)
     wd = os.path.join(osb_workloads, profile["osb"]["workload"])
@@ -120,6 +120,13 @@ def derive(osb_workloads, corpus, out, shards=None, replicas=0, renames=None, sp
         st.pop("number_of_replicas", None)
         st["index.number_of_replicas"] = int(replicas)
         overrides.append(f"{idx['name']}: index.number_of_replicas={replicas}")
+        if store_type:
+            # the POC plugin's codec (split BKD points, per-field postings formats) is used only for bufferpoolfs
+            # indices (BufferPoolStorePlugin.getCustomCodecServiceFactory), so a B index and a POC ingest-check entry
+            # must be written with index.store.type bufferpoolfs; a stock entry keeps the workload's (or hybridfs)
+            st.pop("store.type", None)
+            st["index.store.type"] = store_type
+            overrides.append(f"{idx['name']}: index.store.type={store_type}")
         for f in (split_fields or []):
             set_field_meta(body["mappings"], f, SPLIT_META)
             overrides.append(f"{idx['name']}: mapping {f} meta {json.dumps(SPLIT_META)}")
@@ -294,7 +301,8 @@ def _parse_kv(items):
 
 def cmd_render(a):
     rec = derive(a.osb_workloads, a.corpus, a.out, a.shards, a.replicas, _parse_kv(a.rename),
-                 [f for f in (a.split_fields or "").split(",") if f], a.procedure, a.clients, a.bulk_size, _parse_kv(a.param))
+                 [f for f in (a.split_fields or "").split(",") if f], a.procedure, a.clients, a.bulk_size, _parse_kv(a.param),
+                 a.store_type)
     print(json.dumps(rec, indent=1))
 
 
@@ -319,6 +327,11 @@ def cmd_check(a):
     agent = JsonClient(a.agent, timeout=900.0, headers={"X-Coldpath-Token": token})
     client = JsonClient(a.url)
     names = [i["name"] for i in profile["indices"]]
+    store_types = _parse_kv([x for x in (a.store_types or "").split(",") if x])
+    unknown = sorted(set(store_types) - set(seq))
+    if unknown:
+        raise SystemExit(f"--store-types names arms not in --sequence: {unknown}")
+    params = _parse_kv(a.param)
     summary = []
     for k, arm in enumerate(seq):
         keep = k == 0 and a.keep_first
@@ -326,7 +339,8 @@ def cmd_check(a):
         renames = {n: n + suffix for n in names} if suffix else {}
         derived = os.path.join(a.out, f"derived-{k}")
         derive(a.osb_workloads, a.corpus, derived, a.shards, 0, renames,
-               [f for f in (a.split_fields or "").split(",") if f], a.procedure, a.clients, a.bulk_size)
+               [f for f in (a.split_fields or "").split(",") if f], a.procedure, a.clients, a.bulk_size, params,
+               store_types.get(arm))
         try:
             closed = _close_open_indices(client)
         except Exception:  # noqa: BLE001 - node not running yet
@@ -338,7 +352,7 @@ def cmd_check(a):
         r = run_osb(derived, a.url, out_json, a.osb_bin, f"coldpath_ingest_check:{k},arm:{arm}", a.force_recreate)
         r["arm"], r["closed_before_restart"], r["agent_restart"] = arm, closed, res
         json.dump(r, open(out_json, "w"), indent=1)
-        summary.append({"k": k, "arm": arm, "file": out_json, "wall_s": r["wall_s"], "kept": keep,
+        summary.append({"k": k, "arm": arm, "store_type": store_types.get(arm), "file": out_json, "wall_s": r["wall_s"], "kept": keep,
                         "indices": r["indices"], "osb_bulk": {t: v for t, v in r["osb"].items() if t}})
         if suffix:
             for n in renames.values():
@@ -361,16 +375,20 @@ def main():
         p.add_argument("--procedure", choices=["append", "update"], default="append")
         p.add_argument("--clients", type=int, default=8, help="bulk clients (the workloads' bulk_indexing_clients default)")
         p.add_argument("--bulk-size", type=int, help="default: the workload's own bulk-size")
+        p.add_argument("--param", action="append", help="workload parameter NAME=VALUE (rendered into the templates)")
         p.add_argument("--out", required=True)
     r = sub.choices["render"]
     r.add_argument("--replicas", type=int, default=0)
     r.add_argument("--rename", action="append", help="OLD=NEW index name")
-    r.add_argument("--param", action="append", help="workload parameter NAME=VALUE (rendered into the templates)")
+    r.add_argument("--store-type", help="index.store.type of every index (bufferpoolfs for a B index: the split points "
+                   "format is written only for bufferpoolfs indices)")
     c = sub.choices["check"]
     c.add_argument("--url", required=True)
     c.add_argument("--agent", required=True)
     c.add_argument("--token-file")
     c.add_argument("--sequence", default="S0-EBS,POC-EBS,POC-EBS,S0-EBS,S0-EBS,POC-EBS")
+    c.add_argument("--store-types", help="ARM=TYPE,... index.store.type per agent arm of --sequence (e.g. "
+                   "S0-EBS=hybridfs,POC-EBS=bufferpoolfs: the POC codec is used only for bufferpoolfs indices)")
     c.add_argument("--keep-first", action="store_true", help="the first ingest keeps the workload's index names")
     c.add_argument("--osb-bin", default="opensearch-benchmark")
     c.add_argument("--force-recreate", action="store_true", help="--keep-first: delete and rebuild an existing index "
