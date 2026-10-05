@@ -8,13 +8,9 @@
 
 package org.opensearch.plugin.store.bufferpool;
 
-import org.apache.lucene.search.TopKPrefetch;
-import org.apache.lucene.util.bkd.BKDExperiments;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.concurrent.OpenSearchExecutors;
-import org.opensearch.search.aggregations.DocValuesPrefetch;
-import org.opensearch.search.query.SortIoExperiments;
 import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.threadpool.TestThreadPool;
 import org.opensearch.threadpool.ThreadPool;
@@ -97,29 +93,6 @@ public class BufferPoolStorePluginSettingsTests extends OpenSearchTestCase {
             b.append(t.getMessage()).append('\n');
         }
         return b.toString();
-    }
-
-    public void testPlannerNodeSizesComeFromTheSequentialReadSize() {
-        try {
-            final BlockCache cache = create(
-                Settings.builder()
-                    .put(BLOCK_SIZE_SETTING.getKey(), "8kb")
-                    .put(RANDOM_READ_SIZE_SETTING.getKey(), "32kb")
-                    .put(SEQUENTIAL_READ_SIZE_SETTING.getKey(), "256kb")
-                    .build()
-            );
-            BufferPoolStorePlugin.setPrefetchNodeBytes(cache.prefetchNodeBytes());
-            assertEquals(262144, DocValuesPrefetch.nodeBytes());
-            assertEquals(262144, TopKPrefetch.getNodeBytes());
-            assertEquals(262144, BKDExperiments.getNodeBytes());
-            assertEquals(262144, SortIoExperiments.sortPrefetchNodeBytes());
-            // below the BKD planner's minimum node size: that planner uses its minimum
-            BufferPoolStorePlugin.setPrefetchNodeBytes(1024);
-            assertEquals(1024, DocValuesPrefetch.nodeBytes());
-            assertEquals(BKDExperiments.MIN_NODE_BYTES, BKDExperiments.getNodeBytes());
-        } finally {
-            BufferPoolStorePlugin.setPrefetchNodeBytes(BlockCache.DEFAULT_BLOCK_SIZE);
-        }
     }
 
     public void testReadHintSetting() {

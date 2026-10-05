@@ -10,10 +10,8 @@ package org.opensearch.plugin.store.bufferpool;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.search.TopKPrefetch;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockFactory;
-import org.apache.lucene.util.bkd.BKDExperiments;
 import org.opensearch.action.support.ActionFilter;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.node.DiscoveryNodes;
@@ -45,8 +43,6 @@ import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.rest.RestController;
 import org.opensearch.rest.RestHandler;
 import org.opensearch.script.ScriptService;
-import org.opensearch.search.aggregations.DocValuesPrefetch;
-import org.opensearch.search.query.SortIoExperiments;
 import org.opensearch.tasks.TaskResourceTrackingService;
 import org.opensearch.threadpool.ExecutorBuilder;
 import org.opensearch.threadpool.FixedExecutorBuilder;
@@ -318,7 +314,7 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
         });
         scheduler.set(prefetchScheduler);
         final BlockCache cache = createBlockCache(settings, maxBytes, prefetchScheduler);
-        setPrefetchNodeBytes(cache.prefetchNodeBytes());
+        ExperimentHooks.setPrefetchNodeBytes(cache.prefetchNodeBytes());
         cache.setSimulatedLoadLatencyNanos(SIMULATED_LOAD_LATENCY_SETTING.get(settings).nanos());
         clusterService.getClusterSettings()
             .addSettingsUpdateConsumer(SIMULATED_LOAD_LATENCY_SETTING, latency -> cache.setSimulatedLoadLatencyNanos(latency.nanos()));
@@ -414,23 +410,10 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
     }
 
     /**
-     * Sets the node size of every prefetch planner to {@code nodeBytes}, the configured sequential read size, so a planner
-     * requests whole storage reads and its node size does not depend on the cache block size. The planners are JVM-wide;
-     * the experiment endpoints set the same value again when they enable one.
-     */
-    static void setPrefetchNodeBytes(long nodeBytes) {
-        DocValuesPrefetch.setNodeBytes(nodeBytes);
-        TopKPrefetch.setNodeBytes(nodeBytes);
-        // the BKD planner does not accept nodes below its minimum; a larger node is still read in whole windows
-        BKDExperiments.setNodeBytes(Math.max(BKDExperiments.MIN_NODE_BYTES, nodeBytes));
-        SortIoExperiments.setSortPrefetchNodeBytes(nodeBytes);
-        // DisjunctionPrefetch stays unaligned (node size 0) until its endpoint enables aligned requests
-    }
-
-    /**
-     * For {@value #STORE_TYPE} indices, every codec ({@code index.codec}, any mode) lets each field choose its postings
-     * format and its points format through the {@code meta.postings_format} and {@code meta.points_format} mapping
-     * entries, see {@link BufferPoolCodecService}.
+     * For {@value #STORE_TYPE} indices, the codec service of {@link ExperimentHooks#codecServiceFactory()}: in the
+     * proof-of-concept build every codec ({@code index.codec}, any mode) lets each field choose its postings format and its
+     * points format through the {@code meta.postings_format} and {@code meta.points_format} mapping entries; the build for
+     * stock OpenSearch has none, so the index uses the codec service of OpenSearch.
      *
      * @param indexSettings settings of the index the codec is for
      */
@@ -439,20 +422,20 @@ public class BufferPoolStorePlugin extends Plugin implements IndexStorePlugin, E
         if (STORE_TYPE.equals(indexSettings.getValue(IndexModule.INDEX_STORE_TYPE_SETTING)) == false) {
             return Optional.empty();
         }
-        return Optional.of(BufferPoolCodecService::new);
+        return ExperimentHooks.codecServiceFactory();
     }
 
     /**
-     * Refuses a {@code meta.postings_format} or {@code meta.points_format} name that is not available in the mapping of a
-     * {@value #STORE_TYPE} index, when the index is created or its mapping is updated, see
-     * {@link FormatMetaMappingValidator}.
+     * The action filters of {@link ExperimentHooks#actionFilters}: in the proof-of-concept build, the check that refuses a
+     * {@code meta.postings_format} or {@code meta.points_format} name that is not available in the mapping of a
+     * {@value #STORE_TYPE} index; none in the build for stock OpenSearch.
      */
     @Override
     public List<ActionFilter> getActionFilters() {
-        return List.of(new FormatMetaMappingValidator(() -> {
+        return ExperimentHooks.actionFilters(() -> {
             final ClusterService service = clusterService.get();
             return service == null ? null : service.state();
-        }, indexNameExpressionResolver::get));
+        }, indexNameExpressionResolver::get);
     }
 
     @Override

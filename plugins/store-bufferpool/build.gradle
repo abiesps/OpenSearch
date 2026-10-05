@@ -13,6 +13,20 @@ opensearchplugin {
   classname = 'org.opensearch.plugin.store.bufferpool.BufferPoolStorePlugin'
 }
 
+// The OpenSearch and Lucene this plugin is built against, -Dbufferpool.target=poc (default) or stock:
+//  poc   the proof-of-concept OpenSearch and Lucene fork: adds src/poc (the experiment endpoints, the planner node size and
+//        the per-field format codecs, which use fork-only APIs) and its tests;
+//  stock stock OpenSearch and stock Lucene: adds src/stock (ExperimentHooks without any of them) and its tests.
+// src/main, the store (block cache, index input, read windows, read hints, prefetch scheduler), is the same for both.
+def bufferpoolTarget = System.getProperty('bufferpool.target', 'poc')
+if (['poc', 'stock'].contains(bufferpoolTarget) == false) {
+  throw new GradleException("bufferpool.target must be poc or stock, got [${bufferpoolTarget}]")
+}
+sourceSets {
+  main.java.srcDir "src/${bufferpoolTarget}/java"
+  test.java.srcDir "src/${bufferpoolTarget}Test/java"
+  internalClusterTest.java.srcDir "src/${bufferpoolTarget}InternalClusterTest/java"
+}
 versions << [
   'caffeine': '3.3.0'
 ]

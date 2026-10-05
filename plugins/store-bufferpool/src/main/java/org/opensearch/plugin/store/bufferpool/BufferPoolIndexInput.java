@@ -278,7 +278,7 @@ final class BufferPoolIndexInput extends IndexInput implements RandomAccessInput
         cache.prefetch(file, fileId, storage, fileLength, firstBlock << blockSizePower, lastBlock - firstBlock + 1, stats);
     }
 
-    @Override
+    // overrides RandomAccessInput#isLoaded(long, long) of the proof-of-concept Lucene; stock Lucene has no such method
     public Optional<Boolean> isLoaded(long offset, long len) {
         if (offset < 0 || len < 0 || offset > length - len) {
             throw new IllegalArgumentException(
