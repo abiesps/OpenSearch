@@ -330,36 +330,36 @@
     "smoke_on_builder": "poc_iosize2 smoke unchanged (hint 1.00 device IO per storage read, nohint 26.65); codec smoke: bufferpoolfs indices with index.codec best_compression and default, date field with points_format Lucene90Split, keyword with postings_format Lucene104Nav: segments_N codec Lucene104SplitPoints, 4 _Lucene90Split_0.kd[midv] files, 6 Lucene104Nav files, stored fields mode BEST_COMPRESSION resp. BEST_SPEED (smoke-iosize3-codec.txt)."
   },
   "poc_iosize_conc": {
-    "written_at_pdt": "2026-10-05T05:15:00-07:00",
-    "what": "poc_iosize3 storage layer and the approved codec commits of ec2-bench (up to 3760a9eb88d and the storage branch 63a89302765) plus node-wide prefetch concurrency (bp-concurrency-design.md revision 9 with addendum 14): settings bufferpool.prefetch.max_in_flight (1-256, default min(8, processors)), budget_scope (prefetch default | total), queue_size (0-65536, default 1024), queue_policy (fifo default | fair); PrefetchScheduler (bounded queue, drop never defer, budget gate over prefetch or prefetch+demand reads in flight, demand reads counted never throttled), PrefetchTaskListener (cancellation and query fairness key), /_bufferpool/stats prefetch_scheduler object and latency histograms (?histogram_buckets=true). With no new settings the node behaves as poc_iosize3 except: a cancelled search's queued prefetches are dropped, and the bufferpool_prefetch thread-pool queue is 8 worker runnables (items queue in the scheduler; read prefetch_scheduler.items_started / pending instead of thread-pool completed / queue).",
-    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-osd6daba062dc-lucene59f87aa1af-bufferpool-iosize_conc-no-jdk-linux-x64.tar.gz",
-    "sha256": "4a558f5b372df63abf4133bd58eb10bf18cf6030a9a170c6bb8f0ff8efafed9b",
+    "written_at_pdt": "2026-10-05T06:35:00-07:00",
+    "what": "poc_iosize3 storage layer and the approved codec commits of ec2-bench (up to 3760a9eb88d and the storage branch 63a89302765) plus node-wide prefetch concurrency (bp-concurrency-design.md revision 9 with addendum 14): settings bufferpool.prefetch.max_in_flight (1-256, default min(8, processors)), budget_scope (prefetch default | total), queue_size (0-65536, default 1024), queue_policy (fifo default | fair); PrefetchScheduler (bounded queue, drop never defer, budget gate over prefetch or prefetch+demand reads in flight, demand reads counted never throttled), PrefetchTaskListener (cancellation and query fairness key), /_bufferpool/stats prefetch_scheduler object and latency histograms (?histogram_buckets=true). With no new settings the node behaves as poc_iosize3 except: a cancelled search's queued prefetches are dropped, and the bufferpool_prefetch thread-pool queue is 8 worker runnables (items queue in the scheduler; read prefetch_scheduler.items_started / pending instead of thread-pool completed / queue). Rebuilt at 807d8509e56 with the fixes of code review iteration 1 (bp-concurrency-code-review.md): the stats readers (GET /_bufferpool/stats, its reset) run the kick loop after they unlock, so a held item is never left without a wake-up; a submit that finds the gate reopened while items wait gives the slot to the next queued item by the policy; items_started and items_started_after_phase_end count items a worker ran (a cancelled item is in dropped.cancelled only); the histograms record nanoseconds and report microseconds with a fraction.",
+    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-poc-3.10.0-SNAPSHOT-os807d8509e56-lucene59f87aa1af-bufferpool-iosize_conc-no-jdk-linux-x64.tar.gz",
+    "sha256": "9fa8445a9a2b83714179896ad775fd8d837ed5f6c5cfcfa306aa8d895272df65",
     "extracts_to": "opensearch-3.10.0-SNAPSHOT/",
     "os_branch": "ec2-bench",
-    "os_commit": "d6daba062dc7a52becf3a44708c42176d7c654c0",
-    "os_commit_subject": "Bound prefetch reads by a node read budget",
+    "os_commit": "807d8509e564648940b48fa93655184efd4ca632",
+    "os_commit_subject": "Wake held prefetches from stats readers",
     "base_os_commit": "24d19cc03e91528493167c57fd44d4f4a4878437",
     "base_note": "non-benchmark changes since 24d19cc03e9 are only plugins/store-bufferpool/src and plugins/store-bufferpool/build.gradle (internal-cluster-test plugin, test only); checked by the build script; the core distribution build_hash still reports 24d19cc03e9",
     "lucene_commit": "59f87aa1af8fe8514d73088d05b4847e4b401549",
-    "lucene_verification": "15 lucene jars of the distribution byte-identical to ~/.m2 naming 59f87aa1af (lucene-verify-iosize_conc.txt); Lucene not rebuilt",
+    "lucene_verification": "15 lucene jars of the distribution byte-identical to ~/.m2 naming 59f87aa1af (lucene-verify-iosize_conc.txt under artifacts/2026-10-05); Lucene not rebuilt",
     "plugin_zip": {
-      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/store-bufferpool-3.10.0-SNAPSHOT-osd6daba062dc-iosize_conc.zip",
-      "sha256": "b4d8acea39deba63c855ae8ff2a378f46260ccda2f96094c0440c43fcc860b70"
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/store-bufferpool-3.10.0-SNAPSHOT-os807d8509e56-iosize_conc.zip",
+      "sha256": "bf5ae4a1dd17853263d4e2a459c657d42b7bb83ebfeca1eb46981c47d73514ec"
     },
-    "installed_plugin_jar_sha256": "bd6196ded6ea6c94c0562e57da46ae9f759948762e2b023d9c6154634da5973b",
-    "build_script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build-poc-iosize-conc.sh (copy: .agents/tasks/ec2-big5-2026-10-04/builder/build-poc-iosize-conc.sh); built in its own worktree ~/build/os-conc on the builder",
+    "installed_plugin_jar_sha256": "43647d9ee961058373fd088d13b471ffb0adcbfea9eaef67483bbfdde3201031",
+    "build_script": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/build-poc-iosize-conc.sh (copy: .agents/tasks/ec2-big5-2026-10-04/builder/build-poc-iosize-conc.sh); built in its own worktree ~/build/os-conc on the builder; run 2026-10-05 13:12 to 13:30 UTC with prefix artifacts/2026-10-05 and commit 807d8509e56 (log ~/build/iosize_conc-run2.log)",
     "files": [
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/SHA256SUMS-iosize_conc",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/commits-iosize_conc.env",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/lucene-verify-iosize_conc.txt",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/tests-iosize_conc.txt",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize_conc.txt",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize_conc-codec.txt",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/smoke-iosize_conc-invalid.txt",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-build.log.gz",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-test.log.gz",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-precommit.log.gz",
-      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/logs/poc-iosize_conc-run.log.gz"
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/SHA256SUMS-iosize_conc",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/commits-iosize_conc.env",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/lucene-verify-iosize_conc.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/tests-iosize_conc.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-iosize_conc.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-iosize_conc-codec.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/smoke-iosize_conc-invalid.txt",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/logs/poc-iosize_conc-poc-build.log.gz",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/logs/poc-iosize_conc-test.log.gz",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/logs/poc-iosize_conc-precommit.log.gz",
+      "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/logs/poc-iosize_conc-run.log.gz"
     ],
     "node_settings_ec2": {
       "io": "same as poc_iosize2 (block 8kb, random 32kb, sequential 128kb, read_hint auto)",
@@ -375,7 +375,17 @@
       },
       "verify": "GET /_bufferpool/stats prefetch_scheduler.max_in_flight / budget_scope / queue_size / queue_policy equal the arm's values, and _cat/thread_pool/bufferpool_prefetch size == queue_size == max_in_flight"
     },
-    "unit_tests": "builder, Corretto 21.0.12.1, worktree at d6daba062dc: :plugins:store-bufferpool:test -Dtests.iters=20: 3,340 runs, 0 failures, 0 errors, 20 skipped (platform assumptions); :plugins:store-bufferpool:internalClusterTest: 3 runs, 0 failures; :plugins:store-bufferpool:precommit OK (tests-iosize_conc.txt). Laptop (macOS, Corretto 21.0.12): same suite 3,340 runs, 0 failures, 60 skipped; precommit OK.",
-    "smoke_on_builder": "XFS loop device, read_ahead_kb 0, cold sessions: default node (budget 8, prefetch, fifo), read hints off, and budget 24 scope total fair: 20 storage reads -> 20 device reads with hints (1.00 per read), 534 without (26.70); thread pool size = queue = 8 resp. 24, 0 rejected; prefetch_reads_outside_slot 0, nested_prefetch_reads 0, max_reads_in_flight <= max_active_workers <= budget, max_total_reads_at_item_start <= 24 with scope total, demand_reads_started 19 = summed demand reads 19, latency histogram counts = storage reads, prefetch + demand bytes = bytes read, scheduler idle after each session. Codec smoke unchanged (split points and Nav postings under best_compression and default). Invalid settings stop the node with the key in the message: max_in_flight 257, budget_scope demand, queue_policy lifo, thread_pool.bufferpool_prefetch.size 16, plus the earlier read-size and read-hint cases. The smoke has one prefetch item per session; load behaviour is the phase-B measurement."
+    "scope_total_prerequisites": "Do not run an arm with bufferpool.prefetch.budget_scope total (the storage-model arms above) until the phase-B harness of bp-concurrency-design.md section 7 has landed: wait_idle_point before each per-operation reset and at the end of each operation interval, the idle_bounded marks, and the analysis checks (code review iteration 1, finding 6). Already on ec2-bench at 807d8509e56: wait_prefetch_idle (inside clear) also requires prefetch_scheduler.pending == 0 and demand_reads_in_flight == 0, and cold_state.py reads items_started and pending. Run the fair-policy arm only on this build or later (finding 2).",
+    "stats_changes": "prefetch_scheduler.items_started and items_started_after_phase_end count items a worker ran; admitted = finished + dropped after admission + pending; histogram fields (read_latency_micros, prefetch_queue_wait_micros, demand_wait_micros: median, percentile_90, percentile_99, max, bucket upper values) are microseconds with a fraction, recorded in nanoseconds (2 significant digits, 1 ns to 60 s).",
+    "unit_tests": "builder, Corretto 21.0.12.1, worktree at 807d8509e56: :plugins:store-bufferpool:test -Dtests.iters=20: 3,380 runs, 0 failures, 0 errors, 40 skipped (platform assumptions); :plugins:store-bufferpool:internalClusterTest: 3 runs, 0 failures; :plugins:store-bufferpool:precommit OK (tests-iosize_conc.txt). Laptop (macOS, Corretto 21.0.12): same suite 3,380 runs, 0 failures, 60 skipped; PrefetchSchedulerTests at 200 iterations 4,414 runs, 0 failures; precommit OK; BufferPoolPrefetchSchedulerIT 1 test, 0 failures; mutation check: both new tests fail without the fixes.",
+    "smoke_on_builder": "XFS loop device, read_ahead_kb 0, one cold session each: default node (budget 8, prefetch, fifo), read hints off, and budget 24 scope total fair: 20 storage reads (19 demand, 1 prefetch) -> 20 device reads with hints (1.00 per read), 535 without (26.75); thread pool size = queue = 8 resp. 24, 0 rejected; prefetch_reads_outside_slot 0, nested_prefetch_reads 0, max_reads_in_flight 1 <= max_active_workers 1 <= budget, max_total_reads_at_item_start 1, demand_reads_started 19 = summed demand reads 19, histogram counts = storage reads, prefetch + demand bytes = bytes read, admitted 1 = finished 1, scheduler idle after each session; demand read latency of the 128 KiB class with hints: median 696.319, 99th percentile 1,671.167 microseconds. Codec smoke unchanged. Invalid settings stop the node with the key in the message (same 6 cases).",
+    "superseded_build": {
+      "note": "first build of poc_iosize_conc, before the code review iteration 1 fixes; do not use for scope-total or fair-policy arms",
+      "os_commit": "d6daba062dc7a52becf3a44708c42176d7c654c0",
+      "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-poc-3.10.0-SNAPSHOT-osd6daba062dc-lucene59f87aa1af-bufferpool-iosize_conc-no-jdk-linux-x64.tar.gz",
+      "sha256": "4a558f5b372df63abf4133bd58eb10bf18cf6030a9a170c6bb8f0ff8efafed9b",
+      "plugin_zip_sha256": "b4d8acea39deba63c855ae8ff2a378f46260ccda2f96094c0440c43fcc860b70",
+      "installed_plugin_jar_sha256": "bd6196ded6ea6c94c0562e57da46ae9f759948762e2b023d9c6154634da5973b"
+    }
   }
 }
