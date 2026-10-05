@@ -1,14 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: coldpath <coldpath@localhost>
-Date: Mon, 5 Oct 2026 05:16:44 -0700
+Date: Mon, 5 Oct 2026 05:29:46 -0700
 Subject: [PATCH 2/3] Drop and verify caches before every task (cold mode)
 
 ---
  src/main/perf/ColdpathCold.java   | 165 ++++++++++++++++++++++++++++++
- src/main/perf/IndexState.java     |  26 ++++-
+ src/main/perf/IndexState.java     |  37 ++++++-
  src/main/perf/SearchPerfTest.java |   3 +
  src/main/perf/TaskThreads.java    |  14 +++
- 4 files changed, 207 insertions(+), 1 deletion(-)
+ 4 files changed, 218 insertions(+), 1 deletion(-)
  create mode 100644 src/main/perf/ColdpathCold.java
 
 diff --git a/src/main/perf/ColdpathCold.java b/src/main/perf/ColdpathCold.java
@@ -183,7 +183,7 @@ index 00000000..9707e7a7
 +  }
 +}
 diff --git a/src/main/perf/IndexState.java b/src/main/perf/IndexState.java
-index d5243bdf..076294ce 100644
+index d5243bdf..0219b758 100644
 --- a/src/main/perf/IndexState.java
 +++ b/src/main/perf/IndexState.java
 @@ -58,7 +58,8 @@ class IndexState {
@@ -196,7 +196,7 @@ index d5243bdf..076294ce 100644
    public final FacetsConfig facetsConfig;
    public final boolean groupBlocksExist;
    // maps facet dimension to method (sortedset, taxonomy)
-@@ -125,6 +126,29 @@ class IndexState {
+@@ -125,6 +126,40 @@ class IndexState {
  
    private final Map<String,SortedSetDocValuesReaderState> ssdvFacetStates = new HashMap<>();
  
@@ -210,14 +210,25 @@ index d5243bdf..076294ce 100644
 +  public synchronized String coldpathResetCaches() throws IOException {
 +    int ssdv = ssdvFacetStates.size();
 +    ssdvFacetStates.clear();
++    // the PK maps are keyed per segment core at construction: keep the keys, start fresh per-thread states
 +    int pk = pkLookupStates.size() + pointsPKLookupStates.size() + pkLookupWithTermStateStates.size();
-+    pkLookupStates.clear();
-+    pointsPKLookupStates.clear();
-+    pkLookupWithTermStateStates.clear();
++    pkLookupStates.replaceAll((k, v) -> new ThreadLocal<>());
++    pointsPKLookupStates.replaceAll((k, v) -> new ThreadLocal<>());
++    pkLookupWithTermStateStates.replaceAll((k, v) -> new ThreadLocal<>());
 +    boolean taxo = false;
 +    if (taxoReader instanceof org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader old) {
-+      taxoReader = new org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader(old.getInternalIndexReader().directory());
++      // reopen on a NEW MMapDirectory: MMapDirectory shares one arena per segment among the inputs of one directory
++      // instance, so a reader reopened on the same instance keeps the old mappings alive and maps every file twice;
++      // a page mapped twice cannot be paged out (MADV_PAGEOUT skips it), so the cold drop could not empty the cache
++      org.apache.lucene.store.Directory oldDir = old.getInternalIndexReader().directory();
++      org.apache.lucene.store.Directory unwrapped = org.apache.lucene.store.FilterDirectory.unwrap(oldDir);
++      if (unwrapped instanceof org.apache.lucene.store.MMapDirectory == false) {
++        throw new IllegalStateException("coldpath cold mode reopens the taxonomy on MMapDirectory only, got " + unwrapped);
++      }
++      java.nio.file.Path path = ((org.apache.lucene.store.FSDirectory) unwrapped).getDirectory();
++      taxoReader = new org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyReader(new org.apache.lucene.store.MMapDirectory(path));
 +      old.close();
++      oldDir.close();
 +      taxo = true;
 +    }
 +    return "{\"ssdv_states\":" + ssdv + ",\"pk_states\":" + pk + ",\"taxonomy_reopened\":" + taxo + "}";
