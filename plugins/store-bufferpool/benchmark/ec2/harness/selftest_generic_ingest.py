@@ -187,6 +187,19 @@ def part_g(osbw, tmp, check, generic):
           h[0]["inner_hits"]["answers"]["hits"]["hits"][0]["_id"] == 'q7/{"field": "answers", "offset": 2}' and
           _ie.with_key_field({"size": 1}, "qid") == {"size": 1, "docvalue_fields": ["qid"]},
           "(g) index_equality: hits keyed by the document key (inner hits by parent key and nested offset)")
+    ca = {"o": {"canonical": {"total": 1, "hits": [], "digest": "d1",
+                              "aggs": {"a": {"doc_count_error_upper_bound": 1, "buckets": [{"key": "x", "doc_count": 2}]}}}}}
+    cb = {"o": {"canonical": {"total": 1, "hits": [], "digest": "d2",
+                              "aggs": {"a": {"doc_count_error_upper_bound": 2, "buckets": [{"key": "x", "doc_count": 3}]}}}}}
+    cc = {"o": {"canonical": {"total": 1, "hits": [], "digest": "d3",
+                              "aggs": {"a": {"doc_count_error_upper_bound": 2, "buckets": [{"key": "x", "doc_count": 2}]}}}}}
+    ign = ["doc_count_error_upper_bound"]
+    check(_ie.compare([{"name": "o"}], ca, cb, ign)[1] == 0 and _ie.compare([{"name": "o"}], ca, cc, ign)[1] == 1,
+          "(g) index_equality: an ignored agg key is left out, every other difference still counts")
+    orc = _ie.oracle_op({"name": "o", "body": {"aggs": {"t": {"terms": {"field": "tag"}}}}})
+    check(orc["params"]["search_type"] == "dfs_query_then_fetch" and orc["body"]["profile"] is True and
+          orc["body"]["aggs"]["t"]["terms"]["shard_size"] == _ie.ORACLE_SHARD_SIZE,
+          "(g) index_equality: oracle form = dfs_query_then_fetch, profile, large terms shard_size")
     ex = json.load(open(os.path.join(here, "arms.generic.example.json")))
     check(ex["other_indices"] == "close" and "S2-CORE+PLANNER-EBS" in ex["arms"] and "S2-A-EBS" in ex["arms"],
           "(g) arms.generic.example.json: other_indices close, EBS POC arms present")

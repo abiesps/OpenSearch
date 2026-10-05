@@ -99,12 +99,31 @@ def oracle_op(op):
     index-wide term statistics, so BM25 scores do not depend on which shard a document was routed to (the two indices
     route auto-generated ids differently); profile=true runs every query through the profiler's plain scorer path,
     which g-nested-percolator found to return the true top hits of nested max sorts where the default path of stock
-    OpenSearch 3.10 / Lucene 10.5.1 does not (phaseA.md, finding "nested sort").
+    OpenSearch 3.10 / Lucene 10.5.1 does not (phaseA.md, finding "nested sort"); terms-like aggregations get a large
+    shard_size (_exact_terms) so their buckets do not depend on the shard distribution either.
     """
     o = dict(op)
     o["params"] = {**op.get("params", {}), "search_type": "dfs_query_then_fetch"}
-    o["body"] = {**o["body"], "profile": True}
+    o["body"] = {**_exact_terms(o["body"]), "profile": True}
     return o
+
+
+ORACLE_SHARD_SIZE = 100000
+
+
+def _exact_terms(v):
+    """terms / significant_terms: shard_size raised to ORACLE_SHARD_SIZE (unless larger), so the top buckets and their
+    counts do not depend on which shard holds which documents (doc_count_error_upper_bound shows what remains)."""
+    if isinstance(v, list):
+        return [_exact_terms(x) for x in v]
+    if not isinstance(v, dict):
+        return v
+    out = {}
+    for k, x in v.items():
+        if k in ("terms", "significant_terms") and isinstance(x, dict) and "field" in x:
+            x = {**x, "shard_size": max(int(x.get("shard_size", 0)), ORACLE_SHARD_SIZE)}
+        out[k] = _exact_terms(x)
+    return out
 
 
 def run(ops, url, index, key_field, oracle=False):
@@ -140,8 +159,12 @@ def compare(ops, ra, rb, ignore_agg_keys=()):
         else:
             cx, cy = x["canonical"], y["canonical"]
             if ignore_agg_keys:
-                cx = {**cx, "aggs": _drop_keys(cx.get("aggs"), set(ignore_agg_keys)), "digest": None}
-                cy = {**cy, "aggs": _drop_keys(cy.get("aggs"), set(ignore_agg_keys)), "digest": None}
+                cx = {**cx, "aggs": _drop_keys(cx.get("aggs"), set(ignore_agg_keys))}
+                cy = {**cy, "aggs": _drop_keys(cy.get("aggs"), set(ignore_agg_keys))}
+                # the digests cover the dropped keys: recompute both, never compare stale or missing digests
+                for c in (cx, cy):
+                    c["digest"] = hashlib.sha256(json.dumps({k: v for k, v in c.items() if k != "digest"},
+                                                            sort_keys=True).encode()).hexdigest()[:16]
             ok, why = analyze.results_equal(cx, cy, True)
         n_eq += ok
         rows.append({"op": op["name"], "equal": ok, "reason": why,
