@@ -45,8 +45,13 @@ import switches as sw  # noqa: E402
 MODES = ("warm", "cold-luceneutil", "cold-strict")
 
 
+DATA = ("wikimediumall", "wikimedium10m", "wikimedium1m")  # luceneutil competition.DATA keys of the wikimedium line file
+
+
 def load_config(path):
     cfg = json.load(open(path))
+    if cfg.get("data", "wikimediumall") not in DATA:
+        raise ValueError(f"{path}: data {cfg['data']}: one of {DATA} (smaller ones are for smoke tests only)")
     for k in ("luceneutil", "checkouts", "indices", "storages", "arms", "java_command", "competition"):
         if k not in cfg:
             raise ValueError(f"{path}: missing [{k}]")
@@ -95,7 +100,7 @@ def plan(cfg, table, mode, tasks, storage, labels, out):
     os.makedirs(out, exist_ok=True)
     session = {"mode": mode, "tasks": tasks, "storage": ",".join(storages),
                "storage_spec": {s: cfg["storages"][s] for s in storages}, "labels": labels, "arms": arms,
-               "competition": comp, "luceneutil": cfg["luceneutil"], "params": params,
+               "competition": comp, "luceneutil": cfg["luceneutil"], "params": params, "data": cfg.get("data", "wikimediumall"),
                "switches_fork_commit": table.get("fork_commit"), "id": os.path.basename(os.path.abspath(out))}
     driver = os.path.join(out, "driver.py")
     with open(driver, "w") as f:
@@ -160,7 +165,7 @@ for a in S["arms"]:
         kw = dict(spec.get("luceneutil_index_kwargs", {}))
         if spec.get("facets"):
             kw["facets"] = tuple(tuple(x) for x in spec["facets"])
-        indices[key] = comp.newIndex(spec["builder_checkout"], competition.WIKI_MEDIUM_ALL, **kw)
+        indices[key] = comp.newIndex(spec["builder_checkout"], competition.DATA[S["data"]], **kw)
     kwc = {"index": indices[key], "javaCommand": a["java_command"], "directory": "MMapDirectory",
            "searchConcurrency": comp_cfg.get("search_concurrency", 0)}
     nq = 1 if strict else comp_cfg.get("num_concurrent_queries")
@@ -240,6 +245,7 @@ def build_index_driver(cfg, index_key, storage, out, build_id, name_suffix=None)
     st = cfg["storages"][storage]
     os.makedirs(out, exist_ok=True)
     session = {"index": index_key, "spec": spec, "storage": storage, "storage_spec": st, "id": build_id,
+               "data": cfg.get("data", "wikimediumall"),
                "name_suffix": name_suffix}
     path = os.path.join(out, f"index-{index_key}-{build_id}.py")
     with open(path, "w") as f:
@@ -265,7 +271,7 @@ if spec.get("points_format"):
 if S.get("name_suffix"):
     kw["extraNamePart"] = (kw.get("extraNamePart") or "") + S["name_suffix"]
 comp = competition.Competition()
-idx = comp.newIndex(spec["builder_checkout"], competition.WIKI_MEDIUM_ALL, **kw)
+idx = comp.newIndex(spec["builder_checkout"], competition.DATA[S["data"]], **kw)
 r = benchUtil.RunAlgs(constants.JAVA_COMMAND, True, True)
 c = comp.competitor("indexer", spec["builder_checkout"], index=idx)
 r.compile(c)
