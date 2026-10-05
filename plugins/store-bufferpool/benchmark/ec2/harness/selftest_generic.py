@@ -328,6 +328,11 @@ def part_d(osbw, tmp):
         p = json.load(open(os.path.join(here, "corpora", c + ".json")))
         if p.get("geo_fields"):
             check(all(f in d["families"] for f in families_ext.GEO_FAMILIES), f"(d) {c}: geo families generated")
+            # OpenSearch accepts only relation intersects in a geo_shape query on a geo_point field
+            points = {g["field"] for g in p["geo_fields"] if g["type"] == "geo_point"}
+            bad_rel = [o["name"] for o in d["ops"] for gs in [o["body"].get("query", {}).get("geo_shape", {})]
+                       for f, q in gs.items() if f in points and q.get("relation") not in (None, "intersects")]
+            check(not bad_rel, f"(d) {c}: no within/disjoint geo_shape query on a geo_point field: {bad_rel}")
         if p.get("nested"):
             check(all(f in d["families"] for f in families_ext.NESTED_FAMILIES), f"(d) {c}: nested families generated")
     p = json.load(open(os.path.join(here, "corpora", "so.json")))

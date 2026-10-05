@@ -13,7 +13,8 @@ Generated query families for the generic workloads (profiles with "osb_import": 
   geo (geo_point and geo_shape fields)
                      extent from geo_bounds (wrap_longitude false), centre = geo_centroid (geo_point) or the centre of
                      the bounds (geo_shape has no geo_centroid); boxes centred there covering 0.1 %, 1 %, 10 % of the
-                     extent area -> geo_bounding_box and geo_shape envelope (intersects; within and disjoint at 1 %);
+                     extent area -> geo_bounding_box and geo_shape envelope (intersects; within and disjoint at 1 % on
+                     geo_shape fields only: OpenSearch rejects them on geo_point);
                      geo_distance with radius 0.1 %, 1 %, 10 % of the extent diagonal; an octagon inscribed in the
                      1 % box -> geo_polygon (geo_point) and geo_shape polygon intersects; aggregations geohash_grid
                      (precision 3, 5) and geotile_grid (zoom 4, 8) in the 10 % box, geo_bounds, geo_centroid
@@ -414,7 +415,10 @@ def _generate_geo(g, profile, vals):
             g.add(f"geo_distance_{f}_{tag}", {"geo:distance"},
                   {"query": {"geo_distance": {"distance": f"{max(0.001, frac * diag):.3f}km", f: {"lat": c["lat"], "lon": c["lon"]}}}})
         box1 = geo_box(v, 0.01)
-        for rel in ("within", "disjoint"):
+        # OpenSearch answers a geo_shape query on a geo_point field only with relation intersects
+        # (VectorGeoPointShapeQueryProcessor: "WITHIN query relation not supported for Field"), so within and disjoint
+        # are geo_shape-field ops only
+        for rel in (("within", "disjoint") if typ == "geo_shape" else ()):
             g.add(f"geo_shape_envelope_{rel}_{f}_1pct", {"geo:shape"},
                   {"query": {"geo_shape": {f: {"shape": _envelope(box1), "relation": rel}}}})
         ring = octagon(box1)
