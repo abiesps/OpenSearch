@@ -44,6 +44,16 @@ its own client and records network time only (`wall_ms`) and the server's `took`
    bufferpool's reads + prefetch_reads, bytes_read and reads_by_size (`device_reads_are_windows`), else the iteration
    fails verification and the run is marked invalid (`run_end.valid`, `session_end.invalid_runs`); `io_size_ok`
    (`--max-read-bytes`) applies to bufferpool arms only. The agent applies each storage's last mode again after a reboot.
+   Order: Linux copies the bdi readahead into each file when the file is opened, so the arm's value is set BEFORE the
+   configured indices are closed, the node restarts and the arm's indices are opened, and read back after the open
+   (`readahead_after_open`; a change refuses the run). `--no-restart` and `probe` also close and re-open the indices
+   after the set. `selftest_order.py` checks the call order and the value each opened file holds.
+6. IO configuration (bufferpool arms): at the start of every run `/_bufferpool/stats` must report `block_size` 8192,
+   `random_read_size` 32768 and `sequential_read_size` 131072 (`--bp-block-size`, `--bp-random-read-size`,
+   `--bp-sequential-read-size`), else the run is refused; recorded as `io_config`. The plugin has no O_DIRECT mode.
+7. Other open indices: the arms file's `other_indices` = `record` (default: listed in the run record and the log),
+   `close` (closed before the arm's indices open; generic arms files) or `refuse`; names starting with `.` are
+   never touched (`runguards.py`).
 EFS server-side caching cannot be cleared from the client; it is part of the storage (as in AOSS) and is the same for
 every EFS arm.
 

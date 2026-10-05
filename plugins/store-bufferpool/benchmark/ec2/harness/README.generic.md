@@ -47,11 +47,17 @@ python3 selftest_generic.py --osb-workloads OSBW [--lucene-fork LUCENE_FORK --fo
 ```
 
 ## What is kept from the main harness
-- IO configuration: no O_DIRECT (buffered reads), random reads 32 KiB, sequential reads 128 KiB, 8 KiB cache block:
-  these are node and arm settings of the main arms file and the POC artifact; `arms_generic.py` copies the arms,
-  base switches and cluster settings unchanged, and the sessions use the same per-arm kernel readahead (stock arms as
-  mounted, bufferpool arms 0, set and verified before and after every run), device read-size trace and
+- IO configuration: no O_DIRECT (buffered reads), random reads 32 KiB, sequential reads 128 KiB, 8 KiB cache block.
+  These are static node settings of the POC data node (`bufferpool.cache.block_size`, `bufferpool.io.random_read_size`,
+  `bufferpool.io.sequential_read_size`, set where the host step configures the node: opensearch.yml or the start
+  command), not arms-file settings. coldbench refuses a bufferpool
+  run when `/_bufferpool/stats` reports other values or none (README.md, cold protocol item 6); the plugin has no
+  O_DIRECT mode. `arms_generic.py` copies the arms, base switches and cluster settings unchanged, and the sessions use
+  the same per-arm kernel readahead (stock arms as mounted, bufferpool arms 0, set before the node starts and opens
+  the indices, verified after the open and at run end), device read-size trace and
   device-reads-equal-bufferpool-windows check (README.md, cold protocol item 5).
+- Other workloads' indices: generic arms files set `"other_indices": "close"`, so on a grouped host every open index
+  outside the workload's [indices] is closed before the arm's indices open (GENERIC-PLAN section 2; README.md item 7).
 - Cold protocol before every iteration: idle prefetch pool, `POST /_bufferpool/cache/_clear`, `POST /_cache/clear`,
   agent pageout + sync + `drop_caches`, verification (cached_blocks 0, mincore residency of every member's files,
   reads reached the device or the NFS server), `request_cache=false` on every op (also on `cache: true` ops).

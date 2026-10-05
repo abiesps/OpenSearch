@@ -50,6 +50,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, here)
 import canonical_ext  # noqa: E402 - generic workloads: percolate slots, highlight, inner_hits
 import indices_ext  # noqa: E402 - generic workloads: multi-index targets, not-applicable arms
+import runguards  # noqa: E402 - IO configuration and other-open-indices checks at every arm start
 from common import HttpError, JsonClient, JsonlWriter, wait_until  # noqa: E402
 
 SCHEMA = 1
@@ -542,6 +543,16 @@ def check_readahead(node, arm, poc_kb=POC_READ_AHEAD_KB):
     return node.agent.request("GET", f"/readahead?{q}")
 
 
+def check_opened_readahead(node, arm, poc_kb=POC_READ_AHEAD_KB):
+    """After the node start and the index open: the files were opened with the arm's readahead only if it still holds
+    (a mount by the start command would have reset it); else refuse to measure."""
+    res = check_readahead(node, arm, poc_kb)
+    if not res.get("ok"):
+        raise RuntimeError(f"arm {arm['node']}: readahead changed while the node started and opened its indices: "
+                           f"{json.dumps(res)[:800]}; the index files may hold another value; not measuring")
+    return res
+
+
 def device_vs_bufferpool(io):
     """
     Device reads of one cold iteration against the bufferpool's storage reads (bufferpool arms): every device read must
@@ -639,6 +650,8 @@ class Session:
         self.log_f = open(os.path.join(a.out, "session.log"), "a")
         self.device_mismatches = {}  # run_id -> cold iterations whose device reads were not bufferpool windows
         self.current_arm = None
+        runguards.other_policy(self.cfg)  # a bad other_indices value stops the session before any run
+        self.other_indices = None
 
     def log(self, msg):
         line = f"{time.strftime('%H:%M:%S')} {msg}"
@@ -650,15 +663,21 @@ class Session:
         self.w.write({"schema": SCHEMA, "t": time.time(), **kw})
 
     def start_arm(self, arm_name, arm):
+        """
+        Call after set_readahead: every index file is opened here, after the arm's readahead is set (Linux copies the
+        bdi readahead into each file at open). The configured indices are closed first, also without --restart, so
+        no file of the arm's indices stays open from before.
+        """
         n = self.node
+        if self.a.restart and not n.agent:
+            raise RuntimeError("--restart needs --agent")
+        if n.up():
+            close_indices(n, self.cfg, self.log)
         if self.a.restart:
-            if n.up():
-                close_indices(n, self.cfg, self.log)
-            if not n.agent:
-                raise RuntimeError("--restart needs --agent")
             res = n.agent.request("POST", "/node/restart", {"arm": arm["node"]})
             self.log(f"  node restarted as {arm['node']} pid {res['pid']}")
         n.wait_green()
+        self.other_indices = runguards.enforce_other_indices(n.os, self.cfg, self.log)
         open_indices(n, self.cfg, arm, self.log)
         return verify_indices(n, self.cfg, arm, arm["node"])
 
@@ -799,7 +818,15 @@ class Session:
             self.record(type="run", **run, available=False, reason=f"not applicable: {arm['not_applicable']}")
             return
         self.log(f"run {run_id} (node {arm['node']})")
+        readahead, readahead_open, self.storage_nfs = None, None, None
+        if self.node.agent:
+            # before the node restart and the index open: each file keeps the readahead it was opened with
+            readahead = set_readahead(self.node, arm, a.poc_read_ahead_kb)
+            self.storage_nfs = readahead["nfs"]
+            self.log(f"  readahead {readahead['mode']}: " + ", ".join(f"{x['key']}={x['read_ahead_kb']}" for x in readahead["layers"]))
         indices = self.start_arm(arm_name, arm)
+        if self.node.agent:
+            readahead_open = check_opened_readahead(self.node, arm, a.poc_read_ahead_kb)
         try:
             settings = apply_settings(self.node, self.cfg, arm)
             switches, state = apply_switches(self.node, self.cfg, arm_name, arm)
@@ -807,15 +834,12 @@ class Session:
             self.log(f"  NOT AVAILABLE: {e}")
             self.record(type="run", **run, available=False, reason=str(e), indices=indices)
             return
+        io_config = runguards.check_io_config(arm_name, state["bp"], runguards.want_io(a)) if arm.get("bufferpool") else None
         index = self.cfg["indices"][arm["index"]]["name"]
         uuids = indices_ext.uuids(indices[arm["index"]])
-        readahead, self.storage_nfs = None, None
-        if self.node.agent:
-            readahead = set_readahead(self.node, arm, a.poc_read_ahead_kb)
-            self.storage_nfs = readahead["nfs"]
-            self.log(f"  readahead {readahead['mode']}: " + ", ".join(f"{x['key']}={x['read_ahead_kb']}" for x in readahead["layers"]))
         self.read_trace_kind = read_size_trace(a, arm, self.node, self.storage_nfs)
         self.record(type="run", **run, available=True, indices=indices, query_index=index, settings=settings, readahead=readahead,
+                    readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
                     switches=switches, state=state, metadata=run_metadata(self.node, self.cfg, arm_name, arm),
                     args=vars(a))
         it = Iteration(self.node, arm, uuids, a.residency_every)
@@ -890,6 +914,12 @@ def add_common(p):
     p.add_argument("--token-file")
     p.add_argument("--residency-tolerance", type=int, default=1 << 20, help="bytes of index files allowed resident after a clear")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
+    p.add_argument("--bp-block-size", type=int, default=runguards.IO_DEFAULTS["block_size"],
+                   help="bufferpool arms: required cache block size in bytes (from /_bufferpool/stats; else refused)")
+    p.add_argument("--bp-random-read-size", type=int, default=runguards.IO_DEFAULTS["random_read_size"],
+                   help="bufferpool arms: required random read size in bytes")
+    p.add_argument("--bp-sequential-read-size", type=int, default=runguards.IO_DEFAULTS["sequential_read_size"],
+                   help="bufferpool arms: required sequential read size in bytes")
     p.add_argument("--reference-op")
     p.add_argument("--op-filter", help="comma list of op names (reference op always kept)")
     p.add_argument("--families", help="comma list of family tags")
@@ -904,15 +934,23 @@ def cmd_run(a):
 
 
 def cmd_probe(a):
-    """One verified cold iteration of one op on the node as it runs now (no restart), printed in full."""
+    """
+    One verified cold iteration of one op on the node as it runs now (no restart), printed in full. The arm's readahead
+    is set first, then the configured indices are closed and the arm's opened again, so the probe reads files that were
+    opened with the arm's readahead (as a run does).
+    """
     a.out = a.out or "/tmp/coldbench-probe"
     a.restart = False
     s = Session(a)
     arm = s.cfg["arms"][a.arm]
-    indices = verify_indices(s.node, s.cfg, arm, arm["node"])
-    apply_switches(s.node, s.cfg, a.arm, arm)
     if s.node.agent:
         s.storage_nfs = set_readahead(s.node, arm, a.poc_read_ahead_kb)["nfs"]
+    indices = s.start_arm(a.arm, arm)
+    if s.node.agent:
+        check_opened_readahead(s.node, arm, a.poc_read_ahead_kb)
+    _, state = apply_switches(s.node, s.cfg, a.arm, arm)
+    if arm.get("bufferpool"):
+        print(json.dumps({"io_config": runguards.check_io_config(a.arm, state["bp"], runguards.want_io(a))}))
     op = next(o for o in s.ops if o["name"] == a.op)
     it = Iteration(s.node, arm, indices_ext.uuids(indices[arm["index"]]), 1)
     run = {"arm": a.arm, "label": a.arm, "round": -1, "run_id": "probe"}

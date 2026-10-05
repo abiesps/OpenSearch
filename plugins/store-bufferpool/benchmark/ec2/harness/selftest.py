@@ -59,6 +59,12 @@ class Mock:
         self.pid = 100
         self.broken_clear = False
         self.rng = random.Random(3)
+        # what /_bufferpool/stats reports as the node's IO configuration
+        self.bp_io = {"block_size": 8192, "random_read_size": 32768, "sequential_read_size": 131072}
+        # call log (selftest_order.py) and a per-storage bdi readahead that index files copy at _open, like Linux
+        self.calls = []
+        self.bdi = {}
+        self.opened = []
 
     def search(self, index, body):
         key = json.dumps(body, sort_keys=True)
@@ -123,6 +129,7 @@ def make_os_handler(m):
             p = u.path
             b = self.body()  # OpenSearch Benchmark sends GET with a body
             with m.lock:
+                m.calls.append(("os", method, p))
                 bp = m.binary.startswith("POC")
                 if p == "/":
                     return self.send(200, {"name": "n1", "cluster_name": "mock", "binary": m.binary, "version": {
@@ -165,6 +172,9 @@ def make_os_handler(m):
                             else:
                                 m.cluster[k] = v
                     return self.send(200, {"persistent": dict(m.cluster), "transient": {}})
+                if p == "/_cat/indices":
+                    return self.send(200, [{"index": n, "status": i["status"]} for n, i in dict.items(m.indices)
+                                           if "open" not in q.get("expand_wildcards", "open") or i["status"] == "open"])
                 if p.startswith("/_cat/indices/"):
                     name = p.split("/")[3]
                     i = m.indices[name]
@@ -188,7 +198,7 @@ def make_os_handler(m):
                             for k, v in q.items():
                                 m.sort_opt[k] = v == "true"
                         return self.send(200, dict(m.sort_opt))
-                    return self.send(200, {"block_size": 8192, "cached_blocks": len(m.cached), "files": m.files,
+                    return self.send(200, {**m.bp_io, "cached_blocks": len(m.cached), "files": m.files,
                                            "agg_prefetch_requests": 0, "sort_prefetch_requests": 0})
                 if p == "/_search/scroll":
                     return self.send(200, {"took": 1, "hits": {"hits": []}, "_shards": {"failed": 0}})
@@ -208,6 +218,9 @@ def make_os_handler(m):
                         if m.binary.startswith("S0") and i["store_type"] == "bufferpoolfs":
                             return self.send(500, {"error": "unknown store type"})
                         i["status"] = "open"
+                        # the index files copy the storage's readahead when they are opened (Linux f_ra)
+                        storage = "EFS" if m.binary.endswith("EFS") else "EBS"
+                        m.opened.append({"index": name, "node": m.binary, "readahead": m.bdi.get(storage, "default")})
                         return self.send(200, {"acknowledged": True})
                     if parts[1] == "_count":
                         return self.send(200, {"count": 1000})
@@ -255,6 +268,7 @@ def make_agent_handler(m):
             q = dict(urllib.parse.parse_qsl(u.query))
             efs = q.get("arm", m.binary).endswith("EFS")
             with m.lock:
+                m.calls.append(("agent", method, u.path, q.get("mode"), b.get("arm")))
                 if u.path == "/snapshot":
                     disk = None if efs else {"device": "nvme1n1", "reads": m.disk_reads, "sectors_read": m.read_bytes // 512,
                                              "read_ms": m.disk_reads, "weighted_io_ms": m.disk_reads, "in_flight": 0}
@@ -280,7 +294,8 @@ def make_agent_handler(m):
                     default = 15360 if arm.endswith("EFS") else 128
                     if u.path == "/readahead/mode":
                         m.readahead[arm] = q["mode"]
-                    cur = m.readahead.get(arm, "default")
+                        m.bdi["EFS" if arm.endswith("EFS") else "EBS"] = q["mode"]
+                    cur = m.bdi.get("EFS" if arm.endswith("EFS") else "EBS", "default")  # readahead is per device
                     v = default if cur == "default" else int(cur)
                     mode = q.get("mode")
                     want = None if mode is None else (default if mode == "default" else int(mode))
@@ -404,6 +419,10 @@ def main():
     runs = [json.loads(l) for l in open(os.path.join(s2, "samples.jsonl"))]
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run" and r.get("available")), "readahead not verified"
     assert all(r["readahead"]["ok"] for r in runs if r["type"] == "run_end"), "readahead not re-checked at run end"
+    # set before the index is opened: each file keeps the readahead it was opened with (selftest_order.py: the order)
+    assert m.opened and all(o["readahead"] == ("default" if o["node"].startswith("S0") else "0") for o in m.opened), m.opened
+    assert all(r["readahead_after_open"]["ok"] for r in runs if r["type"] == "run" and r.get("available"))
+    assert all(r["io_config"]["ok"] for r in runs if r["type"] == "run" and r.get("available") and r["io_config"])
     ebs = [r for r in runs if r.get("mode") == "cold" and r.get("arm") == "S0-EBS"]
     assert ebs and all(r["io"].get("block_read_sizes", {}).get("reads") for r in ebs), "EBS read sizes not traced"
     assert all("io_size_ok" not in r["checks"] for r in ebs), "stock arms keep the default readahead: no size limit"
