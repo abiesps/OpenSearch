@@ -156,7 +156,10 @@ def trace_stop(storage, raw=False):
 
 def fio_cmd(storage, regime, pat, qd, runtime, ramp):
     rw, bs = PATTERNS[pat]
-    region = FILE_SIZE // qd
+    # regions start on a 1 MiB boundary: with a QD that does not divide the file size into whole pages (96, 192),
+    # unaligned regions turned every 8 KiB read into a 12 KiB NFS READ (3 pages; review-a fix iteration,
+    # raw/fio-knee/invalid/). Powers of two are unchanged by this.
+    region = FILE_SIZE // qd // (1 << 20) * (1 << 20)
     eng = "psync"
     fad = "random" if regime == "poc-fio" else "0"
     direct = 1 if regime == "direct" else 0
@@ -256,19 +259,28 @@ def main():
     ap.add_argument("--qds", default=",".join(map(str, QDS)))
     ap.add_argument("--patterns", default="")
     ap.add_argument("--seed", type=int, default=20261004)
+    ap.add_argument("--plan", default="", help="JSON file: list of [storage, regime, pattern, [qd, ...]]; "
+                    "replaces the storages x regimes x patterns x qds grid (per-curve queue depths)")
+    ap.add_argument("--block", default="main", help="label stored in every record (separate measurement block)")
     a = ap.parse_args()
     os.makedirs(os.path.join(a.out, "raw"), exist_ok=True)
     pats = set(a.patterns.split(",")) if a.patterns else None
     jobs = []
-    for st in a.storages.split(","):
-        for rg in a.regimes.split(","):
-            if rg == "direct" and st == "efs":
-                continue
-            for pat in REGIMES[rg]:
-                if pats and pat not in pats:
+    if a.plan:
+        for st, rg, pat, qds in json.load(open(a.plan)):
+            if pat not in REGIMES[rg] or (rg == "direct" and st == "efs"):
+                raise SystemExit(f"plan entry not supported: {st} {rg} {pat}")
+            jobs.extend((st, rg, pat, int(qd)) for qd in qds)
+    else:
+        for st in a.storages.split(","):
+            for rg in a.regimes.split(","):
+                if rg == "direct" and st == "efs":
                     continue
-                for qd in map(int, a.qds.split(",")):
-                    jobs.append((st, rg, pat, qd))
+                for pat in REGIMES[rg]:
+                    if pats and pat not in pats:
+                        continue
+                    for qd in map(int, a.qds.split(",")):
+                        jobs.append((st, rg, pat, qd))
     log = open(os.path.join(a.out, "records.jsonl"), "a")
     done = set()
     try:
@@ -292,6 +304,7 @@ def main():
             else:
                 raise SystemExit(f"{name}: read_ahead_kb did not hold in 3 attempts")
             rec["ts_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            rec["block"] = a.block
             log.write(json.dumps(rec) + "\n"); log.flush()
             s = rec["summary"]
             print(f"rep{rep} {i+1}/{len(order)} {name} iops={s['iops']:.0f} MBps={s['MBps']:.1f} "
