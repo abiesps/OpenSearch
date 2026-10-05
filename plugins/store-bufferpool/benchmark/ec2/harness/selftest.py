@@ -374,6 +374,12 @@ def main():
     # discovery keeps only analyzer tokens as term candidates (http_logs: "anime" inside "/anime_1.gif" is no term)
     sys.path.insert(0, here)
     import queries
+    import coldbench
+    # a session split into invocations with --round-offset keeps the round orders and gets distinct run ids
+    labs = ["S0-EBS@a", "S0-EBS@b", "S1-EFS@a", "S1-EFS@b"]
+    whole = coldbench.schedule(labs, 5, "random", "coldpath")
+    parts = coldbench.schedule(labs, 2, "random", "coldpath") + coldbench.schedule(labs, 3, "random", "coldpath", 2)
+    assert whole == parts and len({f"{lab}#r{r}" for r, lab in parts}) == len(parts), (whole, parts)
     assert queries.indexed_ranked({"anime": 3, "get": 5, "gif": 4}, {"get", "gif", "anime_1.gif"}) == ["get", "gif"]
     m = Mock()
     m.strict_store = True

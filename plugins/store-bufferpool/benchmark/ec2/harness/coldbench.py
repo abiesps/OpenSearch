@@ -680,9 +680,11 @@ def _seed(*parts):
     return int(hashlib.sha256("/".join(map(str, parts)).encode()).hexdigest()[:12], 16)
 
 
-def schedule(labels, rounds, order, seed):
+def schedule(labels, rounds, order, seed, offset=0):
+    """Rounds offset .. offset+rounds-1: a long session split into several invocations (--round-offset) gets the same
+    round orders and distinct run ids (label#r<round>) as one invocation of all rounds."""
     out = []
-    for r in range(rounds):
+    for r in range(offset, offset + rounds):
         if order == "abba":
             seq = list(labels) if r % 2 == 0 else list(reversed(labels))
         else:
@@ -961,7 +963,7 @@ class Session:
         for lab in labels:
             if parse_label(lab)[0] not in self.cfg["arms"]:
                 sys.exit(f"unknown arm {lab}; arms file has {sorted(self.cfg['arms'])}")
-        sched = schedule(labels, self.a.rounds, self.a.order, self.a.seed)
+        sched = schedule(labels, self.a.rounds, self.a.order, self.a.seed, getattr(self.a, "round_offset", 0))
         self.record(type="session", ops=[o["name"] for o in self.ops], reference_op=self.ref, schedule=sched,
                     args=vars(self.a), ops_file=os.path.abspath(self.a.ops), arms_file=self.cfg,
                     format_isolation=self.isolation)
@@ -1053,6 +1055,8 @@ def main():
     r.add_argument("--arm-list", required=True, help="comma list of arm labels; ARM@x labels repeat an arm (A/A)")
     r.add_argument("--rounds", type=int, default=5, help="JVM runs per arm label")
     r.add_argument("--order", choices=["abba", "random"], default="abba")
+    r.add_argument("--round-offset", type=int, default=0, help="number of the first round: continue a session in a new "
+                   "invocation and output directory (same seed) with the same round orders and distinct run ids")
     r.add_argument("--modes", default="cold,warm", help="cold,warm,ccold,cwarm")
     r.add_argument("--cold-iters", type=int, default=3, help="cold iterations per op per JVM run")
     r.add_argument("--warm-warmup", type=int, default=5)
