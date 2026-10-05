@@ -321,9 +321,21 @@ def _parse_kv(items):
     return out
 
 
+def _parse_params(items):
+    """Workload parameters as OSB reads --workload-params: a value that parses as JSON (100, true, 1.5) is that value,
+    anything else a string. big5's templates compare corpus_size == 100, which a string "100" never equals."""
+    out = {}
+    for k, v in _parse_kv(items).items():
+        try:
+            out[k] = json.loads(v)
+        except ValueError:
+            out[k] = v
+    return out
+
+
 def cmd_render(a):
     rec = derive(a.osb_workloads, a.corpus, a.out, a.shards, a.replicas, _parse_kv(a.rename),
-                 [f for f in (a.split_fields or "").split(",") if f], a.procedure, a.clients, a.bulk_size, _parse_kv(a.param),
+                 [f for f in (a.split_fields or "").split(",") if f], a.procedure, a.clients, a.bulk_size, _parse_params(a.param),
                  a.store_type)
     print(json.dumps(rec, indent=1))
 
@@ -353,7 +365,7 @@ def cmd_check(a):
     unknown = sorted(set(store_types) - set(seq))
     if unknown:
         raise SystemExit(f"--store-types names arms not in --sequence: {unknown}")
-    params = _parse_kv(a.param)
+    params = _parse_params(a.param)
     summary = []
     for k, arm in enumerate(seq):
         keep = k == 0 and a.keep_first
