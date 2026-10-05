@@ -31,12 +31,15 @@ storage agent arm, restarted through the agent), interleaved (S0, POC, POC, S0, 
 binary is the ingest A/A floor). The first entry keeps the workload's index names when --keep-first is given (it
 becomes the stock-format index every S0/S1 arm shares); every other entry ingests into <index>__ichk<k> and those
 indices, and only those, are deleted after their metrics are recorded (disk space: clickbench is 60-100 GB per copy).
+`run` and `check` refuse to start when an index of the workload's own name already exists (the derived procedure
+deletes it first; common-rules: never re-ingest when br-<branch>/ingest.json exists), unless --force-recreate.
 """
 import argparse
 import csv
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -217,10 +220,34 @@ def index_metrics(client, names):
     return out
 
 
-def run_osb(derived, url, out_json, osb_bin, user_tag=""):
+def refuse_existing(client, names, force_recreate=False):
+    """
+    The derived test procedure starts with delete-index. An index that already exists under one of `names` (the
+    workload's own name: built by ec2-stock-ingest or an earlier run) is never deleted and rebuilt unless
+    force_recreate is given (common-rules: when br-<branch>/ingest.json exists, never re-ingest). The ingest-check
+    copies <index>__ichk<k> are this script's own and are always re-created. Returns the protected names that exist.
+    """
+    existing = []
+    for n in names:
+        if re.search(re.escape(CHECK_SUFFIX) + r"\d+$", n):
+            continue
+        status, _ = client.raw("GET", f"/_cat/indices/{n}?format=json&h=index&expand_wildcards=all")
+        if status == 200:
+            existing.append(n)
+        elif status != 404:
+            raise RuntimeError(f"cannot tell whether index {n} exists: HTTP {status}")
+    if existing and not force_recreate:
+        raise RuntimeError(f"refusing to delete and re-create existing index {existing}: the derived workload starts "
+                           "with delete-index (common-rules: never re-ingest when br-<branch>/ingest.json exists); "
+                           "pass --force-recreate to rebuild it on purpose")
+    return existing
+
+
+def run_osb(derived, url, out_json, osb_bin, user_tag="", force_recreate=False):
     import osb_cold  # the same OSB subcommand detection as the cold executor
 
     rec = json.load(open(os.path.join(derived, "derivation.json")))
+    recreated = refuse_existing(JsonClient(url), [i["name"] for i in rec["indices"]], force_recreate)
     results = os.path.splitext(out_json)[0] + ".osb.csv"
     host = url.split("://", 1)[1].rstrip("/")
     cmd = [osb_bin, osb_cold.osb_subcommand(osb_bin), "--pipeline=benchmark-only", f"--workload-path={derived}",
@@ -244,6 +271,7 @@ def run_osb(derived, url, out_json, osb_bin, user_tag=""):
     bad = {n: (m["docs"], rec["expected_docs"][n]) for n, m in metrics.items()
            if rec["expected_docs"].get(n) and m["docs"] != rec["expected_docs"][n] and rec["procedure"] == "append"}
     out = {"derivation": rec, "osb_cmd": cmd, "wall_s": wall, "osb": osb_results(results), "indices": metrics,
+           "recreated_existing": recreated,
            "doc_count_ok": not bad, "doc_count_mismatch": bad,
            "node": client.request("GET", "/"), "t": time.time()}
     with open(out_json, "w") as f:
@@ -268,7 +296,7 @@ def cmd_render(a):
 
 
 def cmd_run(a):
-    out = run_osb(a.derived, a.url, a.out, a.osb_bin, a.user_tag)
+    out = run_osb(a.derived, a.url, a.out, a.osb_bin, a.user_tag, a.force_recreate)
     print(json.dumps({k: out[k] for k in ("wall_s", "indices", "doc_count_ok")}, indent=1))
 
 
@@ -304,7 +332,7 @@ def cmd_check(a):
         wait_until(lambda: client.request("GET", "/", timeout=5), 900, 1.0, "OpenSearch HTTP")
         client.request("GET", "/_cluster/health?wait_for_status=green&timeout=900s", timeout=930)
         out_json = os.path.join(a.out, f"ingest-{k}-{arm}.json")
-        r = run_osb(derived, a.url, out_json, a.osb_bin, f"coldpath_ingest_check:{k},arm:{arm}")
+        r = run_osb(derived, a.url, out_json, a.osb_bin, f"coldpath_ingest_check:{k},arm:{arm}", a.force_recreate)
         r["arm"], r["closed_before_restart"], r["agent_restart"] = arm, closed, res
         json.dump(r, open(out_json, "w"), indent=1)
         summary.append({"k": k, "arm": arm, "file": out_json, "wall_s": r["wall_s"], "kept": keep,
@@ -342,12 +370,16 @@ def main():
     c.add_argument("--sequence", default="S0-EBS,POC-EBS,POC-EBS,S0-EBS,S0-EBS,POC-EBS")
     c.add_argument("--keep-first", action="store_true", help="the first ingest keeps the workload's index names")
     c.add_argument("--osb-bin", default="opensearch-benchmark")
+    c.add_argument("--force-recreate", action="store_true", help="--keep-first: delete and rebuild an existing index "
+                   "of the workload's name (refused without it)")
     u = sub.add_parser("run")
     u.add_argument("--derived", required=True)
     u.add_argument("--url", required=True)
     u.add_argument("--out", required=True)
     u.add_argument("--osb-bin", default="opensearch-benchmark")
     u.add_argument("--user-tag", default="")
+    u.add_argument("--force-recreate", action="store_true", help="delete and rebuild an existing index of the "
+                   "derived workload (refused without it)")
     a = ap.parse_args()
     {"render": cmd_render, "run": cmd_run, "check": cmd_check}[a.cmd](a)
 
