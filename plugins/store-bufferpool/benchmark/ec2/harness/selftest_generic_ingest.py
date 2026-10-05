@@ -152,6 +152,16 @@ def part_g(osbw, tmp, check, generic):
         check(False, "(g) the guard refuses split indices on the stock data paths")
     except RuntimeError:
         check(True, "(g) the guard refuses split indices on the stock data paths")
+    import families_ext as _fe
+
+    class _NullPct:
+        def request(self, *a, **kw):
+            return {"aggregations": {"p": {"values": {"5.0": None, "40.0": None, "50.0": None, "60.0": None, "95.0": None}}}}
+    try:
+        _fe._numeric_vals(_NullPct(), "x", ["answer_count"])
+        check(False, "(g) a numeric field without values is refused at discovery")
+    except RuntimeError:
+        check(True, "(g) a numeric field without values is refused at discovery")
     import index_equality as _ie
     pg = [{"hits": {"hits": [{"_id": "x1", "_score": 1.0, "fields": {"qid": ["q7"]},
                               "inner_hits": {"answers": {"hits": {"hits": [{"_id": "x1", "_nested": {"field": "answers", "offset": 2}}]}}}},

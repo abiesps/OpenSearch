@@ -201,6 +201,10 @@ def discover(client, index, profile):
         r = client.request("POST", f"/{index}/_search?request_cache=false",
                            {"size": 0, "aggs": {"p": {"percentiles": {"field": f, "percents": [5, 40, 50, 60, 95]}}}})
         p = r["aggregations"]["p"]["values"]
+        if all(v is None for v in p.values()):
+            # a mapped field without any value would give range bounds of null (0 hits) and sorts on missing values
+            raise RuntimeError(f"numeric field {f} has no value in {index}: remove it from the profile's "
+                               "numeric_fields and list its families as not applicable with that reason")
         vals["numeric"][f] = {k: p[k] for k in p}
     vals["text"] = {}
     for f in profile["text_fields"]:

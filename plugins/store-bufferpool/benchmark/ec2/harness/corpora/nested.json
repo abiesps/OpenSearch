@@ -10,9 +10,7 @@
     "tag",
     "user"
   ],
-  "numeric_fields": [
-    "answer_count"
-  ],
+  "numeric_fields": [],
   "text_fields": [
     "title"
   ],
@@ -36,7 +34,11 @@
     ],
     "params": {}
   },
-  "families_not_applicable": {},
+  "families_not_applicable": {
+    "bkd:range_numeric": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field",
+    "sort:numeric_asc": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field",
+    "sort:numeric_desc": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field"
+  },
   "reference_op": "gen:range_creationDate_1d",
   "indices": [
     {
@@ -55,5 +57,8 @@
   "single_shard": {
     "rule": "no",
     "note": "3.6 GB raw; record the measured store size"
+  },
+  "numeric_fields_excluded": {
+    "answer_count": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field"
   }
 }

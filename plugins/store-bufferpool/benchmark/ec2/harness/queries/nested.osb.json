@@ -11,7 +11,11 @@
   "sort:date_desc",
   "text:match"
  ],
- "families_not_applicable": {},
+ "families_not_applicable": {
+  "bkd:range_numeric": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field",
+  "sort:numeric_asc": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field",
+  "sort:numeric_desc": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field"
+ },
  "missing_families": [
   "keyword:term",
   "keyword:terms",
@@ -21,10 +25,7 @@
   "bool:should",
   "bool:filter",
   "bool:must_not",
-  "bkd:range_numeric",
   "sort:date_asc",
-  "sort:numeric_asc",
-  "sort:numeric_desc",
   "sort:keyword",
   "sort:search_after",
   "agg:terms",
@@ -1222,7 +1223,11 @@
   "date_fields": [
    "answers.date"
   ],
-  "families_not_applicable": {},
+  "families_not_applicable": {
+   "bkd:range_numeric": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field",
+   "sort:numeric_asc": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field",
+   "sort:numeric_desc": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field"
+  },
   "geo_fields": [],
   "indices": [
    {
@@ -1247,9 +1252,10 @@
    }
   ],
   "note": "fields by ROLE only; values are discovered from the data by families_ext.discover (the fixed rank/percentile rules of queries.discover, plus geo extent and nested values)",
-  "numeric_fields": [
-   "answer_count"
-  ],
+  "numeric_fields": [],
+  "numeric_fields_excluded": {
+   "answer_count": "answer_count is mapped (integer) but no document of the nested corpus has a value: stats count 0 and every percentile null over 11,203,029 documents (g-nested-percolator phase A, 2026-10-04); no other numeric field"
+  },
   "osb": {
    "ops_files": [
     "operations/*.json"
