@@ -305,8 +305,10 @@ def generate(profile, vals):
     add("bool_should", {"bool:should", "keyword:term"},
         {"query": {"bool": {"should": [{"term": {k0: kw[k0]["mid"]}}, {"term": {hi_card: kw[hi_card]["low"]}}],
                             "minimum_should_match": 1}}})
+    # families_ext.discover may name another field when this one excludes every doc of the filter (no key: unchanged)
+    mn = (vals.get("must_not_field") or {}).get("field", neg)
     add("bool_filter_must_not", {"bool:filter", "bool:must_not", "keyword:term"},
-        {"query": {"bool": {"filter": [{"term": {k0: kw[k0]["high"]}}], "must_not": [{"term": {neg: kw[neg]["high"]}}]}}})
+        {"query": {"bool": {"filter": [{"term": {k0: kw[k0]["high"]}}], "must_not": [{"term": {mn: kw[mn]["high"]}}]}}})
     add("bool_all", {"bool:must", "bool:should", "bool:filter", "bool:must_not", "bkd:range_date"},
         {"query": {"bool": {"must": [text_clause], "should": [{"term": {k0: kw[k0]["mid"]}}],
                             "filter": [{"range": {tf: rng["7d"]}}], "must_not": [{"term": {neg: kw[neg]["mid"]}}]}}})

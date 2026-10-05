@@ -283,10 +283,15 @@ def profile_values():
 class MockSearch:
     """Answers the discovery requests of queries.discover / families_ext.discover from fixed data."""
 
-    def __init__(self):
+    def __init__(self, count=None):
         self.calls = []
+        self.counts = []  # _count requests (families_ext's sanity checks), kept apart from the discovery requests
+        self.count = count or (lambda body: 7)
 
     def request(self, method, path, body=None, timeout=None):
+        if path.endswith("/_count"):
+            self.counts.append(body)
+            return {"count": self.count(body)}
         self.calls.append(json.dumps(body, sort_keys=True))
         if path.endswith("/_analyze"):
             toks = re.findall(r"[a-z0-9]+", body["text"].lower())
@@ -352,6 +357,15 @@ def part_d(osbw, tmp):
     v1 = queries.discover(m1, "i", prof)
     v2 = families_ext.discover(m2, "i", prof)
     check(v1 == v2 and m1.calls == m2.calls, "(d) families_ext.discover == queries.discover on a timed profile")
+    check(len(m2.counts) == 1 and "must_not_field" not in v2, "(d) must_not field kept when it leaves docs")
+    # a must_not term that excludes every doc of the filter: the next keyword field by cardinality is used
+    prof3 = dict(prof, keyword_fields=["a", "b", "c"])
+    m4 = MockSearch(lambda body: 0 if "b" in json.dumps(body["query"]["bool"]["must_not"]) else 3)
+    v4 = families_ext.discover(m4, "i", prof3)
+    check(v4.get("must_not_field", {}).get("field") == "c", f"(d) must_not falls back to the next field: {v4.get('must_not_field')}")
+    ops4 = queries.generate(prof3, v4)
+    b4 = next(o for o in ops4 if o["name"] == "gen:bool_filter_must_not")["body"]["query"]["bool"]["must_not"][0]["term"]
+    check(list(b4) == ["c"], f"(d) generated must_not uses the fallback field: {b4}")
     untimed = dict(prof)
     del untimed["time_field"]
     m3 = MockSearch()
@@ -390,6 +404,24 @@ def part_d(osbw, tmp):
     check(gv["centroid"] == families_ext.geotile_centre("6/31/22") and "geotile_grid" in gv["centroid_rule"]
           and tm.calls[1]["aggs"]["t"]["geotile_grid"]["precision"] == 6,
           f"(d) geo_shape centre = densest tile (ties: smallest key), zoom 6: {gv['centroid']}")
+    class PointMock(TileMock):
+        def __init__(self, docs):
+            super().__init__()
+            self.docs = docs
+        def request(self, method, path, body=None, timeout=None):
+            if path.endswith("/_count"):
+                self.calls.append(body)
+                return {"count": self.docs}
+            r = super().request(method, path, body, timeout)
+            if "c" in body["aggs"]:
+                r["aggregations"]["c"] = {"location": {"lat": 37.85, "lon": 0.70}}
+            return r
+    gp = families_ext._geo_vals(PointMock(12), "i", [{"field": "loc", "type": "geo_point"}])["loc"]
+    check(gp["centroid"] == {"lat": 37.85, "lon": 0.70} and gp["centroid_rule"] == "geo_centroid"
+          and gp["centroid_check"]["docs"] == 12, f"(d) geo_point keeps a populated centroid: {gp}")
+    gp0 = families_ext._geo_vals(PointMock(0), "i", [{"field": "loc", "type": "geo_point"}])["loc"]
+    check(gp0["centroid"] == families_ext.geotile_centre("6/31/22") and gp0["centroid_rule"].startswith("geo_centroid")
+          and "geotile_grid" in gp0["centroid_rule"], f"(d) an empty geo_point centroid moves to the densest tile: {gp0}")
     ring = families_ext.octagon((t, l, b, r))
     check(len(ring) == 9 and ring[0] == ring[-1] and all(l <= x <= r and b <= y <= t for x, y in ring),
           "(d) octagon is closed and inside its box")

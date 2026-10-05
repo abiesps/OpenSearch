@@ -198,23 +198,68 @@ def _geo_vals(client, index, geo):
         if typ == "geo_point" and r["aggregations"].get("c", {}).get("location"):
             v["centroid"] = dict(r["aggregations"]["c"]["location"])
             v["centroid_rule"] = "geo_centroid"
-        else:
-            # geo_shape has no geo_centroid, and the centre of the bounds of world-wide data is empty (OSM shapes:
-            # lat -1.8, lon 0.0 in the Gulf of Guinea, where the generated distance ops matched nothing): use the
-            # centre of the most populated geotile cell, the cell small enough to fit in the smallest box
-            z = densest_tile_zoom(v)
-            r = client.request("POST", f"/{index}/_search?request_cache=false",
-                               {"size": 0, "aggs": {"t": {"geotile_grid": {"field": f, "precision": z, "size": 10}}}})
-            buckets = r["aggregations"]["t"]["buckets"]
-            if not buckets:
-                continue
-            top = sorted(buckets, key=lambda b: (-b["doc_count"], b["key"]))[0]
-            v["centroid"] = geotile_centre(top["key"])
-            v["centroid_rule"] = (f"centre of the most populated geotile_grid cell at zoom {z} (key {top['key']}, "
-                                  f"{top['doc_count']} docs; ties: smallest key); zoom = smallest whose cell width is "
-                                  "at most half the width of the smallest box (geo_shape has no geo_centroid)")
+            # the centroid of world-wide points can be an empty place (eventdata geoip.location: lat 37.85, lon 0.70
+            # at sea, where the smallest distance circle matched nothing); then the densest-cell rule of geo_shape
+            radius = max(0.001, min(frac for _, frac in AREA_FRACTIONS) * _haversine_km(v["top"], v["left"], v["bottom"], v["right"]))
+            n = client.request("POST", f"/{index}/_count", {"query": {"geo_distance": {
+                "distance": f"{radius:.3f}km", f: {"lat": v["centroid"]["lat"], "lon": v["centroid"]["lon"]}}}})["count"]
+            v["centroid_check"] = {"radius_km": round(radius, 3), "docs": n}
+            if n == 0:
+                if not _densest_cell_centre(client, index, f, v, f"geo_centroid {v['centroid']} has no doc within {radius:.3f} km: "):
+                    continue
+        elif not _densest_cell_centre(client, index, f, v, "geo_shape has no geo_centroid: "):
+            continue
         out[f] = v
     return out
+
+
+def _densest_cell_centre(client, index, f, v, why):
+    """
+    Centre of the most populated geotile_grid cell (ties: smallest key) at the smallest zoom whose cell is at most half
+    as wide as the smallest box. Used for geo_shape (no geo_centroid; the centre of the bounds of world-wide OSM shapes
+    is lat -1.8, lon 0.0 in the Gulf of Guinea, where the generated distance ops matched nothing) and for a geo_point
+    field whose centroid has no doc in the smallest distance circle. False if the field has no cell.
+    """
+    z = densest_tile_zoom(v)
+    r = client.request("POST", f"/{index}/_search?request_cache=false",
+                       {"size": 0, "aggs": {"t": {"geotile_grid": {"field": f, "precision": z, "size": 10}}}})
+    buckets = r["aggregations"]["t"]["buckets"]
+    if not buckets:
+        return False
+    top = sorted(buckets, key=lambda b: (-b["doc_count"], b["key"]))[0]
+    v["centroid"] = geotile_centre(top["key"])
+    v["centroid_rule"] = why + (f"centre of the most populated geotile_grid cell at zoom {z} (key {top['key']}, "
+                                f"{top['doc_count']} docs; ties: smallest key); zoom = smallest whose cell width is at most "
+                                "half the width of the smallest box")
+    return True
+
+
+def _must_not_field(client, index, profile, vals):
+    """
+    Field of gen:bool_filter_must_not's must_not term: the generator's choice (the highest-cardinality keyword field,
+    or the next one when that is the filter's own field) unless it excludes EVERY doc of the filter (eventdata: the
+    top agent always has useragent.name Chrome, so the op returned 0 hits); then the next keyword field by cardinality
+    whose top term leaves docs. Returns {"field", "rule", "counts"} only when it differs from the generator's choice.
+    """
+    kw = vals.get("keyword") or {}
+    kws = [f for f in profile.get("keyword_fields", []) if f in kw]
+    if len(kws) < 2:
+        return None
+    k0 = kws[0]
+    hi_card = max(kws, key=lambda f: kw[f]["cardinality"])
+    others = sorted((f for f in kws if f != k0), key=lambda f: -kw[f]["cardinality"])
+    first = hi_card if hi_card != k0 else others[0]
+    counts = {}
+    for f in [first] + [x for x in others if x != first]:
+        q = {"bool": {"filter": [{"term": {k0: kw[k0]["high"]}}], "must_not": [{"term": {f: kw[f]["high"]}}]}}
+        counts[f] = client.request("POST", f"/{index}/_count", {"query": q})["count"]
+        if counts[f] > 0:
+            if f == first:
+                return None
+            return {"field": f, "counts": counts,
+                    "rule": f"must_not on {first} excluded every doc of the filter {k0}={kw[k0]['high']!r}; next keyword "
+                            f"field by cardinality whose top term leaves docs: {f}"}
+    return {"field": first, "counts": counts, "rule": "no keyword field leaves docs; generator choice kept"}
 
 
 def densest_tile_zoom(v):
@@ -273,6 +318,9 @@ def discover(client, index, profile):
         vals = {"rules": UNTIMED_RULES, "keyword": _keyword_vals(client, index, profile.get("keyword_fields", [])),
                 "numeric": _numeric_vals(client, index, profile.get("numeric_fields", [])),
                 "text": _text_vals(client, index, profile.get("text_fields", []))}
+    mn = _must_not_field(client, index, profile, vals)
+    if mn:
+        vals["must_not_field"] = mn
     if profile.get("geo_fields"):
         vals["geo"] = _geo_vals(client, index, profile["geo_fields"])
         vals["rules"] += ("; geo: geo_bounds (wrap_longitude false) and geo_centroid (geo_point) or the centre of "
@@ -340,8 +388,9 @@ def _generate_untimed(profile, vals):
     g.add("bool_should", {"bool:should", "keyword:term"},
           {"query": {"bool": {"should": [{"term": {k0: kw[k0]["mid"]}}, {"term": {hi_card: kw[hi_card]["low"]}}],
                               "minimum_should_match": 1}}})
+    mn = (vals.get("must_not_field") or {}).get("field", neg)
     g.add("bool_filter_must_not", {"bool:filter", "bool:must_not", "keyword:term"},
-          {"query": {"bool": {"filter": [{"term": {k0: kw[k0]["high"]}}], "must_not": [{"term": {neg: kw[neg]["high"]}}]}}})
+          {"query": {"bool": {"filter": [{"term": {k0: kw[k0]["high"]}}], "must_not": [{"term": {mn: kw[mn]["high"]}}]}}})
     g.add("bool_all", {"bool:must", "bool:should", "bool:filter", "bool:must_not"},
           {"query": {"bool": {"must": [text_clause], "should": [{"term": {k0: kw[k0]["mid"]}}],
                               "filter": [wide or {"term": {k0: kw[k0]["high"]}}],
