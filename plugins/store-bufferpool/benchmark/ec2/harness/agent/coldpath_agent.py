@@ -66,6 +66,9 @@ Endpoints (JSON in and out):
                                      libjemalloc files mapped in /proc/<pid>/maps with their sha256, name jemalloc or
                                      glibc, and the node_allocator.sh setup record (/etc/coldpath/allocator.json)
   GET  /node/status                  running JVM pid and command line, last started arm
+  GET  /node/build                   (v4) the running node's OpenSearch home (-Dopensearch.path.home of the JVM) and the
+                                     sha256 of every file of its plugins/store-bufferpool directory (plugin identity per
+                                     run), cached per JVM
   POST /node/stop                    runs every configured stop command; waits until no JVM matches
   POST /node/restart  {"arm": "S1"}  stop as above, then the arm's start command; returns the new pid
 
@@ -132,6 +135,22 @@ def allocator_info(environ, maps):
     out["jemalloc_mapped"] = sorted(mapped)
     out["name"] = "jemalloc" if mapped else "glibc"
     return out
+
+
+def opensearch_home(cmdline):
+    """-Dopensearch.path.home=<dir> of a JVM command line (raw /proc/<pid>/cmdline bytes), else None."""
+    for arg in cmdline.split(b"\0"):
+        if arg.startswith(b"-Dopensearch.path.home="):
+            return arg.split(b"=", 1)[1].decode(errors="replace")
+    return None
+
+
+def plugin_files(home, plugin="store-bufferpool"):
+    """{file name: sha256} of <home>/plugins/<plugin>/ (top level), or None when the directory is absent."""
+    d = os.path.join(home, "plugins", plugin)
+    if not os.path.isdir(d):
+        return None
+    return {n: _sha256_file(os.path.join(d, n)) for n in sorted(os.listdir(d)) if os.path.isfile(os.path.join(d, n))}
 
 
 def _sha256_file(path):
@@ -383,6 +402,27 @@ class Agent:
             info["setup"] = None
         self._allocator_cache = (key, info)
         return info
+
+    def node_build(self):
+        """The running node's OpenSearch home and its store-bufferpool plugin files with sha256 (cached per JVM)."""
+        pid = self.jvm_pid()
+        if not pid:
+            return {"pid": None}
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                key = (pid, f.read().rsplit(")", 1)[1].split()[19])
+            cached = getattr(self, "_build_cache", None)
+            if cached and cached[0] == key:
+                return cached[1]
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                home = opensearch_home(f.read())
+        except OSError as e:
+            return {"pid": pid, "error": str(e)}
+        out = {"pid": pid, "home": home, "plugin_files": plugin_files(home) if home else None}
+        jars = {n: v for n, v in (out["plugin_files"] or {}).items() if n.startswith("store-bufferpool") and n.endswith(".jar")}
+        out["plugin_jar"] = next(iter(jars.items())) if len(jars) == 1 else None
+        self._build_cache = (key, out)
+        return out
 
     def node_memory(self):
         """Resident and anonymous memory of the node JVM against host memory, its MALLOC_ARENA_MAX (environ) and its
@@ -911,6 +951,8 @@ def make_handler(agent, token):
                     out = agent.nfs_trace_start()
                 elif route == ("POST", "/trace/nfs/_stop"):
                     out = agent.nfs_trace_stop(agent.trace_index_dirs(q, st))
+                elif route == ("GET", "/node/build"):
+                    out = agent.node_build()
                 elif route == ("GET", "/node/memory"):
                     out = agent.node_memory()
                 elif route == ("GET", "/storage/incidents"):

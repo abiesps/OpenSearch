@@ -1375,14 +1375,18 @@
    "artifact": "baseline_bufferpool",
    "build_target": "stock",
    "build_hash": "b44de786cef",
+   "plugin_source_commit": "c83c646b873",
    "sha256": "728244131e67ca255d0d154f4b9f840f3495c612144942a5c0aa6c71a4e19175",
+   "plugin_jar_sha256": "abd4294a3e9ef5cdd332f889d5ef50a6c12ce81b3aea33517532206ccc4f5731",
    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-baseline-bufferpool-3.10.0-SNAPSHOT-osb44de786cef-pluginc83c646b873-no-jdk-linux-x64.tar.gz"
   },
   "poc": {
    "artifact": "poc_iosize_conc2",
    "build_target": "poc",
    "build_hash": "d6daba062dc",
+   "plugin_source_commit": "c83c646b873",
    "sha256": "43289e8cf90ca8dda9bd1636db949585987ef4ea706795bc0ce8f7b7064b3e52",
+   "plugin_jar_sha256": "8086a04c0e500024ccf0dca08fe8a220da66bf32767fe19171f57dc07fb5c04e",
    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-poc-3.10.0-SNAPSHOT-osc83c646b873-lucene59f87aa1af-bufferpool-iosize_conc2-no-jdk-linux-x64.tar.gz"
   }
  },

@@ -209,7 +209,9 @@ def e2e(tmp):
                                  "open": ["stock_ebs"], "store_types": {"stock_ebs": "bufferpoolfs"},
                                  "switches": [{"method": "POST", "path": "/_bufferpool/sort_opt?bkd_prefetch=true",
                                                "verify": {"bkd_prefetch": "true"}}]}}}
-    cfg, _ = arms_baseline.convert(old, {})
+    cfg, _ = arms_baseline.convert(old, arms_baseline._artifacts(os.path.join(here, "..", "artifacts.json")))
+    check(cfg["builds"]["baseline"]["plugin_jar_sha256"].startswith("abd4294a") and
+          cfg["builds"]["poc"]["plugin_jar_sha256"].startswith("8086a04c"), "converter: plugin jar sha256 per build")
     check(sorted(cfg["arms"]) == ["BASE-EBS", "S1-EBS", "S2-X-EBS"] and list(cfg["context_arms"]) == ["S0-EBS"],
           "converter: S0-EBS -> context, BASE-EBS added")
     arms_f = os.path.join(tmp, "arms.json")
@@ -232,6 +234,17 @@ def e2e(tmp):
     check(all(r["build"]["ok"] and r["build"]["node"]["build_target"] == "poc" and "sort_opt" in r["state"] for r in poc),
           "e2e: the proof-of-concept build keeps its switches and is checked")
     check(all(r["same_bufferpool"]["storage"] == "EBS" for r in runs.values()), "e2e: same bufferpool settings recorded")
+    check(all(r["read_hint"]["ok"] and r["read_hint"]["node"] == "willneed" for r in runs.values()),
+          "e2e: every run records the effective read hint (willneed)")
+    check(all(r["plugin"]["ok"] and r["plugin"]["plugin_source_commit"] == "c83c646b873" and
+              r["plugin"]["plugin_jar"][1] == m.plugin_jars[r["arm"].split("-")[0] if r["arm"].startswith("BASE") else "POC"][1]
+              for r in runs.values()), "e2e: every run records its plugin jar sha256 and the plugin source commit")
+    an = os.path.join(tmp, "analysis")
+    st.run([PY, os.path.join(here, "analyze.py"), out, "--base", "S1-EBS", "--boot", "200", "--ni-boot", "100", "--out", an])
+    chk = json.load(open(os.path.join(an, "analysis.json"))).get("storage_reads_check") or []
+    check(chk and all(r["reference"] == "BASE-EBS" and r["target"] == "S1-EBS" and r["different"] is False and
+                      r["ref"]["reads"] == r["ref"]["demand_reads"] + r["ref"]["prefetch_reads"] for r in chk),
+          "e2e: analyze compares storage reads and bytes per cold query, all-off with the baseline, demand and prefetch split")
     nm = [r for r in recs if r["type"] == "node_memory"]
     check(len(nm) == 6 and all(r["allocator"]["name"] == "jemalloc" for r in nm), "e2e: node_memory records the allocator")
     restarts = [c[4] for c in m.calls if c[:3] == ("agent", "POST", "/node/restart")]
@@ -264,6 +277,25 @@ def e2e(tmp):
     p, smp = refused("s-mixed", "BASE-EBS,S1-EBS", ("--allocator", "any", "--rounds", "1"))
     check(p.returncode == 0, "e2e: record-only sessions may mix (no requirement)")
     m.allocator_by_node = {}
+    # readahead back at 15360 at the end of a run (efs-utils watchdog): the run is discarded and re-measured
+    m.readahead_get_drift = 2  # the 1st GET /readahead is the check after the index open, the 2nd the end of the run
+    out_d = os.path.join(tmp, "s-drift")
+    st.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--rounds", "1", "--arm-list", "S1-EBS", "--out", out_d])
+    recs = [json.loads(x) for x in open(os.path.join(out_d, "samples.jsonl"))]
+    disc = [r for r in recs if r["type"] == "run_discarded"]
+    ends = [r for r in recs if r["type"] == "run_end"]
+    check(len(disc) == 1 and disc[0]["readahead_changed"] and [e["valid"] for e in ends] == [False, True] and
+          any(r["type"] == "run_requeued" for r in recs), "e2e: a run whose readahead changed is invalid, discarded and re-queued")
+    m.read_hint = "none"
+    p, smp = refused("s-hint", "S1-EBS")
+    check(p.returncode != 0 and "effective read hint is 'none'" in p.stderr and not smp,
+          "e2e: a bufferpool node whose read hint is not willneed is refused")
+    m.read_hint = "willneed"
+    good_jar = m.plugin_jars["POC"]
+    m.plugin_jars["POC"] = (good_jar[0], "0" * 64)
+    p, smp = refused("s-jar", "S1-EBS")
+    check(p.returncode != 0 and "plugin jar" in p.stderr and not smp, "e2e: a node with another plugin jar is refused")
+    m.plugin_jars["POC"] = good_jar
     m.allocator = None
     p, smp = refused("s-agent3", "BASE-EBS")
     check(p.returncode != 0 and "agent before v4" in p.stderr and not smp, "e2e: an agent without the allocator field is refused")

@@ -147,6 +147,19 @@ Every configuration uses the bufferpool store with the same plugin settings and 
   against the baseline on the same storage (run `analyze.py --ni-ref R --ni-target T --ni-aa AA` for each).
 The format-isolation guard counts the baseline build's nodes as stock binaries (no split codec): a split or other
 proof-of-concept-only index needs its own data path (`POC-B-*`), as before.
+Per-run checks of every bufferpool configuration (orchestrator inputs from the approved baseline review):
+- plugin identity: the agent's `GET /node/build` (v4) lists the node's `plugins/store-bufferpool` files with sha256;
+  the run records the plugin jar and the build's plugin source commit (`builds.<build>.plugin_source_commit`), and is
+  refused when the jar differs from `builds.<build>.plugin_jar_sha256` (artifacts.json `installed_plugin_jar_sha256`);
+  the store-path classes of the two jars are byte-identical (proved when the artifacts were built);
+- read hint: the run records the effective `read_hint` of `GET /_bufferpool/stats` and is refused unless it is
+  `willneed` (`--bp-read-hint`; "auto" becomes "none" when the plugin cannot link libc);
+- readahead: set before the node start, verified after the index open (else refused) and at the end of the run; a
+  run whose readahead changed (a remount, or the efs-utils watchdog when `optimize_readahead` is not false on an
+  Amazon EFS host) gets `run_end.valid: false` and `run_discarded`, and is re-queued;
+- `analyze.py` adds a storage reads check: per cold op, each storage's baseline against its all-off attribution
+  reference (`--io-check REF:TGT,...`, default from `outcome`), medians of total storage reads and bytes per query
+  with the demand and prefetch reads listed separately, ops outside `--io-check-tol` (2 %) marked.
 
 Allocator (user decision "For memory fragmentation use jemalloc"): `node_allocator.sh install` then
 `node_allocator.sh apply` on every data node (root). Every `opensearch-*.service` gets the same drop-in

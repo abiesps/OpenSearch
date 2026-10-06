@@ -1483,6 +1483,10 @@ class Session:
             return
         io_config = runguards.check_io_config(arm_name, state["bp"], runguards.want_io(a)) if arm.get("bufferpool") else None
         build = runguards.check_build(arm_name, arm, self.cfg, self.node.os.request("GET", "/"), state.get("bp"))
+        read_hint = (runguards.check_read_hint(arm_name, state["bp"], getattr(a, "bp_read_hint", "willneed"))
+                     if arm.get("bufferpool") else None)
+        plugin = (runguards.check_plugin(arm_name, arm, self.cfg, self.agent_get("/node/build"))
+                  if arm.get("bufferpool") and self.node.agent else None)
         same_bp = self.check_same_bufferpool(arm_name, arm, state.get("bp"))
         cache_cleanup = None
         if any(m in a.modes.split(",") for m in ("cold", "ccold")):
@@ -1504,6 +1508,7 @@ class Session:
                     cold_protocol="jit-warm" if a.jit_warmup else "jit-cold",
                     readahead_after_open=readahead_open, io_config=io_config, other_indices=self.other_indices,
                     build=build, allocator=getattr(self, "run_allocator", None), same_bufferpool=same_bp,
+                    read_hint=read_hint, plugin=plugin,
                     context_arm=bool(arm.get("context")),
                     cache_cleanup=cache_cleanup, nfs_xprt=self.nfs_transport(arm) if it.efs else None,
                     efs_connections_target=a.efs_connections if it.efs else None, efs_precondition_start=efs_start,
@@ -1550,16 +1555,22 @@ class Session:
                 res = execute(self.node.os, index, op)
                 self.record(type="result", **run, op=op["name"], canonical=res["canonical"])
         readahead_end = check_readahead(self.node, arm, a.poc_read_ahead_kb) if self.node.agent else None
+        readahead_ok = readahead_end is None or bool(readahead_end.get("ok"))
         mism = self.device_mismatches.get(run_id, 0)
         if mism:
             self.log(f"  INVALID run {run_id}: {mism} cold iterations with device reads that are not bufferpool windows")
         self.record(type="run_end", **run, prefetch_pool=self.node.prefetch_pool(), readahead=readahead_end,
                     nfs_xprt=self.nfs_transport(arm) if self.storage_nfs else None,
-                    device_read_mismatches=mism, valid=not mism)
+                    device_read_mismatches=mism, valid=not mism and readahead_ok)
         self.record_storage_incidents(run)
-        if readahead_end is not None and not readahead_end["ok"]:
-            raise RuntimeError(f"run {run_id}: kernel readahead changed during the run (a remount?): {readahead_end}; "
-                               "this run is invalid")
+        if not readahead_ok:
+            # the readahead was not the arm's value at the end (a remount, the efs-utils watchdog with
+            # optimize_readahead true): the run is invalid; analyze.py drops a discarded run, and it is re-queued
+            # (the next start sets and verifies the readahead again)
+            self.record(type="run_discarded", **run, reason=f"kernel readahead changed during the run: {readahead_end}"[:2000],
+                        readahead_changed=True)
+            raise RunDiscarded(f"run {run_id}: kernel readahead changed during the run (a remount, or the efs-utils "
+                               f"watchdog with optimize_readahead true?): {readahead_end}; the run is invalid")
 
     def record_storage_incidents(self, run):
         """
@@ -1713,6 +1724,9 @@ def add_common(p):
                    help="bufferpool arms: required random read size in bytes")
     p.add_argument("--bp-sequential-read-size", type=int, default=runguards.IO_DEFAULTS["sequential_read_size"],
                    help="bufferpool arms: required sequential read size in bytes")
+    p.add_argument("--bp-read-hint", default="willneed",
+                   help="bufferpool arms: required effective read hint (GET /_bufferpool/stats read_hint); any = record "
+                        "only")
     p.add_argument("--reference-op")
     p.add_argument("--op-filter", help="comma list of op names (reference op always kept)")
     p.add_argument("--families", help="comma list of family tags")

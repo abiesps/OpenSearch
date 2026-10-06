@@ -26,7 +26,7 @@ Unit = one JVM run. Every sample is first summarized per run (median of the run'
 Regressions (warm bar): the 95% CI excludes 0 on the slow side and the change exceeds the A/A floor, with no
 multiple-comparison correction (a real slowdown must not be hidden by BH).
 OUTCOME (non-inferiority, --ni-*; defaults from the arms file's "outcome"): per op, target (S2-CORE-EFS,
-S2-CORE+PLANNER-EFS) / reference (S0-EBS) for cold p50, cold p90 and warm p50 (cold p99 informational), each from a
+S2-CORE+PLANNER-EFS) / reference (S0-EBS; BASE-EBS in arms files of the baseline set, arms_baseline.py) for cold p50, cold p90 and warm p50 (cold p99 informational), each from a
 two-level bootstrap (runs, then iterations in a run); PASS when the 95% CI upper bound <= 1 + delta with
 delta = max(5 %, the reference's A/A MDE for that op and statistic) and the BH-adjusted one-sided p < alpha; WORSE
 when the ratio is significantly above the margin (BH); else INCONCLUSIVE (add runs). Failing ops list their gap in ms
@@ -513,6 +513,57 @@ def io_table(data, labels, mode="cold"):
     return out
 
 
+def storage_reads_check(data, pairs, tol):
+    """
+    All-off compared with baseline (USER DECISION 2026-10-05: the proof-of-concept build with every change off must equal
+    the baseline): per cold op and pair (reference, target), the medians of the bufferpool's total storage reads and
+    bytes per query, with the demand and prefetch split recorded separately (reads = demand + prefetch). An op whose
+    total reads or bytes differ by more than tol (relative) is listed as different; it is evidence, never a verdict.
+    """
+    out = []
+    for ref, tgt in pairs:
+        for op in data.ops("cold"):
+            row = {"reference": ref, "target": tgt, "op": op}
+            for side, lab in (("ref", ref), ("tgt", tgt)):
+                ss = [s for (md, l, rid, o), v in data.samples.items() if md == "cold" and l == lab and o == op for s in v]
+                bps = [(s.get("io", {}).get("bp") or {}) for s in ss]
+                bps = [b for b in bps if b]
+                if not bps:
+                    row[side] = None
+                    continue
+
+                def med(f):
+                    return statistics.median(f(b) for b in bps)
+                row[side] = {"n": len(bps), "reads": med(lambda b: b.get("reads", 0)),
+                             "bytes_read": med(lambda b: b.get("bytes_read", 0)),
+                             "demand_reads": med(lambda b: b.get("reads", 0) - b.get("prefetch_reads", 0)),
+                             "prefetch_reads": med(lambda b: b.get("prefetch_reads", 0)),
+                             "demand_loads": med(lambda b: b.get("loads", 0)),
+                             "prefetch_loads": med(lambda b: b.get("prefetch_loads", 0))}
+            if row["ref"] and row["tgt"]:
+                def rel(k):
+                    r, t = row["ref"][k], row["tgt"][k]
+                    return (t / r) if r else (1.0 if t == 0 else None)
+                row["reads_ratio"], row["bytes_ratio"] = rel("reads"), rel("bytes_read")
+                row["different"] = any(x is None or abs(x - 1) > tol for x in (row["reads_ratio"], row["bytes_ratio"]))
+            out.append(row)
+    return out
+
+
+def storage_pairs(outcome, labels, cli):
+    """Pairs (baseline, all-off) for the storage reads check: --io-check REF:TGT,... or, from the arms file's outcome,
+    the same-storage reference of each storage with its attribution reference (BASE-EBS:S1-EBS, BASE-EFS:S1-EFS)."""
+    if cli:
+        return [tuple(x.split(":", 1)) for x in cli.split(",")]
+    att = (outcome or {}).get("attribution_reference") or {}
+    pairs = []
+    for ss in (outcome or {}).get("same_storage") or []:
+        storage = ss["reference"].rsplit("-", 1)[-1]
+        if att.get(storage):
+            pairs.append((ss["reference"], att[storage]))
+    return [(r, t) for r, t in pairs if r in labels and t in labels]
+
+
 # ---------------------------------------------------------------- non-inferiority (the outcome)
 NI_STATS = [("cold_p50", "cold", 50, True), ("cold_p90", "cold", 90, True), ("warm_p50", "warm", 50, True),
             ("cold_p99", "cold", 99, False)]
@@ -673,6 +724,9 @@ def main():
     ap.add_argument("--ni-delta", type=float, default=0.05, help="minimum margin delta")
     ap.add_argument("--ni-boot", type=int, default=5000)
     ap.add_argument("--out", help="directory for report.md and analysis.json (default: first session)")
+    ap.add_argument("--io-check", help="REF:TGT,... pairs for the storage reads check (default: from the arms file's "
+                                       "outcome: each storage's baseline with its all-off attribution reference)")
+    ap.add_argument("--io-check-tol", type=float, default=0.02, help="relative tolerance of the storage reads check")
     ap.add_argument("--cold-skip-iters", type=int, default=0,
                     help="leave out cold iterations < N of every op (sessions of the old jit-cold protocol: 1 leaves out "
                          "iteration 0, which also paid the JIT compilation of its query shape)")
@@ -824,6 +878,22 @@ def main():
                          f"{fmt_ms(lat)} / {aq}")
         md.append(f"| {op} | " + " | ".join(cells) + " |")
     outcome = (data.sessions[0].get("arms_file") or {}).get("outcome", {}) if data.sessions else {}
+    pairs = storage_pairs(outcome, labels, a.io_check)
+    if pairs:
+        chk = storage_reads_check(data, pairs, a.io_check_tol)
+        res["storage_reads_check"] = chk
+        md.append(f"\n## Storage reads per cold query, all changes off compared with the baseline (medians; tolerance "
+                  f"{a.io_check_tol:.0%}): total reads / bytes MB (demand reads + prefetch reads)")
+        md.append("| op | pair | reference | target | reads ratio | bytes ratio | different |")
+        md.append("|---|---|---|---|---|---|---|")
+        for r in chk:
+            def cell(x):
+                return "-" if not x else (f"{x['reads']:.0f} / {x['bytes_read'] / 1e6:.2f} "
+                                          f"({x['demand_reads']:.0f} + {x['prefetch_reads']:.0f})")
+            rr = "-" if r.get("reads_ratio") is None else f"{r['reads_ratio']:.3f}"
+            br = "-" if r.get("bytes_ratio") is None else f"{r['bytes_ratio']:.3f}"
+            md.append(f"| {r['op']} | {r['reference']} : {r['target']} | {cell(r['ref'])} | {cell(r['tgt'])} | {rr} | {br} | "
+                      f"{'YES' if r.get('different') else ''} |")
     targets = a.ni_target.split(",") if a.ni_target else [t for t in outcome.get("targets", []) if t in labels]
     unknown = [l for t in targets for l in t.split("+") if l not in labels]
     if unknown:

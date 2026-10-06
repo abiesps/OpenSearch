@@ -21,8 +21,9 @@ the baseline, not a variable, and every node runs with jemalloc.
                                         "context_arms": it runs only when a session names it, and carries no verdict
 
 Every bufferpool arm gets an explicit "build" (baseline or poc); the file gets
-  "builds"     the artifact, tarball sha256, build_target and build_hash of each build (from artifacts.json), checked at
-               every run start (GET /_bufferpool/stats build_target, GET / build_hash);
+  "builds"     the artifact, tarball sha256, build_target, build_hash, plugin source commit and installed plugin jar
+               sha256 of each build (from artifacts.json), checked at every run start (GET /_bufferpool/stats
+               build_target, GET / build_hash, agent GET /node/build plugin jar);
   "allocator"  jemalloc: LD_PRELOAD, MALLOC_CONF, no MALLOC_ARENA_MAX, the libjemalloc sha256 (node_allocator.sh pins
                the same values), checked at every node start from /proc/<pid>/maps and environ;
   "same_bufferpool_settings": true  every bufferpool configuration on one storage reports the same plugin settings;
@@ -58,8 +59,10 @@ JEMALLOC = {
              "validated in baseline-bufferpool-2026-10-05/jemalloc-validation.md",
 }
 BUILDS = {
-    "baseline": {"artifact": "baseline_bufferpool", "build_target": "stock", "build_hash": "b44de786cef"},
-    "poc": {"artifact": "poc_iosize_conc2", "build_target": "poc", "build_hash": "d6daba062dc"},
+    "baseline": {"artifact": "baseline_bufferpool", "build_target": "stock", "build_hash": "b44de786cef",
+                 "plugin_source_commit": "c83c646b873"},
+    "poc": {"artifact": "poc_iosize_conc2", "build_target": "poc", "build_hash": "d6daba062dc",
+            "plugin_source_commit": "c83c646b873"},
 }
 
 
@@ -76,6 +79,8 @@ def builds_block(artifacts):
         rec = artifacts.get(b["artifact"]) or {}
         if rec.get("sha256"):
             b["sha256"] = rec["sha256"]
+        if rec.get("installed_plugin_jar_sha256"):
+            b["plugin_jar_sha256"] = rec["installed_plugin_jar_sha256"]
         if rec.get("s3_uri"):
             b["s3_uri"] = rec["s3_uri"]
     return out

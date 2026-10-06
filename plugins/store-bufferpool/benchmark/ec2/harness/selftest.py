@@ -111,6 +111,12 @@ class Mock:
         # before v4 (no field). allocator_by_node overrides it per agent arm (one unit without the drop-in)
         self.allocator = None
         self.allocator_by_node = {}
+        # effective read hint in /_bufferpool/stats, and the plugin jar the agent's GET /node/build reports per binary
+        self.read_hint = "willneed"
+        # readahead drift (the efs-utils watchdog): at the n-th GET /readahead from now the device is back at 15360
+        self.readahead_get_drift = 0
+        self.plugin_jars = {"BASE": ("store-bufferpool-3.10.0-SNAPSHOT.jar", "abd4294a3e9ef5cdd332f889d5ef50a6c12ce81b3aea33517532206ccc4f5731"),
+                            "POC": ("store-bufferpool-3.10.0-SNAPSHOT.jar", "8086a04c0e500024ccf0dca08fe8a220da66bf32767fe19171f57dc07fb5c04e")}
 
     def is_bp(self):
         """A node with the bufferpool plugin: the proof-of-concept build (POC-*) or the baseline build (BASE-*: stock
@@ -291,6 +297,7 @@ def make_os_handler(m):
                         return self.send(200, dict(m.sort_opt))
                     return self.send(200, {**m.bp_io, "cached_blocks": len(m.cached), "files": m.files,
                                            "build_target": "stock" if m.binary.startswith("BASE") else "poc",
+                                           "read_hint": m.read_hint,
                                            "agg_prefetch_requests": 0, "sort_prefetch_requests": 0})
                 if p == "/_search/scroll":
                     return self.send(200, {"took": 1, "hits": {"hits": []}, "_shards": {"failed": 0}})
@@ -415,6 +422,10 @@ def make_agent_handler(m):
                     if u.path == "/readahead/mode":
                         m.readahead[arm] = q["mode"]
                         m.bdi["EFS" if arm.endswith("EFS") else "EBS"] = q["mode"]
+                    if u.path == "/readahead" and m.readahead_get_drift > 0:
+                        m.readahead_get_drift -= 1
+                        if m.readahead_get_drift == 0:
+                            m.bdi["EFS" if arm.endswith("EFS") else "EBS"] = "15360"
                     cur = m.bdi.get("EFS" if arm.endswith("EFS") else "EBS", "default")  # readahead is per device
                     v = default if cur == "default" else int(cur)
                     mode = q.get("mode")
@@ -450,6 +461,10 @@ def make_agent_handler(m):
                     else:
                         m.mem_pct = 10.0
                     return self.send(200, {"arm": m.binary, "pid": m.pid})
+                if u.path == "/node/build":
+                    jar = m.plugin_jars.get(m.binary.split("-")[0])
+                    return self.send(200, {"pid": m.pid, "home": f"/opt/{m.binary.lower()}", "plugin_jar": jar,
+                                           "plugin_files": {jar[0]: jar[1]} if jar else None})
                 if u.path == "/node/memory":
                     total = 247 * 1024 * 1024
                     rss = int(total * m.mem_pct / 100)

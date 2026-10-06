@@ -50,6 +50,22 @@ def check_io_config(arm_name, stats, want):
     return rec
 
 
+def check_read_hint(arm_name, stats, want="willneed"):
+    """
+    The effective read hint of the bufferpool (GET /_bufferpool/stats read_hint): every bufferpool configuration
+    announces each miss window with POSIX_FADV_WILLNEED (readahead 0 plus the window hint). "auto" falls back to "none"
+    when the plugin cannot link libc (for example without opensearch-agent-policy; ec2-bench e897170ea5b), and the
+    device then sees 4 KiB reads. want None or "any" records only. Returns the record; raises otherwise.
+    """
+    got = (stats or {}).get("read_hint")
+    rec = {"want": want, "node": got, "read_hint_errors": (stats or {}).get("read_hint_errors"),
+           "ok": None if want in (None, "any") else got == want}
+    if rec["ok"] is False:
+        raise RuntimeError(f"arm {arm_name}: the bufferpool's effective read hint is {got!r}, required {want!r} (readahead "
+                           "0 needs the window hint; check that the plugin can link libc); not measuring")
+    return rec
+
+
 CACHE_CLEANUP_MAX_S = 1.0
 
 
@@ -142,6 +158,32 @@ def check_build(arm_name, arm, cfg, root, bp_stats):
     if errors:
         raise RuntimeError(f"arm {arm_name}: the node is not the {b} build ({'; '.join(errors)}); check the agent arm "
                            f"{arm.get('node')} unit; not measuring")
+    return rec
+
+
+def check_plugin(arm_name, arm, cfg, node_build):
+    """
+    Plugin identity per run (the bufferpool is not a variable): the agent's GET /node/build lists the running node's
+    plugins/store-bufferpool files with sha256. When the arms file's builds[<build>] names "plugin_jar_sha256", the
+    node's plugin jar must have it (the baseline and the proof-of-concept jars differ only in ExperimentHooks; the
+    store-path classes are byte-identical, proved at build time). Returns the record with the plugin source commit
+    of the build; raises when the jar differs or cannot be read.
+    """
+    b = arm.get("build")
+    want = ((cfg.get("builds") or {}).get(b) or {}) if b else {}
+    jar = (node_build or {}).get("plugin_jar")
+    rec = {"build": b, "plugin_jar": jar, "plugin_files": (node_build or {}).get("plugin_files"),
+           "home": (node_build or {}).get("home"), "plugin_source_commit": want.get("plugin_source_commit"),
+           "want_plugin_jar_sha256": want.get("plugin_jar_sha256"), "ok": None}
+    if not arm.get("bufferpool") or not want.get("plugin_jar_sha256"):
+        return rec
+    if not jar:
+        raise RuntimeError(f"arm {arm_name}: cannot read the node's store-bufferpool jar through the agent "
+                           f"({node_build!r}; agent before v4?); not measuring")
+    rec["ok"] = jar[1] == want["plugin_jar_sha256"]
+    if not rec["ok"]:
+        raise RuntimeError(f"arm {arm_name}: plugin jar {jar[0]} sha256 {jar[1]}, the {b} build has "
+                           f"{want['plugin_jar_sha256']}; not measuring")
     return rec
 
 
