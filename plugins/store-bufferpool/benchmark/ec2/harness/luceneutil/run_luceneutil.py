@@ -260,7 +260,9 @@ class MemoryMonitor(threading.Thread):
         self._stop_ev = threading.Event()
 
     def run(self):
-        while not self._stop_ev.wait(10):
+        first = True
+        while not self._stop_ev.wait(1 if first else 10):  # first sample after 1 s: short runs record the allocator too
+            first = False
             try:
                 m = agent(self.st, "GET", f"/node/memory?arm={self.st['agent_arm']}")
             except Exception:
