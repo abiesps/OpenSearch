@@ -795,6 +795,41 @@ def jit_warmup(session, run, index, ops, seed):
     return rec
 
 
+# ---------------------------------------------------------------- EFS connection state of a run
+def efs_state_probe(session, arm, when):
+    """
+    The storage model's EFS state test (agent POST /efs/stateprobe, agent/coldpath_efsstate.py) on an EFS arm's mount,
+    at the start of the run (before the arm's readahead is set and the node restarts) and at its end (after the
+    run-end readahead check; the probe writes the previous readahead back). None for EBS arms or --no-efs-state-probe;
+    a probe the agent cannot run is recorded as a gap, never as a level.
+    """
+    if not (session.node.agent and getattr(session.a, "efs_state_probe", True)) or arm.get("storage") == "EBS":
+        return None
+    status, res = session.node.agent.raw("POST", f"/efs/stateprobe?arm={urllib.parse.quote(arm['node'])}")
+    if status // 100 == 2 and res.get("gap") == "not an NFS mount":
+        return None  # a block device (the agent decides from the arm's data path)
+    if status == 404:
+        res = {"gap": "agent without /efs/stateprobe"}
+    elif status // 100 != 2:
+        res = {"gap": f"HTTP {status}: {json.dumps(res)[:300]}"}
+    session.log(f"  EFS state ({when}): " + (f"{res['level']} ({res['iops']} IOPS, reconnects {res.get('reconnects')})"
+                                             if "level" in res else f"gap: {res.get('gap')}"))
+    return res
+
+
+def run_efs_state(start, end):
+    """A run's EFS state: the level of both probes when they agree and the mount did not reconnect in between."""
+    out = {"start": start, "end": end}
+    if "level" not in (start or {}) or "level" not in (end or {}):
+        out["run_state"] = "unknown"
+    else:
+        xs, xe = start.get("xprt_start"), end.get("xprt_end")
+        moved = (xs is None or xe is None or xs["connect_count"] != xe["connect_count"]
+                 or (start.get("efs_connections_start") or {}).get("proxy_pid") != (end.get("efs_connections_end") or {}).get("proxy_pid"))
+        out["run_state"] = ("reconnect" if moved else start["level"] if start["level"] == end["level"] else "mixed")
+    return out
+
+
 # ---------------------------------------------------------------- one iteration
 class Iteration:
     def __init__(self, node, arm, uuids, residency_every, efs=False, efs_target=0):
@@ -1447,6 +1482,8 @@ class Session:
             return
         self.log(f"run {run_id} (node {arm['node']})")
         readahead, readahead_open, self.storage_nfs = None, None, None
+        # EFS connection state (storage model's state test) before the run; the readahead of the arm is set after it
+        self.efs_state_start = efs_state_probe(self, arm, "start")
         if self.node.agent:
             # before the node restart and the index open: each file keeps the readahead it was opened with
             readahead = set_readahead(self.node, arm, a.poc_read_ahead_kb)
@@ -1559,9 +1596,12 @@ class Session:
         mism = self.device_mismatches.get(run_id, 0)
         if mism:
             self.log(f"  INVALID run {run_id}: {mism} cold iterations with device reads that are not bufferpool windows")
+        efs_state = None
+        if getattr(self, "efs_state_start", None) is not None:
+            efs_state = run_efs_state(self.efs_state_start, efs_state_probe(self, arm, "end"))
         self.record(type="run_end", **run, prefetch_pool=self.node.prefetch_pool(), readahead=readahead_end,
                     nfs_xprt=self.nfs_transport(arm) if self.storage_nfs else None,
-                    device_read_mismatches=mism, valid=not mism and readahead_ok)
+                    device_read_mismatches=mism, valid=not mism and readahead_ok, efs_state=efs_state)
         self.record_storage_incidents(run)
         if not readahead_ok:
             # the readahead was not the arm's value at the end (a remount, the efs-utils watchdog with
@@ -1712,6 +1752,9 @@ def add_common(p):
                         "and environ (agent v4 GET /node/memory); default: the arms file's \"allocator\" block, else "
                         "record only; any = record only")
     p.add_argument("--residency-every", type=int, default=1, help="mincore check every Nth cold iteration (0 = never)")
+    p.add_argument("--no-efs-state-probe", dest="efs_state_probe", action="store_false",
+                   help="EFS arms: do not run the storage model's state test at the start and end of every run (the "
+                        "run's EFS state, fast / degraded / slow, is then unknown)")
     p.add_argument("--efs-connections", type=int, default=EFS_CONNECTIONS_DEFAULT,
                    help="EFS arms: efs-proxy backend TCP connections every sample must have at its start and end (at "
                         "least N for N > 1, exactly 1 for 1); the agent pre-conditions the mount (O_DIRECT reads of a "

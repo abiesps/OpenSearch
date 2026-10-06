@@ -36,6 +36,9 @@ Endpoints (JSON in and out):
   GET  /efs/connections             backend TCP connections of the data path's EFS mount: efs-proxy's established
                                      connections to the mount target port 2049 (count, proxy pid, mount port); also in
                                      every /snapshot as efs_connections (coldpath_efsconn.py)
+  POST /efs/stateprobe               the storage model's EFS state test on the data path's mount (fio 8 KiB random,
+                                     queue depth 64, 8 s; fast >= 17,000 IOPS, degraded 12,000-17,000, slow below;
+                                     config efs_state_probe.file = a 64 GiB file on that mount; coldpath_efsstate.py)
   POST /efs/precondition?target=5&timeout_s=60  reads a scratch file on the same mount with O_DIRECT 1 MiB reads
                                      (no page-cache footprint, no index file) until the count is >= target, then
                                      waits (no reads) until it holds for stable_s=30 s, reading again if it drops
@@ -96,6 +99,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coldpath_readahead  # noqa: E402 - installed next to this file
 import coldpath_readattr  # noqa: E402 - installed next to this file
 import coldpath_efsconn  # noqa: E402 - installed next to this file
+import coldpath_efsstate  # noqa: E402 - installed next to this file
 
 VERSION = "4"
 PAGE = os.sysconf("SC_PAGE_SIZE")
@@ -774,6 +778,10 @@ class Agent:
         scratch = self.cfg.get("efs_precondition_file")
         return coldpath_efsconn.precondition(st["mount"], target, timeout_s=timeout_s, scratch=scratch, stable_s=stable_s)
 
+    def efs_state_probe(self, st):
+        """The storage model's EFS state test on the data path's mount (coldpath_efsstate.py): fast / degraded / slow."""
+        return coldpath_efsstate.probe(st, self.cfg.get("efs_state_probe"), coldpath_efsconn.backend_connections)
+
     def host(self, st):
         def read(p):
             try:
@@ -933,6 +941,9 @@ def make_handler(agent, token):
                     with agent.lock:
                         out = agent.efs_precondition(st, int(q.get("target", "5")), float(q.get("timeout_s", "60")),
                                                      float(q.get("stable_s", "30")))
+                elif route == ("POST", "/efs/stateprobe"):
+                    with agent.lock:
+                        out = agent.efs_state_probe(st)
                 elif route == ("GET", "/host"):
                     out = agent.host(st)
                 elif route == ("POST", "/readahead"):

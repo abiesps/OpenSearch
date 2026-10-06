@@ -386,6 +386,15 @@ def make_agent_handler(m):
                                            "proc_io": {"read_bytes": m.read_bytes, "rchar": m.read_bytes},
                                            "disk": disk, "nfs": nfs,
                                            "efs_connections": {"count": m.efs_conns, "proxy_pid": m.proxy_pid} if efs else None})
+                if u.path == "/efs/stateprobe":
+                    if not efs:
+                        return self.send(200, {"gap": "not an NFS mount"})
+                    lv = getattr(m, "efs_state", "fast")
+                    iops = {"fast": 18500, "degraded": 15000, "slow": 10000}[lv]
+                    x = {"srcport": 700, "bind_count": 1, "connect_count": 3}
+                    return self.send(200, {"iops": iops, "level": lv, "xprt_start": x, "xprt_end": x, "reconnects": 0,
+                                           "efs_connections_start": {"count": m.efs_conns, "proxy_pid": m.proxy_pid},
+                                           "efs_connections_end": {"count": m.efs_conns, "proxy_pid": m.proxy_pid}})
                 if u.path == "/efs/connections":
                     return self.send(200, {"efs_connections": {"count": m.efs_conns, "proxy_pid": m.proxy_pid} if efs else None})
                 if u.path == "/storage/incidents":
@@ -932,6 +941,16 @@ def main():
     r = ag.nfs_incidents(900.0, 1300.0, journal=j)
     assert r["windows"] == [{"server": "127.0.0.1", "start": 1000.0, "end": 1010.5, "open_end": False},
                             {"server": "127.0.0.1", "start": 1200.0, "end": 1300.0, "open_end": True}], r
+    # EFS state test per run (storage model): every EFS run_end carries efs_state; analyze.py --efs-run-state filters
+    ends = [json.loads(l) for l in open(os.path.join(s2, "samples.jsonl"))]
+    efs_ends = [r for r in ends if r["type"] == "run_end" and r.get("efs_state") is not None]
+    assert efs_ends and all(r["efs_state"]["run_state"] == "fast" for r in efs_ends), [r.get("efs_state") for r in efs_ends][:2]
+    assert not any(r.get("efs_state") for r in ends if r["type"] == "run_end" and r.get("arm") == "S0-EBS"), "EBS runs are not probed"
+    run([PY, os.path.join(here, "analyze.py"), s2, "--base", "S0-EBS", "--efs-run-state", "degraded", "--boot", "200",
+         "--ni-boot", "100", "--no-id-compare", "--out", os.path.join(tmp, "analysis-state")])
+    ast_ = json.load(open(os.path.join(tmp, "analysis-state", "analysis.json")))
+    assert any("efs_run_state" in k for k in ast_["excluded"]), ast_["excluded"]
+    assert ast_["efs_run_states"], ast_.get("efs_run_states")
     print(report[-3000:])
     print(f"\nSELFTEST PASS ({tmp})")
     if not a.keep:

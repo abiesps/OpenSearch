@@ -184,7 +184,8 @@ def in_incident(sample, incidents):
 
 
 class Data:
-    def __init__(self, dirs, cold_metric, warm_metric, cold_skip_iters=0, keep_unknown_efs=False, efs_select=None):
+    def __init__(self, dirs, cold_metric, warm_metric, cold_skip_iters=0, keep_unknown_efs=False, efs_select=None,
+                 efs_run_states=None):
         self.samples = collections.defaultdict(list)  # (mode, label, run_id, op) -> [sample]
         self.runs = {}
         self.results = collections.defaultdict(dict)  # (label, op) -> {run_id: canonical}
@@ -265,6 +266,24 @@ class Data:
                     del self.results[k][rid]
             for rid in self.discarded & set(self.runs):
                 del self.runs[rid]
+        # EFS runs by the storage model's state test at their start and end (coldbench run_end efs_state.run_state:
+        # fast, degraded, slow, mixed, reconnect, unknown; absent = not probed); --efs-run-state keeps only the EFS
+        # runs in the given states (EBS runs are not affected)
+        self.efs_run_state = {}
+        for d in dirs:
+            for r in read_jsonl(os.path.join(d, "samples.jsonl")):
+                if r["type"] == "run_end" and r.get("efs_state") is not None:
+                    self.efs_run_state[r["run_id"]] = r["efs_state"].get("run_state", "unknown")
+        self.efs_run_state_counts = collections.Counter()
+        for rid, run in self.runs.items():
+            if run.get("arm") and any(k[2] == rid and k[0] in ("cold", "warm") for k in self.samples):
+                efs_run = any(s.get("io", {}).get("nfs") is not None for k, v in self.samples.items() if k[2] == rid for s in v[:1])
+                if efs_run:
+                    self.efs_run_state_counts[(run["label"], self.efs_run_state.get(rid, "not probed"))] += 1
+        if efs_run_states:
+            for k in [k for k in self.samples if self.samples[k] and self.samples[k][0].get("io", {}).get("nfs") is not None
+                      and self.efs_run_state.get(k[2], "not probed") not in efs_run_states]:
+                self.excluded[(k[0], k[1], "efs_run_state")] += len(self.samples.pop(k))
         self.ref = self.sessions[0]["reference_op"] if self.sessions else None
         self.families = {}
         for s in self.sessions:
@@ -737,12 +756,14 @@ def main():
     ap.add_argument("--efs-connections", type=int,
                     help="keep only EFS samples at this efs-proxy backend connection count (start = end); needed when "
                          "the kept EFS samples have more than one count")
+    ap.add_argument("--efs-run-state", help="comma list: keep only EFS runs whose storage-model state test (coldbench "
+                    "run_end efs_state) is one of these, e.g. fast or fast,degraded; 'not probed' names runs without it")
     ap.add_argument("--keep-unknown-efs-connections", action="store_true",
                     help="keep EFS samples recorded without the connection count (older sessions); the report labels "
                          "them 'connection state unknown', and they cannot carry an EFS verdict")
     a = ap.parse_args()
     data = Data(a.sessions, a.cold_metric, a.warm_metric, a.cold_skip_iters, a.keep_unknown_efs_connections,
-                a.efs_connections)
+                a.efs_connections, set(a.efs_run_state.split(",")) if a.efs_run_state else None)
     if len(data.efs_used - {"unknown"}) > 1:
         sys.exit(f"EFS samples at different backend connection counts {sorted(data.efs_used)} cannot be compared in one "
                  "analysis; select one with --efs-connections N")
@@ -757,7 +778,8 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     md = []
     res = {"labels": labels, "base": a.base, "floors": floors, "comparisons": {}, "excluded": {str(k): v for k, v in data.excluded.items()},
-           "cold_protocol": protocol, "cold_skipped": dict(data.skipped)}
+           "cold_protocol": protocol, "cold_skipped": dict(data.skipped),
+           "efs_run_states": {f"{k[0]}|{k[1]}": v for k, v in data.efs_run_state_counts.items()}}
     md.append(f"# coldbench analysis: base {a.base}")
     md.append(f"Sessions: {', '.join(a.sessions)}. Unit = JVM run; per-run median, then median over runs. Cold metric "
               f"{a.cold_metric}, warm metric {a.warm_metric}. Bootstrap {a.boot} resamples of runs; exact Mann-Whitney p "
