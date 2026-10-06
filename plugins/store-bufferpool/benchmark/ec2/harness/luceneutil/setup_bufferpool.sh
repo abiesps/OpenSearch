@@ -23,11 +23,15 @@
 # is recorded with its sha256 in <BASE>/bufferpool-classpath.txt. Deletes only the coldpath-bp-*.jar files this script
 # wrote into luceneutil/lib before.
 #
-#   setup_bufferpool.sh BASE OPENSEARCH_DIST_DIR
-#   e.g. setup_bufferpool.sh /data/ebs/lu /opt/opensearch-baseline
+#   setup_bufferpool.sh BASE OPENSEARCH_DIST_DIR [CHECKOUT...]   (default checkouts: lucene-stock lucene-poc)
+#   e.g. setup_bufferpool.sh /data/ebs/lu /opt/opensearch-baseline lucene-stock    (plugin built for stock OpenSearch)
+#        setup_bufferpool.sh /data/ebs/lu /opt/opensearch-poc lucene-poc           (plugin built for the fork)
+# Each checkout gets the plugin build of its own target (gates/baseline-ready.md section 7), recorded per checkout.
 set -euo pipefail
 BASE=${1:?BASE}
 DIST=${2:?OPENSEARCH_DIST_DIR}
+shift 2
+CHECKOUTS=("$@"); [ ${#CHECKOUTS[@]} -gt 0 ] || CHECKOUTS=(lucene-stock lucene-poc)
 HERE=$(cd "$(dirname "$0")" && pwd)
 PLUGIN=$(ls -d "$DIST"/plugins/store-bufferpool)
 JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-21-amazon-corretto.x86_64}
@@ -45,14 +49,14 @@ CP=$(IFS=:; echo "${JARS[*]}"):$W/coldpath-bp-server-channels.jar:$(ls "$BASE"/l
 mkdir -p "$W/shim"
 "$JAVA_HOME/bin/javac" -proc:none -d "$W/shim" -cp "$CP" "$HERE/bufferpool/LuceneutilBufferPool.java"
 (cd "$W/shim" && "$JAVA_HOME/bin/jar" --create --file "$W/coldpath-bp-shim.jar" org)
-REC="$BASE/bufferpool-classpath.txt"
+REC="$BASE/bufferpool-classpath-$(IFS=-; echo "${CHECKOUTS[*]}").txt"
 {
   echo "# $(date -u +%FT%TZ) setup_bufferpool.sh $*  (harness $(git -C "$HERE" rev-parse --short=11 HEAD 2>/dev/null || echo unknown))"
   echo "distribution $DIST"
   for j in "${JARS[@]}" "$SERVER"; do sha256sum "$j"; done
   sha256sum "$W/coldpath-bp-server-channels.jar" "$W/coldpath-bp-shim.jar"
 } > "$REC"
-for c in lucene-stock lucene-poc; do
+for c in "${CHECKOUTS[@]}"; do
   L="$BASE/$c/luceneutil/lib"
   rm -f "$L"/coldpath-bp-*.jar
   if [ -f "$L/HdrHistogram.jar" ]; then mv "$L/HdrHistogram.jar" "$L/HdrHistogram.jar.luceneutil"; fi

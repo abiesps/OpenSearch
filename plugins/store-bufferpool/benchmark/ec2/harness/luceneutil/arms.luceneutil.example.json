@@ -377,20 +377,21 @@
    "index": "stock",
    "directory": "BufferPoolDirectory",
    "switches": {},
-   "note": "baseline: stock Lucene 10.5.1 on the store-bufferpool directory (user decision 2026-10-05)"
+   "note": "diagnostic: stock Lucene 10.5.1 on the store-bufferpool directory (plugin built for stock OpenSearch)"
   },
   "LB1": {
    "checkout": "poc",
    "index": "stock",
    "directory": "BufferPoolDirectory",
    "switches": {},
-   "note": "attribution reference: POC Lucene, every switch off, on the store-bufferpool directory"
+   "note": "additional configuration (user correction 2026-10-06): the Lucene fork, every switch off, on the store-bufferpool directory (plugin built for the fork), interleaved with L0 on memory mapping"
   }
  },
  "outcome": {
   "reference": "L0",
   "targets": [
    "L1",
+   "LB1",
    "L2-CORE"
   ],
   "aa": "L0@a,L0@b",
@@ -412,7 +413,9 @@
   "expect_read_hint": "willneed"
  },
  "env": {
-  "_note": "set from gates/baseline-ready.md (jemalloc LD_PRELOAD and MALLOC_CONF), identical for every JVM"
+  "LD_PRELOAD": "/usr/lib64/libjemalloc.so.2",
+  "MALLOC_CONF": "background_thread:true",
+  "_note": "gates/baseline-ready.md section 3 and 7: jemalloc 5.2.1 for every Java virtual machine of a session; MALLOC_ARENA_MAX unset"
  },
  "mem_limit_pct": 70
 }

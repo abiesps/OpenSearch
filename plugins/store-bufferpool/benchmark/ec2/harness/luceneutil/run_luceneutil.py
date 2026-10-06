@@ -123,25 +123,21 @@ def plan(cfg, table, mode, tasks, storage, labels, out, iter_offset=0):
     if not runnable:
         raise ValueError("no runnable arm")
     storages = sorted({x["storage"] for x in runnable})
-    # kernel readahead is per device and must not change while a JVM has the index open: one directory kind per storage
-    # in a session (memory mapping keeps the as-mounted readahead, the bufferpool directory runs with readahead 0 and
-    # announces each window with the read hint, as in the OpenSearch configurations)
-    storage_spec = {}
-    for s_name in storages:
-        kinds = {x["directory"] for x in runnable if x["storage"] == s_name}
-        if len(kinds) > 1:
-            raise ValueError(f"storage {s_name}: arms with different directories {sorted(kinds)} in one session")
-        spec = dict(cfg["storages"][s_name])
-        spec["directory"] = kinds.pop()
-        if spec["directory"] == "BufferPoolDirectory":
-            spec["read_ahead_mode"] = "0"
-        storage_spec[s_name] = spec
+    # kernel readahead per JVM run: memory mapping keeps the as-mounted readahead ("default"), the bufferpool directory
+    # runs with readahead 0 and announces each window with the read hint, as in the OpenSearch configurations. Linux
+    # copies the value into each file at open, so the driver sets and reads it back before every JVM run and checks it
+    # after the run; arms of both kinds can therefore interleave on one storage (Amazon EFS hosts need the efs-utils
+    # watchdog's optimize_readahead = false, gates/baseline-ready.md, or the value is reset within seconds)
+    storage_spec = {s_name: dict(cfg["storages"][s_name]) for s_name in storages}
     for x in runnable:
-        x["storage_spec"] = storage_spec[x["storage"]]
+        spec = dict(storage_spec[x["storage"]])
+        spec["read_ahead_mode"] = "0" if x["directory"] == "BufferPoolDirectory" else spec.get("read_ahead_mode", "default")
+        x["storage_spec"] = spec
     os.makedirs(out, exist_ok=True)
     session = {"mode": mode, "tasks": tasks, "storage": ",".join(storages),
                "storage_spec": storage_spec, "labels": labels, "arms": arms, "bufferpool": cfg.get("bufferpool"),
-               "env": cfg.get("env") or {}, "mem_limit_pct": cfg.get("mem_limit_pct", 70),
+               "env": {k: v for k, v in (cfg.get("env") or {}).items() if not k.startswith("_")},
+               "mem_limit_pct": cfg.get("mem_limit_pct", 70),
                "competition": comp, "luceneutil": cfg["luceneutil"], "params": params, "data": cfg.get("data", "wikimediumall"),
                "switches_fork_commit": table.get("fork_commit"), "id": os.path.basename(os.path.abspath(out)),
                "iter_offset": iter_offset,
@@ -198,12 +194,18 @@ for k, v in (S.get("env") or {}).items():
     os.environ[k] = str(v)
 json.dump({"env": S.get("env") or {}, "bufferpool": S.get("bufferpool")}, open(os.path.join(OUT, "jvm-env.json"), "w"), indent=1)
 ra_all = {}
-for name, st in S["storage_spec"].items():
+for a in S["arms"]:
+    if a.get("not_applicable"):
+        continue
+    st = a["storage_spec"]
+    key = f"{a['storage']}:{st.get('read_ahead_mode', 'default')}"
+    if key in ra_all:
+        continue
     ra = agent(st, "POST", f"/readahead/mode?arm={st['agent_arm']}&mode={st.get('read_ahead_mode', 'default')}")
-    ra_all[name] = ra
-    print("readahead", name, ra)
+    ra_all[key] = ra
+    print("readahead", key, ra)
     if not ra.get("ok"):
-        raise SystemExit(f"readahead of {name} is not {st.get('read_ahead_mode', 'default')}: {ra}; not measuring")
+        raise SystemExit(f"readahead of {key} could not be set: {ra}; not measuring")
 json.dump(ra_all, open(os.path.join(OUT, "readahead.json"), "w"), indent=1)
 indices, comps = {}, {}
 for a in S["arms"]:
@@ -254,7 +256,7 @@ class MemoryMonitor(threading.Thread):
 
     def __init__(self, st, limit):
         super().__init__(daemon=True)
-        self.st, self.limit, self.peak, self.killed = st, limit, None, False
+        self.st, self.limit, self.peak, self.killed, self.allocator = st, limit, None, False, None
         self._stop_ev = threading.Event()
 
     def run(self):
@@ -264,6 +266,8 @@ class MemoryMonitor(threading.Thread):
             except Exception:
                 continue
             pct = m.get("rss_pct")
+            if m.get("allocator") is not None and self.allocator is None:
+                self.allocator = m["allocator"]  # agent v4: mapped allocator library and its sha256, environment
             if pct is not None and (self.peak is None or pct > self.peak.get("rss_pct", 0)):
                 self.peak = {k: m.get(k) for k in ("rss_pct", "anon_pct", "vm_rss_kb", "rss_anon_kb", "mem_total_kb", "pid")}
             if pct is not None and pct > self.limit and m.get("pid"):
@@ -355,6 +359,11 @@ def run_one(label, it, seed, remeasure=False):
                 mon.stop()
             if mon.killed:
                 raise RuntimeError(f"JVM passed {mon.limit}% of host memory ({mon.peak}): run discarded")
+            want_pre = (S.get("env") or {}).get("LD_PRELOAD")
+            if want_pre and mon.allocator is not None:
+                libs = json.dumps(mon.allocator)
+                if os.path.basename(want_pre).split(".so")[0] not in libs:
+                    raise SystemExit(f"{label} iteration {it}: JVM allocator {libs[:300]} does not map {want_pre}: stopping")
             if c.directory == "BufferPoolDirectory":
                 # the cache this JVM built must have the configured read hint: "auto" silently becomes "none" when
                 # libc cannot be linked (a classpath gap), which would change every storage read
@@ -425,7 +434,7 @@ def run_one(label, it, seed, remeasure=False):
                                "efs_precondition": efs_pre, "jvm_snapshots": {"pre": snap_pre, "post": snap_post},
                                "efs_invalid_samples": efs_invalid, "remeasure": remeasure,
                                "failed_attempts": failures, "epoch_start": epoch0, "epoch_end": epoch0 + wall,
-                               "storage_incidents": incidents, "memory_peak": mon.peak, "directory": c.directory,
+                               "storage_incidents": incidents, "memory_peak": mon.peak, "allocator": mon.allocator, "directory": c.directory,
                                "readahead": {"mode": ra_mode, "pre": ra_pre, "post": ra_post, "changed": ra_changed}}) + "\n")
     manifest.flush()
     return efs_invalid

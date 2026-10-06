@@ -750,12 +750,9 @@ def part_f(tmp, fork, fork_commit):
     check(len(flags) == 1 and "-Dcoldpath.bp.cache_bytes=25769803776" in flags.pop()
           and all(x["storage_spec"]["read_ahead_mode"] == "0" and x["directory"] == "BufferPoolDirectory" for x in s4["arms"]),
           "(f) bufferpool arms: one set of bufferpool flags, readahead 0")
-    for bad_labels in (["LB0:EBS", "L0:EBS@x"],):
-        try:
-            run_luceneutil.plan(cfg, table, "warm", "t", "EBS", bad_labels, os.path.join(tmp, "lu-bad3"))
-            check(False, "(f) mmap and bufferpool arms on one storage refused")
-        except ValueError:
-            check(True, "(f) mmap and bufferpool arms on one storage refused")
+    d5, s5 = run_luceneutil.plan(cfg, table, "warm", "t", "EBS", ["LB1:EBS", "L0:EBS@x"], os.path.join(tmp, "lu-mix-dir"))
+    check([x["storage_spec"]["read_ahead_mode"] for x in s5["arms"]] == ["0", "default"] and "LD_PRELOAD" in s5["env"],
+          "(f) memory-mapped and bufferpool arms interleave on one storage, readahead per arm; jemalloc env")
     try:
         run_luceneutil.bufferpool_flags(dict(cfg, bufferpool=dict(cfg["bufferpool"], random_read_size=65536)), "BufferPoolDirectory")
         check(False, "(f) bufferpool IO sizes other than 8 / 32 / 128 KiB refused")
