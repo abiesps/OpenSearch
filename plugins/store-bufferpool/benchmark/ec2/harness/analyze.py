@@ -551,10 +551,14 @@ def storage_reads_check(data, pairs, tol):
 
 
 def storage_pairs(outcome, labels, cli):
-    """Pairs (baseline, all-off) for the storage reads check: --io-check REF:TGT,... or, from the arms file's outcome,
-    the same-storage reference of each storage with its attribution reference (BASE-EBS:S1-EBS, BASE-EFS:S1-EFS)."""
+    """Pairs (reference, all-off) for the storage reads check: --io-check REF:TGT,..., else the arms file's
+    outcome.storage_reads_pairs (arms_baseline.py: BASE-EBS:S1-EBS, BASE-EFS:S1-EFS, stock OpenSearch with the bufferpool
+    against the all-off build), else each same-storage reference with its attribution reference. Pairs whose labels
+    are not in the session are skipped."""
     if cli:
         return [tuple(x.split(":", 1)) for x in cli.split(",")]
+    if (outcome or {}).get("storage_reads_pairs") is not None:
+        return [(r, t) for r, t in outcome["storage_reads_pairs"] if r in labels and t in labels]
     att = (outcome or {}).get("attribution_reference") or {}
     pairs = []
     for ss in (outcome or {}).get("same_storage") or []:

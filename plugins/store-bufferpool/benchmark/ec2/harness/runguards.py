@@ -95,13 +95,14 @@ def check_cache_cleanup(arm_name, node_settings):
     return rec
 
 
-# ---------------------------------------------------------------- builds (USER DECISION 2026-10-05)
+# ---------------------------------------------------------------- builds
 # An arm's "build" names the binary its agent arm (node) runs:
 #   "baseline"  stock OpenSearch (stock Lucene) WITH the bufferpool plugin built for it (artifact baseline_bufferpool);
 #               GET /_bufferpool/stats reports build_target "stock"; it has no experiment endpoint, so it gets no
 #               base_switches and no switches
 #   "poc"       the proof-of-concept OpenSearch and Lucene fork with the same plugin (build_target "poc")
-#   "stock"     stock OpenSearch without the plugin (memory mapping): a context arm only, no verdict
+#   "stock"     stock OpenSearch without the plugin (memory mapping): the outcome baseline on Amazon EBS (USER
+#               CORRECTION 2026-10-06); first-class in the default configuration set
 # An arm without "build" keeps the earlier meaning: bufferpool true = poc, false = stock.
 BUILDS = ("baseline", "poc", "stock")
 BUILD_TARGET = {"baseline": "stock", "poc": "poc"}
@@ -144,13 +145,19 @@ def check_build(arm_name, arm, cfg, root, bp_stats):
            "build_hash": ((root or {}).get("version") or {}).get("build_hash"),
            "lucene_version": ((root or {}).get("version") or {}).get("lucene_version")}
     rec = {"build": b, "node": got, "ok": None}
-    if b is None or b == "stock":
+    if b is None:
         return rec
     want = dict((cfg.get("builds") or {}).get(b) or {})
-    want.setdefault("build_target", BUILD_TARGET[b])
+    if b == "stock":
+        # no bufferpool plugin, so no build_target: only the build hash, when the arms file names one
+        if not want.get("build_hash"):
+            return rec
+        want.pop("build_target", None)
+    else:
+        want.setdefault("build_target", BUILD_TARGET[b])
     rec["want"] = want
     errors = []
-    if got["build_target"] != want["build_target"]:
+    if b != "stock" and got["build_target"] != want["build_target"]:
         errors.append(f"build_target {got['build_target']!r}, the {b} build reports {want['build_target']!r}")
     if want.get("build_hash") and not str(got["build_hash"] or "").startswith(want["build_hash"]):
         errors.append(f"build_hash {got['build_hash']!r} does not start with {want['build_hash']!r}")

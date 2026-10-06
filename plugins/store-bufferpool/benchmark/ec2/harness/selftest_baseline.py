@@ -11,11 +11,14 @@ Self-test of the configuration set of the USER DECISION 2026-10-05 and of jemall
     removed with a backup, the setup record, glibc and glibc-arenas2 drop-ins, refusal of a jemalloc that is not the
     pinned build;
   - the agent's allocator_info on /proc/<pid>/maps and environ text (jemalloc mapped, a preload the loader ignored);
-  - arms_baseline.py on the committed arms.example.json: every arm in [arms] is a bufferpool arm with a build, the
-    memory-mapping arms are context arms, BASE-* copy S1-* without proof-of-concept-only indices and switches;
-  - coldbench end to end against the selftest.py mock: baseline build without base switches or sort_opt, build and
-    allocator checks at every node start, recorded per run and in node_memory; a context arm runs only when named;
-    a node without jemalloc, an agent before v4, a mixed-allocator session and a node of the wrong build are refused.
+  - arms_baseline.py on the committed templates (USER CORRECTION 2026-10-06): stock OpenSearch with memory mapping is
+    first-class on both storages and the outcome reference; the proof-of-concept arms are bufferpool arms with a build;
+    stock OpenSearch with the bufferpool (BASE-*) is an optional diagnostic in context_arms, copied from S1-* without
+    proof-of-concept-only indices and switches; the superseded bufferpool-baseline set still converts;
+  - coldbench end to end against the selftest.py mock: stock memory-mapping, all-off and changes-on runs with build,
+    allocator, read hint and plugin checks at every node start, recorded per run and in node_memory; the diagnostic
+    runs only when named, without base switches or sort_opt; a node without jemalloc (stock included), an agent before
+    v4, a node of the wrong build, another plugin jar, read hint none and readahead drift are refused or discarded.
   python3 selftest_baseline.py
 """
 import json
@@ -145,35 +148,51 @@ def agent_parse():
 
 def arms_template():
     import arms_baseline
+    import coldbench
     import runguards
     cfg = json.load(open(os.path.join(here, "arms.example.json")))
-    check(cfg.get("_baseline") and cfg["allocator"]["name"] == "jemalloc" and cfg["allocator"]["jemalloc_sha256"] == JE_SHA,
-          "template: arms.example.json is converted and asks for the pinned jemalloc")
+    check(cfg.get("_baseline", {}).get("set") == "memory-mapping" and cfg["allocator"]["name"] == "jemalloc" and
+          cfg["allocator"]["jemalloc_sha256"] == JE_SHA, "template: arms.example.json has the memory-mapping set and "
+          "asks for the pinned jemalloc")
     arms = {n: a for n, a in cfg["arms"].items() if not a.get("not_applicable")}
-    check(all(a.get("bufferpool") and a.get("build") in ("baseline", "poc") for a in arms.values()),
-          "template: every arm is a bufferpool arm with a build (all use the bufferpool readahead rule)")
-    check(sorted(cfg["context_arms"]) == ["S0-EBS", "S0-EBS-css", "S0-EFS", "S0-EFS-css"] and
-          all(a["build"] == "stock" and not a["bufferpool"] for a in cfg["context_arms"].values()),
-          "template: the memory-mapping arms are context arms only")
-    for s in ("EBS", "EFS"):
-        b, s1 = cfg["arms"][f"BASE-{s}"], cfg["arms"][f"S1-{s}"]
-        check(b["build"] == "baseline" and b["node"] == f"BASE-{s}" and b["switches"] == [] and b["index"] == s1["index"]
+    stock = sorted(n for n, a in arms.items() if a.get("build") == "stock")
+    check(stock == ["S0-EBS", "S0-EBS-css", "S0-EFS", "S0-EFS-css"] and
+          all(not arms[n]["bufferpool"] and set(arms[n]["store_types"].values()) == {"hybridfs"} and
+              coldbench.readahead_mode(arms[n]) == "default" for n in stock),
+          "template: stock OpenSearch with memory mapping is first-class on both storages, mounted default readahead")
+    check(all(a["build"] == "poc" and a["bufferpool"] and coldbench.readahead_mode(a) == "0"
+              for n, a in arms.items() if n not in stock), "template: every other arm is the proof-of-concept build "
+          "with the bufferpool, readahead 0")
+    check(sorted(cfg["context_arms"]) == ["BASE-EBS", "BASE-EBS-css", "BASE-EFS", "BASE-EFS-css"],
+          "template: stock OpenSearch with the bufferpool is only an optional diagnostic (context arms)")
+    for s_ in ("EBS", "EFS"):
+        b, s1 = cfg["context_arms"][f"BASE-{s_}"], cfg["arms"][f"S1-{s_}"]
+        check(b["build"] == "baseline" and b["node"] == f"BASE-{s_}" and b["switches"] == [] and b["index"] == s1["index"]
               and b["cluster_settings"] == s1["cluster_settings"] and
               not any(runguards.poc_only(cfg["indices"][k]) for k in b["open"]) and
-              set(b["store_types"].values()) == {"bufferpoolfs"}, f"template: BASE-{s} is S1-{s} on the baseline build")
+              set(b["store_types"].values()) == {"bufferpoolfs"}, f"template: BASE-{s_} is S1-{s_} on the baseline build")
     o = cfg["outcome"]
-    check(o["reference"] == "BASE-EBS" and o["targets"] == ["S2-CORE-EFS", "S2-CORE+PLANNER-EFS"] and
-          [x["reference"] for x in o["same_storage"]] == ["BASE-EBS", "BASE-EFS"], "template: outcome against the baseline")
+    check(o["reference"] == "S0-EBS" and o["aa"] == "S0-EBS@a,S0-EBS@b" and
+          o["targets"] == ["S2-CORE-EFS", "S2-CORE+PLANNER-EFS"] and
+          [x["reference"] for x in o["same_storage"]] == ["S0-EBS", "S0-EFS"] and
+          o["attribution_reference"] == {"EBS": "S1-EBS", "EFS": "S1-EFS"},
+          "template: outcome against stock OpenSearch with memory mapping on Amazon EBS")
     gen = json.load(open(os.path.join(here, "arms.generic.example.json")))
-    check(not any(not a.get("bufferpool") for a in gen["arms"].values() if not a.get("not_applicable")) and
-          "BASE-EBS" in gen["arms"] and sorted(gen["context_arms"]) == sorted(cfg["context_arms"]) and
-          gen["outcome"] == cfg["outcome"], "template: the generic template has the same configuration set")
+    check(sorted(n for n, a in gen["arms"].items() if a.get("build") == "stock") == stock and
+          sorted(gen["context_arms"]) == sorted(cfg["context_arms"]) and gen["outcome"] == cfg["outcome"],
+          "template: the generic template has the same configuration set")
+    old, _ = arms_baseline.convert({"indices": {"s": {"name": "x"}}, "arms": {
+        "S0-EBS": {"node": "S0-EBS", "storage": "EBS", "bufferpool": False, "index": "s", "open": ["s"]},
+        "S1-EBS": {"node": "POC-EBS", "storage": "EBS", "bufferpool": True, "index": "s", "open": ["s"]}}}, {},
+        "bufferpool-baseline")
+    check(sorted(old["arms"]) == ["BASE-EBS", "S1-EBS"] and list(old["context_arms"]) == ["S0-EBS"] and
+          old["outcome"]["reference"] == "BASE-EBS", "converter: the superseded bufferpool-baseline set is still available")
     try:
         arms_baseline.convert({"indices": {}, "arms": {"S0-EBS": {"node": "S0-EBS", "bufferpool": False, "index": "x",
                                                                  "open": ["x"]}}}, {})
-        check(False, "converter: a baseline needs an S1 arm to copy")
+        check(False, "converter: the diagnostic arm needs an S1 arm to copy")
     except ValueError:
-        check(True, "converter: a baseline needs an S1 arm to copy")
+        check(True, "converter: the diagnostic arm needs an S1 arm to copy")
 
 
 def e2e(tmp):
@@ -184,7 +203,8 @@ def e2e(tmp):
     glibc = {"ld_preload": None, "malloc_conf": None, "malloc_arena_max": "2", "jemalloc_mapped": [], "name": "glibc",
              "jemalloc_sha256": {}}
     m.allocator = je
-    m.binary = "BASE-EBS"
+    m.binary = "S0-EBS"
+    m.indices["big5"]["store_type"] = "hybridfs"
     _, os_url = st.serve(st.make_os_handler(m))
     _, agent_url = st.serve(st.make_agent_handler(m))
     token = os.path.join(tmp, "token")
@@ -211,9 +231,10 @@ def e2e(tmp):
                                                "verify": {"bkd_prefetch": "true"}}]}}}
     cfg, _ = arms_baseline.convert(old, arms_baseline._artifacts(os.path.join(here, "..", "artifacts.json")))
     check(cfg["builds"]["baseline"]["plugin_jar_sha256"].startswith("abd4294a") and
-          cfg["builds"]["poc"]["plugin_jar_sha256"].startswith("8086a04c"), "converter: plugin jar sha256 per build")
-    check(sorted(cfg["arms"]) == ["BASE-EBS", "S1-EBS", "S2-X-EBS"] and list(cfg["context_arms"]) == ["S0-EBS"],
-          "converter: S0-EBS -> context, BASE-EBS added")
+          cfg["builds"]["poc"]["plugin_jar_sha256"].startswith("8086a04c") and
+          cfg["builds"]["stock"]["build_hash"] == "b44de786cef", "converter: build hash and plugin jar sha256 per build")
+    check(sorted(cfg["arms"]) == ["S0-EBS", "S1-EBS", "S2-X-EBS"] and list(cfg["context_arms"]) == ["BASE-EBS"],
+          "converter: S0-EBS stays first-class, BASE-EBS is an optional diagnostic")
     arms_f = os.path.join(tmp, "arms.json")
     json.dump(cfg, open(arms_f, "w"))
     common = ["--arms", arms_f, "--ops", ops, "--url", os_url, "--agent", agent_url, "--token-file", token,
@@ -221,46 +242,58 @@ def e2e(tmp):
               "--strict", "--no-results"]
     m.calls.clear()
     out = os.path.join(tmp, "s-ok")
-    st.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "BASE-EBS,S1-EBS,S2-X-EBS", "--out", out])
+    st.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--arm-list", "S0-EBS,S1-EBS,S2-X-EBS", "--out", out])
     recs = [json.loads(x) for x in open(os.path.join(out, "samples.jsonl"))]
     runs = {r["run_id"]: r for r in recs if r["type"] == "run" and r.get("available")}
     check(len(runs) == 6 and all(r["allocator"]["ok"] and r["allocator"]["node"]["name"] == "jemalloc" for r in runs.values()),
-          "e2e: every run checked jemalloc at node start and records it")
-    base = [r for r in runs.values() if r["arm"] == "BASE-EBS"]
-    check(all(r["build"]["ok"] and r["build"]["node"]["build_target"] == "stock" and "sort_opt" not in r["state"] and
-              r["switches"] == [] and r["readahead"]["mode"] == "0" for r in base),
-          "e2e: the baseline build runs without base switches, its build is checked, readahead 0")
-    poc = [r for r in runs.values() if r["arm"] != "BASE-EBS"]
-    check(all(r["build"]["ok"] and r["build"]["node"]["build_target"] == "poc" and "sort_opt" in r["state"] for r in poc),
-          "e2e: the proof-of-concept build keeps its switches and is checked")
-    check(all(r["same_bufferpool"]["storage"] == "EBS" for r in runs.values()), "e2e: same bufferpool settings recorded")
-    check(all(r["read_hint"]["ok"] and r["read_hint"]["node"] == "willneed" for r in runs.values()),
-          "e2e: every run records the effective read hint (willneed)")
+          "e2e: every run, stock memory mapping included, checked jemalloc at node start and records it")
+    s0 = [r for r in runs.values() if r["arm"] == "S0-EBS"]
+    check(len(s0) == 2 and all(r["build"]["ok"] and r["build"]["node"]["build_hash"].startswith("b44de786cef") and
+                               r["readahead"]["mode"] == "default" and not r["context_arm"] and r["plugin"] is None and
+                               r["read_hint"] is None for r in s0),
+          "e2e: stock OpenSearch with memory mapping runs first-class: build hash checked, mounted default readahead")
+    poc = [r for r in runs.values() if r["arm"] != "S0-EBS"]
+    check(all(r["build"]["ok"] and r["build"]["node"]["build_target"] == "poc" and "sort_opt" in r["state"] and
+              r["readahead"]["mode"] == "0" for r in poc),
+          "e2e: the proof-of-concept build keeps its switches, readahead 0, and is checked")
+    check(all(r["same_bufferpool"]["storage"] == "EBS" for r in poc), "e2e: same bufferpool settings recorded")
+    check(all(r["read_hint"]["ok"] and r["read_hint"]["node"] == "willneed" for r in poc),
+          "e2e: every bufferpool run records the effective read hint (willneed)")
     check(all(r["plugin"]["ok"] and r["plugin"]["plugin_source_commit"] == "c83c646b873" and
-              r["plugin"]["plugin_jar"][1] == m.plugin_jars[r["arm"].split("-")[0] if r["arm"].startswith("BASE") else "POC"][1]
-              for r in runs.values()), "e2e: every run records its plugin jar sha256 and the plugin source commit")
+              r["plugin"]["plugin_jar"][1] == m.plugin_jars["POC"][1] for r in poc),
+          "e2e: every bufferpool run records its plugin jar sha256 and the plugin source commit")
+    nm = [r for r in recs if r["type"] == "node_memory"]
+    check(len(nm) == 6 and all(r["allocator"]["name"] == "jemalloc" for r in nm), "e2e: node_memory records the allocator")
+    check(m.indices["big5"]["store_type"] == "hybridfs", "e2e: the session leaves the shared index in the stock store type")
+    posts = [c for c in m.calls if c[0] == "os" and c[1] == "POST" and c[2] == "/_bufferpool/sort_opt"]
+    check(len(posts) == 2 * 1 + 2 * 2, f"e2e: switches posted only on the proof-of-concept runs ({len(posts)})")
+    # the optional diagnostic: stock OpenSearch with the bufferpool, named in the session
+    m.calls.clear()
+    out = os.path.join(tmp, "s-diag")
+    st.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--rounds", "1", "--arm-list", "S0-EBS,BASE-EBS,S1-EBS",
+            "--out", out])
+    recs = [json.loads(x) for x in open(os.path.join(out, "samples.jsonl"))]
+    base = [r for r in recs if r["type"] == "run" and r.get("arm") == "BASE-EBS"]
+    check(len(base) == 1 and base[0]["context_arm"] and base[0]["build"]["ok"] and
+          base[0]["build"]["node"]["build_target"] == "stock" and "sort_opt" not in base[0]["state"] and
+          base[0]["switches"] == [] and base[0]["readahead"]["mode"] == "0" and
+          base[0]["plugin"]["plugin_jar"][1] == m.plugin_jars["BASE"][1],
+          "e2e: the named diagnostic runs as stock OpenSearch with the bufferpool: no switches, no sort_opt read, "
+          "readahead 0, its own plugin jar")
+    posts = [c for c in m.calls if c[0] == "os" and c[1] == "POST" and c[2] == "/_bufferpool/sort_opt"]
+    check(len(posts) == 1, f"e2e: the diagnostic gets no base switches ({len(posts)})")
     an = os.path.join(tmp, "analysis")
     st.run([PY, os.path.join(here, "analyze.py"), out, "--base", "S1-EBS", "--boot", "200", "--ni-boot", "100", "--out", an])
     chk = json.load(open(os.path.join(an, "analysis.json"))).get("storage_reads_check") or []
     check(chk and all(r["reference"] == "BASE-EBS" and r["target"] == "S1-EBS" and r["different"] is False and
                       r["ref"]["reads"] == r["ref"]["demand_reads"] + r["ref"]["prefetch_reads"] for r in chk),
-          "e2e: analyze compares storage reads and bytes per cold query, all-off with the baseline, demand and prefetch split")
-    nm = [r for r in recs if r["type"] == "node_memory"]
-    check(len(nm) == 6 and all(r["allocator"]["name"] == "jemalloc" for r in nm), "e2e: node_memory records the allocator")
-    restarts = [c[4] for c in m.calls if c[:3] == ("agent", "POST", "/node/restart")]
-    check("S0-EBS" not in restarts and m.indices["big5"]["store_type"] == "bufferpoolfs",
-          "e2e: no stock node starts and the shared index keeps store type bufferpoolfs when no context arm is named")
-    base_posts = [c for c in m.calls if c[0] == "os" and c[1] == "POST" and c[2] == "/_bufferpool/sort_opt"]
-    # S1-EBS: the base switch; S2-X-EBS: the base switch and its own; BASE-EBS: none (2 runs each)
-    check(len(base_posts) == 2 * 1 + 2 * 2, f"e2e: switches posted only on the proof-of-concept runs ({len(base_posts)})")
-    # a context arm runs when named, with the stock store type and the as-mounted readahead
-    out = os.path.join(tmp, "s-context")
-    st.run([PY, os.path.join(here, "coldbench.py"), "run", *common, "--rounds", "1", "--arm-list", "S0-EBS,BASE-EBS",
-            "--out", out])
-    recs = [json.loads(x) for x in open(os.path.join(out, "samples.jsonl"))]
-    ctx = [r for r in recs if r["type"] == "run" and r.get("arm") == "S0-EBS"]
-    check(len(ctx) == 1 and ctx[0]["context_arm"] and ctx[0]["readahead"]["mode"] == "default",
-          "e2e: a named context arm runs (memory mapping, as-mounted readahead) and is marked")
+          "e2e: analyze compares storage reads and bytes per cold query, diagnostic with the all-off build, demand and "
+          "prefetch split")
+    an0 = os.path.join(tmp, "analysis-s0")
+    st.run([PY, os.path.join(here, "analyze.py"), os.path.join(tmp, "s-ok"), "--base", "S1-EBS", "--boot", "200",
+            "--ni-boot", "100", "--out", an0])
+    check("storage_reads_check" not in json.load(open(os.path.join(an0, "analysis.json"))),
+          "e2e: no storage reads check without the diagnostic in the session")
 
     def refused(name, arm_list, extra=(), arms=arms_f):
         p = subprocess.run([PY, os.path.join(here, "coldbench.py"), "run", *[c if c != arms_f else arms for c in common],
@@ -269,13 +302,15 @@ def e2e(tmp):
         measured = [json.loads(x) for x in open(samples)] if os.path.exists(samples) else []
         return p, [r for r in measured if r["type"] == "sample"]
     m.allocator_by_node = {"POC-EBS": glibc}
-    p, smp = refused("s-glibc", "BASE-EBS,S1-EBS")
+    p, smp = refused("s-glibc", "S0-EBS,S1-EBS")
     check(p.returncode != 0 and "node allocator differs" in p.stderr and not any(s["arm"] == "S1-EBS" for s in smp),
           "e2e: a node without jemalloc is refused before it measures")
-    p, smp = refused("s-glibc-any", "S1-EBS", ("--allocator", "any"))
-    check(p.returncode == 0, f"e2e: --allocator any records only ({p.stderr[-300:]})")
-    p, smp = refused("s-mixed", "BASE-EBS,S1-EBS", ("--allocator", "any", "--rounds", "1"))
-    check(p.returncode == 0, "e2e: record-only sessions may mix (no requirement)")
+    m.allocator_by_node = {"S0-EBS": glibc}
+    p, smp = refused("s-glibc-s0", "S0-EBS")
+    check(p.returncode != 0 and "node allocator differs" in p.stderr and not smp,
+          "e2e: a stock node without jemalloc is refused too (the environment is identical in every unit)")
+    p, smp = refused("s-glibc-any", "S0-EBS,S1-EBS", ("--allocator", "any", "--rounds", "1"))
+    check(p.returncode == 0, f"e2e: --allocator any records only, allocators may differ ({p.stderr[-300:]})")
     m.allocator_by_node = {}
     # readahead back at 15360 at the end of a run (efs-utils watchdog): the run is discarded and re-measured
     m.readahead_get_drift = 2  # the 1st GET /readahead is the check after the index open, the 2nd the end of the run
@@ -297,23 +332,27 @@ def e2e(tmp):
     check(p.returncode != 0 and "plugin jar" in p.stderr and not smp, "e2e: a node with another plugin jar is refused")
     m.plugin_jars["POC"] = good_jar
     m.allocator = None
-    p, smp = refused("s-agent3", "BASE-EBS")
+    p, smp = refused("s-agent3", "S0-EBS")
     check(p.returncode != 0 and "agent before v4" in p.stderr and not smp, "e2e: an agent without the allocator field is refused")
     m.allocator = je
     wrong = json.loads(json.dumps(cfg))
-    wrong["arms"]["BASE-EBS"]["node"] = "POC-EBS"  # the baseline arm pointed at the proof-of-concept unit
+    wrong["arms"]["S0-EBS"]["node"] = "POC-EBS"  # the stock arm pointed at the proof-of-concept unit
+    wrong["context_arms"]["BASE-EBS"]["node"] = "POC-EBS"
     wrong_f = os.path.join(tmp, "arms-wrong.json")
     json.dump(wrong, open(wrong_f, "w"))
-    p, smp = refused("s-wrong", "BASE-EBS", arms=wrong_f)
-    check(p.returncode != 0 and "is not the baseline build" in p.stderr and not smp, "e2e: a node of the wrong build is refused")
+    p, smp = refused("s-wrong", "S0-EBS", arms=wrong_f)
+    check(p.returncode != 0 and "is not the stock build" in p.stderr and not smp, "e2e: a stock arm on another build is refused")
+    p, smp = refused("s-wrong-b", "BASE-EBS", arms=wrong_f)
+    check(p.returncode != 0 and "is not the baseline build" in p.stderr and not smp,
+          "e2e: the diagnostic on another build is refused")
     bad = json.loads(json.dumps(cfg))
-    bad["arms"]["BASE-EBS"]["switches"] = old["arms"]["S2-X-EBS"]["switches"]
+    bad["context_arms"]["BASE-EBS"]["switches"] = old["arms"]["S2-X-EBS"]["switches"]
     bad_f = os.path.join(tmp, "arms-bad.json")
     json.dump(bad, open(bad_f, "w"))
     p, _ = refused("s-bad", "BASE-EBS", arms=bad_f)
     check(p.returncode != 0 and "baseline build has no experiment switches" in p.stderr, "e2e: switches on the baseline refused")
     p, _ = refused("s-unknown", "S0-EFS")
-    check(p.returncode != 0 and "unknown arm" in (p.stdout + p.stderr), "e2e: an unknown context arm name is refused")
+    check(p.returncode != 0 and "unknown arm" in (p.stdout + p.stderr), "e2e: an unknown arm name is refused")
 
 
 def main():

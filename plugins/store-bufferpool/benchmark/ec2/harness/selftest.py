@@ -209,7 +209,7 @@ def make_os_handler(m):
                 if p == "/":
                     return self.send(200, {"name": "n1", "cluster_name": "mock", "binary": m.binary, "version": {
                         "distribution": "opensearch", "number": "3.3.0", "build_type": "tar",
-                        "build_hash": {"BASE": "b44de786cefeb3bf", "POC": "d6daba062dc7a52b"}.get(m.binary.split("-")[0], "mock"),
+                        "build_hash": {"BASE": "b44de786cefeb3bf", "S0": "b44de786cefeb3bf", "POC": "d6daba062dc7a52b"}.get(m.binary.split("-")[0], "mock"),
                         "build_date": "2026-01-01T00:00:00Z", "build_snapshot": False, "lucene_version": "10.3.0",
                         "minimum_wire_compatibility_version": "2.19.0", "minimum_index_compatibility_version": "2.0.0"}})
                 if p.startswith("/_cluster/health"):

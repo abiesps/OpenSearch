@@ -1,5 +1,5 @@
 {
- "_doc": "Arms of one data node host, configuration set of the USER DECISION 2026-10-05 (arms_baseline.py): baseline BASE-EBS / BASE-EFS (stock OpenSearch and Lucene with the bufferpool plugin, agent arms BASE-*), changes S2-* and the all-off attribution reference S1-* (proof-of-concept build, agent arms POC-*), all with the bufferpool store, the same plugin settings, readahead 0 plus the window hint, and jemalloc on every node unit (\"allocator\", node_allocator.sh). Stock memory-mapping arms are in \"context_arms\": a session runs one only when its --arm-list names it. build: baseline arms get no base_switches. Earlier text: Arms of one data node host. node = agent arm (binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS; each has its own data_path in the agent config, so EBS and EFS are separate cluster states). index/open/store_types refer to keys of [indices]. Every index is closed before a node stops; open_indices sets the arm's store type and opens. base_switches are posted before every bufferpool arm's own switches; each switch's verify map is checked; HTTP 400 = switch not in this binary = arm NOT AVAILABLE (a gap, never a zero). Every arm sets search.concurrent_segment_search.mode explicitly. Set segments_per_shard / shards / docs to the verified values of the corpus before the first run.",
+ "_doc": "Arms of one data node host, configuration set of the USER CORRECTION 2026-10-06 (arms_baseline.py): stock OpenSearch with memory mapping on Amazon EBS (the outcome baseline) and on Amazon EFS (S0-*, build stock, mounted default readahead), the proof-of-concept build with the bufferpool, all changes off (S1-*) and changes on (S2-*), build poc, readahead 0 plus the window hint; jemalloc on every node unit (\"allocator\", node_allocator.sh). Stock OpenSearch with the bufferpool (BASE-*, build baseline, no switches) is an optional diagnostic in \"context_arms\": a session runs one only when its --arm-list names it. Earlier text: Arms of one data node host. node = agent arm (binary x storage: S0-EBS, S0-EFS, POC-EBS, POC-EFS; each has its own data_path in the agent config, so EBS and EFS are separate cluster states). index/open/store_types refer to keys of [indices]. Every index is closed before a node stops; open_indices sets the arm's store type and opens. base_switches are posted before every bufferpool arm's own switches; each switch's verify map is checked; HTTP 400 = switch not in this binary = arm NOT AVAILABLE (a gap, never a zero). Every arm sets search.concurrent_segment_search.mode explicitly. Set segments_per_shard / shards / docs to the verified values of the corpus before the first run.",
  "indices": {
   "stock_ebs": {
    "storage": "EBS",
@@ -108,35 +108,35 @@
   }
  ],
  "outcome": {
-  "reference": "BASE-EBS",
+  "reference": "S0-EBS",
   "targets": [
    "S2-CORE-EFS",
    "S2-CORE+PLANNER-EFS"
   ],
-  "aa": "BASE-EBS@a,BASE-EBS@b",
+  "aa": "S0-EBS@a,S0-EBS@b",
   "delta_min": 0.05,
   "same_storage": [
    {
-    "reference": "BASE-EBS",
+    "reference": "S0-EBS",
     "targets": [
      "S2-CORE-EBS"
     ],
-    "aa": "BASE-EBS@a,BASE-EBS@b"
+    "aa": "S0-EBS@a,S0-EBS@b"
    },
    {
-    "reference": "BASE-EFS",
+    "reference": "S0-EFS",
     "targets": [
      "S2-CORE-EFS",
      "S2-CORE+PLANNER-EFS"
     ],
-    "aa": "BASE-EFS@a,BASE-EFS@b"
+    "aa": "S0-EFS@a,S0-EFS@b"
    }
   ],
   "attribution_reference": {
    "EBS": "S1-EBS",
    "EFS": "S1-EFS"
   },
-  "rule": "USER DECISION 2026-10-05 (confirmed): for every query, cold latency of the changes on Amazon EFS should match the baseline on Amazon EBS (reference/targets); improvements are measured on both storages against the baseline on the same storage, with no warm regression against it (same_storage: analyze.py --ni-ref <reference> --ni-target <targets> --ni-aa <aa>). Each change alone is attributed against S1 of its storage. Context arms carry no verdict.",
+  "rule": "USER CORRECTION 2026-10-06: for every query, cold median and cold 90th percentile of the changes on Amazon EFS non-inferior to stock OpenSearch with memory mapping on Amazon EBS (reference/targets); cold improves on each storage compared with the all-off reference S1 of that storage (attribution_reference); no warm regression compared with stock OpenSearch with memory mapping on the same storage (same_storage: analyze.py --ni-ref <reference> --ni-target <targets> --ni-aa <aa>). Context arms (BASE-*) carry no verdict.",
   "_previous": {
    "reference": "S0-EBS",
    "targets": [
@@ -148,6 +148,44 @@
   }
  },
  "arms": {
+  "S0-EBS": {
+   "node": "S0-EBS",
+   "storage": "EBS",
+   "bufferpool": false,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "REFERENCE of the outcome: stock OpenSearch on EBS gp3",
+   "build": "stock"
+  },
+  "S0-EFS": {
+   "node": "S0-EFS",
+   "storage": "EFS",
+   "bufferpool": false,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "none"
+   },
+   "atoms": [],
+   "note": "stock on EFS: the size of the problem",
+   "build": "stock"
+  },
   "S1-EFS": {
    "node": "POC-EFS",
    "storage": "EFS",
@@ -953,6 +991,44 @@
    "note": "informational [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]",
    "build": "poc"
   },
+  "S0-EBS-css": {
+   "node": "S0-EBS",
+   "storage": "EBS",
+   "bufferpool": false,
+   "index": "stock_ebs",
+   "open": [
+    "stock_ebs"
+   ],
+   "store_types": {
+    "stock_ebs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
+   "build": "stock"
+  },
+  "S0-EFS-css": {
+   "node": "S0-EFS",
+   "storage": "EFS",
+   "bufferpool": false,
+   "index": "stock_efs",
+   "open": [
+    "stock_efs"
+   ],
+   "store_types": {
+    "stock_efs": "hybridfs"
+   },
+   "switches": [],
+   "cluster_settings": {
+    "search.concurrent_segment_search.mode": "all"
+   },
+   "atoms": [],
+   "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
+   "build": "stock"
+  },
   "S1-EFS-css": {
    "node": "POC-EFS",
    "storage": "EFS",
@@ -1147,82 +1223,6 @@
    ],
    "note": "concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext) [generic: split BKD (B) is not applicable to geoshape: no date field (shape is a geo_shape: 7-D triangle points); this arm runs without B on the stock-format index]",
    "build": "poc"
-  },
-  "BASE-EBS": {
-   "node": "BASE-EBS",
-   "storage": "EBS",
-   "bufferpool": true,
-   "index": "stock_ebs",
-   "open": [
-    "stock_ebs"
-   ],
-   "store_types": {
-    "stock_ebs": "bufferpoolfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "none"
-   },
-   "atoms": [],
-   "note": "BASELINE on Amazon EBS: stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EBS without switches",
-   "build": "baseline"
-  },
-  "BASE-EFS": {
-   "node": "BASE-EFS",
-   "storage": "EFS",
-   "bufferpool": true,
-   "index": "stock_efs",
-   "open": [
-    "stock_efs"
-   ],
-   "store_types": {
-    "stock_efs": "bufferpoolfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "none"
-   },
-   "atoms": [],
-   "note": "BASELINE on Amazon EFS: stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EFS without switches",
-   "build": "baseline"
-  },
-  "BASE-EBS-css": {
-   "node": "BASE-EBS",
-   "storage": "EBS",
-   "bufferpool": true,
-   "index": "stock_ebs",
-   "open": [
-    "stock_ebs"
-   ],
-   "store_types": {
-    "stock_ebs": "bufferpoolfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "all"
-   },
-   "atoms": [],
-   "note": "BASELINE on Amazon EBS (css variant of S0-EBS-css): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EBS without switches",
-   "build": "baseline"
-  },
-  "BASE-EFS-css": {
-   "node": "BASE-EFS",
-   "storage": "EFS",
-   "bufferpool": true,
-   "index": "stock_efs",
-   "open": [
-    "stock_efs"
-   ],
-   "store_types": {
-    "stock_efs": "bufferpoolfs"
-   },
-   "switches": [],
-   "cluster_settings": {
-    "search.concurrent_segment_search.mode": "all"
-   },
-   "atoms": [],
-   "note": "BASELINE on Amazon EFS (css variant of S0-EFS-css): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool), same plugin settings and readahead rule as every configuration; copied from S1-EFS-css without switches",
-   "build": "baseline"
   },
   "S2-A-EBS": {
    "node": "POC-EBS",
@@ -2025,81 +2025,81 @@
   }
  },
  "context_arms": {
-  "S0-EBS": {
-   "node": "S0-EBS",
+  "BASE-EBS": {
+   "node": "BASE-EBS",
    "storage": "EBS",
-   "bufferpool": false,
+   "bufferpool": true,
    "index": "stock_ebs",
    "open": [
     "stock_ebs"
    ],
    "store_types": {
-    "stock_ebs": "hybridfs"
+    "stock_ebs": "bufferpoolfs"
    },
    "switches": [],
    "cluster_settings": {
     "search.concurrent_segment_search.mode": "none"
    },
    "atoms": [],
-   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): REFERENCE of the outcome: stock OpenSearch on EBS gp3",
-   "build": "stock"
+   "note": "optional DIAGNOSTIC (separates the build from the store; no verdict): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool) on Amazon EBS, same plugin settings and readahead rule as the proof-of-concept configurations; copied from S1-EBS without switches",
+   "build": "baseline"
   },
-  "S0-EFS": {
-   "node": "S0-EFS",
+  "BASE-EFS": {
+   "node": "BASE-EFS",
    "storage": "EFS",
-   "bufferpool": false,
+   "bufferpool": true,
    "index": "stock_efs",
    "open": [
     "stock_efs"
    ],
    "store_types": {
-    "stock_efs": "hybridfs"
+    "stock_efs": "bufferpoolfs"
    },
    "switches": [],
    "cluster_settings": {
     "search.concurrent_segment_search.mode": "none"
    },
    "atoms": [],
-   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): stock on EFS: the size of the problem",
-   "build": "stock"
+   "note": "optional DIAGNOSTIC (separates the build from the store; no verdict): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool) on Amazon EFS, same plugin settings and readahead rule as the proof-of-concept configurations; copied from S1-EFS without switches",
+   "build": "baseline"
   },
-  "S0-EBS-css": {
-   "node": "S0-EBS",
+  "BASE-EBS-css": {
+   "node": "BASE-EBS",
    "storage": "EBS",
-   "bufferpool": false,
+   "bufferpool": true,
    "index": "stock_ebs",
    "open": [
     "stock_ebs"
    ],
    "store_types": {
-    "stock_ebs": "hybridfs"
+    "stock_ebs": "bufferpoolfs"
    },
    "switches": [],
    "cluster_settings": {
     "search.concurrent_segment_search.mode": "all"
    },
    "atoms": [],
-   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
-   "build": "stock"
+   "note": "optional DIAGNOSTIC (separates the build from the store; no verdict): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool) on Amazon EBS (css variant of S0-EBS-css), same plugin settings and readahead rule as the proof-of-concept configurations; copied from S1-EBS without switches",
+   "build": "baseline"
   },
-  "S0-EFS-css": {
-   "node": "S0-EFS",
+  "BASE-EFS-css": {
+   "node": "BASE-EFS",
    "storage": "EFS",
-   "bufferpool": false,
+   "bufferpool": true,
    "index": "stock_efs",
    "open": [
     "stock_efs"
    ],
    "store_types": {
-    "stock_efs": "hybridfs"
+    "stock_efs": "bufferpoolfs"
    },
    "switches": [],
    "cluster_settings": {
     "search.concurrent_segment_search.mode": "all"
    },
    "atoms": [],
-   "note": "context only (stock OpenSearch with memory mapping, no verdict; USER DECISION 2026-10-05): concurrent segment search mode=all (OpenSearch still forces it off for sort on @timestamp, DefaultSearchContext)",
-   "build": "stock"
+   "note": "optional DIAGNOSTIC (separates the build from the store; no verdict): stock OpenSearch b44de786cef and stock Lucene with the bufferpool plugin (baseline_bufferpool) on Amazon EFS (css variant of S0-EFS-css), same plugin settings and readahead rule as the proof-of-concept configurations; copied from S1-EFS-css without switches",
+   "build": "baseline"
   }
  },
  "builds": {
@@ -2120,6 +2120,13 @@
    "sha256": "43289e8cf90ca8dda9bd1636db949585987ef4ea706795bc0ce8f7b7064b3e52",
    "plugin_jar_sha256": "8086a04c0e500024ccf0dca08fe8a220da66bf32767fe19171f57dc07fb5c04e",
    "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-05/opensearch-poc-3.10.0-SNAPSHOT-osc83c646b873-lucene59f87aa1af-bufferpool-iosize_conc2-no-jdk-linux-x64.tar.gz"
+  },
+  "stock": {
+   "artifact": "s0",
+   "build_hash": "b44de786cef",
+   "store": "memory mapping (hybridfs), no bufferpool plugin",
+   "sha256": "5a025296590acbf64a0ac93447ad6c5fde4dfd424cfcd1c864da0947a42a74be",
+   "s3_uri": "s3://coldpath-poc-823904838333-usw2/artifacts/2026-10-04/opensearch-s0-3.10.0-SNAPSHOT-b44de786cef-no-jdk-linux-x64.tar.gz"
   }
  },
  "allocator": {
@@ -2135,16 +2142,13 @@
  "_baseline": {
   "source": "arms.example.json",
   "source_sha256": "8284b40436b78e17696edb88a8af740ea8d786c27a86bd76480472b052a8ebff",
+  "set": "memory-mapping",
   "changes": [
-   "S0-EBS: moved to context_arms",
-   "S0-EFS: moved to context_arms",
-   "S0-EBS-css: moved to context_arms",
-   "S0-EFS-css: moved to context_arms",
-   "BASE-EBS: added (baseline build, copied from S1-EBS, cluster settings of S0-EBS)",
-   "BASE-EFS: added (baseline build, copied from S1-EFS, cluster settings of S0-EFS)",
-   "BASE-EBS-css: added (baseline build, copied from S1-EBS, cluster settings of S0-EBS-css)",
-   "BASE-EFS-css: added (baseline build, copied from S1-EFS-css, cluster settings of S0-EFS-css)",
-   "outcome: reference BASE-EBS, targets ['S2-CORE-EFS', 'S2-CORE+PLANNER-EFS'], same-storage EBS targets ['S2-CORE-EBS']"
+   "BASE-EBS: added to context_arms as an optional diagnostic (cluster settings of S0-EBS)",
+   "BASE-EFS: added to context_arms as an optional diagnostic (cluster settings of S0-EFS)",
+   "BASE-EBS-css: added to context_arms as an optional diagnostic (cluster settings of S0-EBS-css)",
+   "BASE-EFS-css: added to context_arms as an optional diagnostic (cluster settings of S0-EFS-css)",
+   "outcome: reference S0-EBS, targets ['S2-CORE-EFS', 'S2-CORE+PLANNER-EFS'], same-storage EBS targets ['S2-CORE-EBS']"
   ]
  },
  "other_indices": "close",
@@ -2152,7 +2156,7 @@
   "corpus": "geoshape",
   "layout": "multi",
   "base_arms_file": "arms.example.json",
-  "base_arms_sha256": "86f6cd6752dd0f599abee58715051a71532be8214c0fd0ca894eef4d5a3612b0",
+  "base_arms_sha256": "32007c38676c72aaa84aca0e15dcd36f0db5458f57db764505e5c61e23d061c3",
   "split_bkd": {
    "applicable": false,
    "reason": "no date field (shape is a geo_shape: 7-D triangle points)"
