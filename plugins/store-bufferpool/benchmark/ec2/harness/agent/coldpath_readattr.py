@@ -23,6 +23,14 @@ For the data reads it reports, per 128 KiB-aligned file block (the largest windo
 so the harness can require: cross_window == 0, data_max_bytes <= the largest window, data_bytes <= bufferpool
 bytes_read, windows <= bufferpool reads, data_reads <= bufferpool reads + extent_splits (a kernel split of a window into
 4 KiB pages fails the last rule, a fragmentation split does not).
+It also attributes the data reads to the Lucene data structure they read (cause attribution of cold reads):
+  by_ext        {extension: {reads, bytes}} per Lucene file extension; a read of a compound file (.cfs) is split by
+                the compound entry table (.cfe next to it, Lucene90CompoundFormat) into the sub-files it overlaps and
+                counted as "cfs/<extension of the sub-file>" (a read that spans two sub-files counts once for each,
+                with the overlapping bytes); bytes of a .cfs read outside every entry (header, footer) count as
+                "cfs/(none)"; a .cfs whose .cfe cannot be read counts as "cfs/(unparsed)";
+  by_structure  the same reads grouped by data structure in words (postings, terms dictionary, terms index, doc
+                values, norms, BKD points, stored fields, ...), compound and non-compound files together.
 """
 import array
 import bisect
@@ -38,6 +46,18 @@ FIEMAP_EXTENT_LAST = 0x1
 FIEMAP_FLAG_SYNC = 0x1
 _BATCH = 256
 _cache = {}  # path -> (size, mtime_ns, ino, extents)
+_cfe_cache = {}  # .cfs path -> (cfe size, cfe mtime_ns, [(offset, end, extension)] sorted) or None (unparsable)
+CODEC_MAGIC = 0x3FD76C17
+STRUCTURE = {
+    "doc": "postings", "pos": "postings positions", "pay": "postings payloads and offsets",
+    "psm": "postings metadata", "nav": "postings navigation", "tim": "terms dictionary", "tip": "terms index",
+    "tmd": "terms metadata", "dvd": "doc values", "dvm": "doc values metadata", "dvs": "doc values skipper",
+    "nvd": "norms", "nvm": "norms metadata", "kdd": "BKD points", "kdi": "BKD points", "kdm": "BKD points",
+    "kdv": "BKD points", "fdt": "stored fields", "fdx": "stored fields", "fdm": "stored fields",
+    "tvd": "term vectors", "tvx": "term vectors", "tvm": "term vectors", "vec": "vectors", "vem": "vectors",
+    "vex": "vectors", "fnm": "field infos", "si": "segment info", "liv": "live documents",
+    "cfe": "compound entry table", "(none)": "compound file header or footer", "(unparsed)": "compound file (entry table unreadable)",
+}
 
 
 def fiemap(path):
@@ -85,6 +105,102 @@ def _file_info(path, st, extents):
     return c
 
 
+def _vint(b, i):
+    v, shift = 0, 0
+    while True:
+        x = b[i]
+        i += 1
+        v |= (x & 0x7F) << shift
+        if x < 0x80:
+            return v, i
+        shift += 7
+
+
+def parse_cfe(data):
+    """
+    Entries of a Lucene90CompoundFormat entry table (.cfe bytes): [(offset, length, name)] with the name as written
+    (segment name stripped, e.g. ".kdd" or "_Lucene104_0.doc"). Layout: index header (big-endian magic, codec name,
+    big-endian version, 16-byte segment id, suffix), VInt entry count, then per entry String name, little-endian long
+    offset and long length into the .cfs, then the codec footer.
+    """
+    if len(data) < 4 or struct.unpack_from(">I", data, 0)[0] != CODEC_MAGIC:
+        raise ValueError("not a Lucene index header")
+    n, i = _vint(data, 4)
+    i += n          # codec name
+    i += 4 + 16     # version, segment id
+    i += 1 + data[i]  # suffix length and suffix
+    count, i = _vint(data, i)
+    out = []
+    for _ in range(count):
+        ln, i = _vint(data, i)
+        name = data[i:i + ln].decode("utf-8")
+        i += ln
+        off, length = struct.unpack_from("<qq", data, i)
+        i += 16
+        out.append((off, length, name))
+    return out
+
+
+def _ext(name):
+    return name.rsplit(".", 1)[-1] if "." in name else "(none)"
+
+
+def compound_entries(cfs_path):
+    """[(offset, end, extension)] of the .cfs's sub-files, sorted, from the .cfe next to it; None if unreadable."""
+    cfe = cfs_path[:-4] + ".cfe"
+    try:
+        st = os.stat(cfe)
+    except OSError:
+        return None
+    c = _cfe_cache.get(cfs_path)
+    if c and c[0] == st.st_size and c[1] == st.st_mtime_ns:
+        return c[2]
+    try:
+        with open(cfe, "rb") as f:
+            ents = sorted((off, off + ln, _ext(name)) for off, ln, name in parse_cfe(f.read()))
+    except (OSError, ValueError, IndexError, struct.error, UnicodeDecodeError):
+        ents = None
+    _cfe_cache[cfs_path] = (st.st_size, st.st_mtime_ns, ents)
+    return ents
+
+
+def by_type(pieces):
+    """(by_ext, by_structure) of data pieces [(file, lo, hi)]; compound reads split by sub-file (see module doc)."""
+    ext = {}
+
+    def add(k, nbytes):
+        e = ext.setdefault(k, {"reads": 0, "bytes": 0})
+        e["reads"] += 1
+        e["bytes"] += nbytes
+
+    for f, lo, hi in pieces:
+        x = _ext(os.path.basename(f))
+        if x != "cfs":
+            add(x, hi - lo)
+            continue
+        ents = compound_entries(f)
+        if ents is None:
+            add("cfs/(unparsed)", hi - lo)
+            continue
+        covered = 0
+        i = max(bisect.bisect_right(ents, (lo, float("inf"), "")) - 1, 0)
+        while i < len(ents) and ents[i][0] < hi:
+            a, b = max(ents[i][0], lo), min(ents[i][1], hi)
+            if b > a:
+                add("cfs/" + ents[i][2], b - a)
+                covered += b - a
+            i += 1
+        if covered < hi - lo:
+            add("cfs/(none)", hi - lo - covered)
+    struct_ = {}
+    for k, v in ext.items():
+        name = STRUCTURE.get(k.split("/", 1)[-1], k.split("/", 1)[-1] + " files")
+        e = struct_.setdefault(name, {"reads": 0, "bytes": 0})
+        e["reads"] += v["reads"]
+        e["bytes"] += v["bytes"]
+    return ({k: ext[k] for k in sorted(ext)}, {k: struct_[k] for k in sorted(struct_)})
+
+
 def _partition_offset(dev):
     """Byte offset of a partition on its disk (block tracepoints report disk sectors; FIEMAP reports fs offsets)."""
     try:
@@ -120,6 +236,7 @@ def summarize(pieces, other, extent_starts):
             if a_hi == b_lo and b_lo in starts:
                 splits += 1
     out["extent_splits"] = splits
+    out["by_ext"], out["by_structure"] = by_type(pieces)
     return out
 
 
